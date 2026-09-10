@@ -25,6 +25,7 @@ export const configSchema = z.object({
   pr: z.object({
     titlePattern: regexPatternSchema,
     forbidden: z.array(z.string()).default([]),
+    blockingLabels: z.array(z.string()).default([]),
     sections: z.array(sectionSchema).min(1),
   }),
   branch: z.object({ pattern: regexPatternSchema }),

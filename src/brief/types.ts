@@ -1,3 +1,5 @@
+import type { ShipkitConfig } from "../config/schema.js";
+
 export type BriefSection = {
   name: string;
   required: boolean;
@@ -22,6 +24,6 @@ export type Brief = {
     keyPattern: string;
     forbidden: string[];
     issuesSection: string;
-    linkPolicy: string;
+    linkPolicy: ShipkitConfig["jira"]["linkPolicy"];
   };
 };

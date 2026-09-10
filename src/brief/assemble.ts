@@ -1,4 +1,5 @@
 import type { ShipkitConfig } from "../config/schema.js";
+import { citeTarget } from "../jira/level.js";
 import type { IssueFacts } from "../jira/types.js";
 import type { RepoState } from "../vcs/types.js";
 import type { Brief } from "./types.js";
@@ -11,8 +12,6 @@ export type AssembleInput = {
   config: ShipkitConfig;
   issue?: IssueFacts;
 };
-
-const STORY_LEVEL = new Set(["Story", "Bug"]);
 
 export function assembleBrief({ repo, target, config, issue }: AssembleInput): Brief {
   const brief: Brief = {
@@ -42,15 +41,11 @@ export function assembleBrief({ repo, target, config, issue }: AssembleInput): B
   };
 
   if (issue !== undefined) {
-    const citeParent =
-      config.jira.linkPolicy === "story" &&
-      !STORY_LEVEL.has(issue.type) &&
-      issue.parent !== undefined;
     brief.ticket = {
       key: issue.key,
       type: issue.type,
       summary: issue.summary,
-      cite: citeParent && issue.parent !== undefined ? issue.parent.key : issue.key,
+      cite: citeTarget(issue, config.jira.linkPolicy),
       parent: issue.parent,
     };
   }

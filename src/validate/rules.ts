@@ -1,4 +1,5 @@
 import type { Section, ShipkitConfig } from "../config/schema.js";
+import { citeTarget } from "../jira/level.js";
 import type { IssueFacts } from "../jira/types.js";
 import { parseBody } from "./body.js";
 import type { Finding, ValidationResult } from "./types.js";
@@ -10,8 +11,6 @@ export type ValidateInput = {
   branch?: string;
   issues?: IssueFacts[];
 };
-
-const STORY_LEVEL = new Set(["Story", "Bug"]);
 
 function countItems(content: string): number {
   return content
@@ -62,12 +61,15 @@ export function validate({ title, body, config, branch, issues }: ValidateInput)
 
   if (config.jira.linkPolicy === "story") {
     for (const issue of issues ?? []) {
-      if (!STORY_LEVEL.has(issue.type) && issue.parent !== undefined) {
+      const target = citeTarget(issue, config.jira.linkPolicy);
+      if (target !== issue.key) {
+        // citeTarget only returns something other than issue.key when the parent is
+        // itself story-level, so issue.parent is guaranteed defined here.
         findings.push({
           rule: "issue-level",
           message:
-            `${issue.key} is a ${issue.type}; cite its parent ${issue.parent.key} ` +
-            `(${issue.parent.type}) instead`,
+            `${issue.key} is a ${issue.type}; cite its parent ${target} ` +
+            `(${issue.parent?.type}) instead`,
           section: config.jira.section,
         });
       }

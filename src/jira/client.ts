@@ -24,6 +24,10 @@ type RawIssue = {
   };
 };
 
+function redactToken(message: string, token: string): string {
+  return message.split(token).join("[redacted]");
+}
+
 function toRef(key: string | undefined, type: string | undefined, summary: string | undefined): IssueRef {
   if (key === undefined || type === undefined) {
     throw new JiraError("Jira issue is missing its key or type");
@@ -44,7 +48,8 @@ export async function fetchIssue(
     raw = await fetcher(url, token);
   } catch (error) {
     if (error instanceof JiraError) throw error;
-    throw new JiraError(`Cannot reach Jira for ${key}: ${(error as Error).message}`);
+    const message = redactToken((error as Error).message, token);
+    throw new JiraError(`Cannot reach Jira for ${key}: ${message}`);
   }
 
   const issue = raw as RawIssue;

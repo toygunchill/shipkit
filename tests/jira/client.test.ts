@@ -54,4 +54,22 @@ describe("fetchIssue", () => {
       expect.objectContaining({ message: expect.not.stringContaining("s3cr3t") }) as Error,
     );
   });
+
+  it("redacts token from wrapped error messages", async () => {
+    const token = "super_secret_token_12345";
+    const failing = async () => {
+      throw new Error(`request failed: Authorization: Bearer ${token}`);
+    };
+    await expect(fetchIssue(BASE, "ABC-99", token, failing)).rejects.toThrow(
+      expect.objectContaining({
+        message: expect.not.stringContaining(token),
+      }) as Error,
+    );
+    // Verify the key is still mentioned for debugging
+    await expect(fetchIssue(BASE, "ABC-99", token, failing)).rejects.toThrow(
+      expect.objectContaining({
+        message: expect.stringContaining("ABC-99"),
+      }) as Error,
+    );
+  });
 });

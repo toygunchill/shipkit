@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { VcsError } from "./types.js";
+import { VcsError, type PullRequestState } from "./types.js";
 
 export type GhRunner = (args: string[]) => string;
 
@@ -91,4 +91,44 @@ function compareReleaseBranches(a: string, b: string): number {
     if (diff !== 0) return diff;
   }
   return 0;
+}
+
+export function findPullRequest(
+  branch: string,
+  run: GhRunner = defaultRunner,
+): PullRequestState | null {
+  const list = call<unknown>(run, [
+    "pr", "list", "--head", branch, "--state", "open", "--json", "number,baseRefName",
+  ]);
+  if (!Array.isArray(list)) {
+    throw new VcsError("gh pr list did not return an array");
+  }
+  if (list.length === 0) return null;
+
+  const head = list[0] as { number?: unknown; baseRefName?: unknown };
+  if (typeof head.number !== "number" || typeof head.baseRefName !== "string") {
+    throw new VcsError("gh pr list returned an entry without number or baseRefName");
+  }
+
+  const detail = call<unknown>(run, [
+    "pr", "view", String(head.number), "--json", "labels,latestReviews",
+  ]);
+  if (typeof detail !== "object" || detail === null) {
+    throw new VcsError("gh pr view did not return an object");
+  }
+  const record = detail as { labels?: unknown; latestReviews?: unknown };
+  const labels = Array.isArray(record.labels) ? record.labels : [];
+  const reviews = Array.isArray(record.latestReviews) ? record.latestReviews : [];
+
+  return {
+    number: head.number,
+    baseRefName: head.baseRefName,
+    labels: labels
+      .map((l) => (l as { name?: unknown }).name)
+      .filter((n): n is string => typeof n === "string"),
+    approvals: reviews
+      .filter((r) => (r as { state?: unknown }).state === "APPROVED")
+      .map((r) => (r as { author?: { login?: unknown } }).author?.login)
+      .filter((n): n is string => typeof n === "string"),
+  };
 }

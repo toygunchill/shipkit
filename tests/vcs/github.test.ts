@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { baseCandidates, defaultBranch } from "../../src/vcs/github.js";
+import { baseCandidates, defaultBranch, findPullRequest } from "../../src/vcs/github.js";
 import { VcsError } from "../../src/vcs/types.js";
 
 const DEFAULT_BRANCH_ARGS = ["repo", "view", "--json", "defaultBranchRef"];
@@ -84,5 +84,83 @@ describe("baseCandidates", () => {
       ]),
     );
     expect(() => baseCandidates(run)).toThrow(VcsError);
+  });
+});
+
+describe("findPullRequest", () => {
+  it("returns null when the branch has no open pull request", () => {
+    const { run } = fakeRunner(
+      new Map([
+        [
+          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,baseRefName"]),
+          JSON.stringify([]),
+        ],
+      ]),
+    );
+    expect(findPullRequest("feature/x", run)).toBeNull();
+  });
+
+  it("reports number, base, labels and approving logins", () => {
+    const { run } = fakeRunner(
+      new Map([
+        [
+          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,baseRefName"]),
+          JSON.stringify([{ number: 881, baseRefName: "release/3.76.0" }]),
+        ],
+        [
+          JSON.stringify(["pr", "view", "881", "--json", "labels,latestReviews"]),
+          JSON.stringify({
+            labels: [{ name: "in test" }],
+            latestReviews: [
+              { author: { login: "alice" }, state: "APPROVED" },
+              { author: { login: "bob" }, state: "CHANGES_REQUESTED" },
+            ],
+          }),
+        ],
+      ]),
+    );
+    expect(findPullRequest("feature/x", run)).toEqual({
+      number: 881,
+      baseRefName: "release/3.76.0",
+      labels: ["in test"],
+      approvals: ["alice"],
+    });
+  });
+
+  it("sends the exact arguments for both calls", () => {
+    const { run } = fakeRunner(
+      new Map([
+        [
+          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,baseRefName"]),
+          JSON.stringify([{ number: 7, baseRefName: "develop" }]),
+        ],
+        [
+          JSON.stringify(["pr", "view", "7", "--json", "labels,latestReviews"]),
+          JSON.stringify({ labels: [], latestReviews: [] }),
+        ],
+      ]),
+    );
+    const calls: string[][] = [];
+    const wrappedRun = (args: string[]): string => {
+      calls.push(args);
+      return run(args);
+    };
+    findPullRequest("feature/x", wrappedRun);
+    expect(calls).toEqual([
+      ["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,baseRefName"],
+      ["pr", "view", "7", "--json", "labels,latestReviews"],
+    ]);
+  });
+
+  it("throws VcsError when the list payload is not an array", () => {
+    const { run } = fakeRunner(
+      new Map([
+        [
+          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,baseRefName"]),
+          JSON.stringify({ message: "rate limited" }),
+        ],
+      ]),
+    );
+    expect(() => findPullRequest("feature/x", run)).toThrow(VcsError);
   });
 });

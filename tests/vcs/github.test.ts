@@ -2,43 +2,87 @@ import { describe, expect, it } from "vitest";
 import { baseCandidates, defaultBranch } from "../../src/vcs/github.js";
 import { VcsError } from "../../src/vcs/types.js";
 
-const fake = (replies: Record<string, string>) => (args: string[]): string => {
-  const key = args.join(" ");
-  const match = Object.keys(replies).find((k) => key.includes(k));
-  if (!match) throw new Error(`unexpected gh call: ${key}`);
-  return replies[match];
-};
+const DEFAULT_BRANCH_ARGS = ["repo", "view", "--json", "defaultBranchRef"];
+const BRANCHES_ARGS = ["api", "repos/{owner}/{repo}/branches", "--paginate", "--jq", "[.[] | {name}]"];
+
+// Records the exact argv of every call, and only replies when the args match exactly —
+// a substring/`includes` match would let a call carrying extra or wrong arguments (e.g. a
+// caller-controlled value smuggled onto the argv) pass silently, which is exactly the kind
+// of gap that let the git `--base` injection Critical through review.
+function fakeRunner(replies: Map<string, string>) {
+  const calls: string[][] = [];
+  const run = (args: string[]): string => {
+    calls.push(args);
+    const reply = replies.get(JSON.stringify(args));
+    if (reply === undefined) throw new Error(`unexpected gh call: ${args.join(" ")}`);
+    return reply;
+  };
+  return { run, calls };
+}
 
 describe("defaultBranch", () => {
-  it("reads the repository default", () => {
-    const run = fake({ "defaultBranchRef": JSON.stringify({ defaultBranchRef: { name: "develop" } }) });
+  it("sends exactly the expected argv and reads the repository default", () => {
+    const { run, calls } = fakeRunner(
+      new Map([[JSON.stringify(DEFAULT_BRANCH_ARGS), JSON.stringify({ defaultBranchRef: { name: "develop" } })]]),
+    );
     expect(defaultBranch(run)).toBe("develop");
+    expect(calls).toEqual([DEFAULT_BRANCH_ARGS]);
   });
 
   it("throws VcsError when JSON shape is wrong", () => {
-    const run = fake({ "defaultBranchRef": JSON.stringify({}) });
+    const { run } = fakeRunner(new Map([[JSON.stringify(DEFAULT_BRANCH_ARGS), JSON.stringify({})]]));
     expect(() => defaultBranch(run)).toThrow(VcsError);
   });
 });
 
 describe("baseCandidates", () => {
-  it("puts the default branch first and adds release branches", () => {
-    const run = fake({
-      "defaultBranchRef": JSON.stringify({ defaultBranchRef: { name: "develop" } }),
-      "api repos": JSON.stringify([
-        { name: "release/3.75.0" },
-        { name: "release/3.76.0" },
-        { name: "develop" },
+  it("sends exactly the expected argv for both calls, in order", () => {
+    const { run, calls } = fakeRunner(
+      new Map([
+        [JSON.stringify(DEFAULT_BRANCH_ARGS), JSON.stringify({ defaultBranchRef: { name: "develop" } })],
+        [JSON.stringify(BRANCHES_ARGS), JSON.stringify([{ name: "develop" }])],
       ]),
-    });
-    expect(baseCandidates(run)).toEqual(["develop", "release/3.75.0", "release/3.76.0"]);
+    );
+    baseCandidates(run);
+    expect(calls).toEqual([DEFAULT_BRANCH_ARGS, BRANCHES_ARGS]);
+  });
+
+  it("puts the default branch first and adds release branches, ordered numerically", () => {
+    // Was release/3.75.0 and release/3.76.0: those sort identically whether the comparator
+    // is lexicographic or numeric, so that fixture could not have caught the wrong-base bug
+    // where "release/3.10.0" sorted before "release/3.9.0". 3.9/3.10 can and does.
+    const { run } = fakeRunner(
+      new Map([
+        [JSON.stringify(DEFAULT_BRANCH_ARGS), JSON.stringify({ defaultBranchRef: { name: "develop" } })],
+        [
+          JSON.stringify(BRANCHES_ARGS),
+          JSON.stringify([{ name: "release/3.9.0" }, { name: "release/3.10.0" }, { name: "develop" }]),
+        ],
+      ]),
+    );
+    expect(baseCandidates(run)).toEqual(["develop", "release/3.9.0", "release/3.10.0"]);
+  });
+
+  it("orders release branches numerically regardless of gh's own listing order", () => {
+    const { run } = fakeRunner(
+      new Map([
+        [JSON.stringify(DEFAULT_BRANCH_ARGS), JSON.stringify({ defaultBranchRef: { name: "develop" } })],
+        [
+          JSON.stringify(BRANCHES_ARGS),
+          JSON.stringify([{ name: "release/3.10.0" }, { name: "release/3.9.0" }, { name: "develop" }]),
+        ],
+      ]),
+    );
+    expect(baseCandidates(run)).toEqual(["develop", "release/3.9.0", "release/3.10.0"]);
   });
 
   it("throws VcsError when branches call returns non-array JSON", () => {
-    const run = fake({
-      "defaultBranchRef": JSON.stringify({ defaultBranchRef: { name: "develop" } }),
-      "api repos": JSON.stringify({ message: "API rate limit exceeded" }),
-    });
+    const { run } = fakeRunner(
+      new Map([
+        [JSON.stringify(DEFAULT_BRANCH_ARGS), JSON.stringify({ defaultBranchRef: { name: "develop" } })],
+        [JSON.stringify(BRANCHES_ARGS), JSON.stringify({ message: "API rate limit exceeded" })],
+      ]),
+    );
     expect(() => baseCandidates(run)).toThrow(VcsError);
   });
 });

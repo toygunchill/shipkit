@@ -16,7 +16,8 @@ export function loadConfig(path: string): ShipkitConfig {
   try {
     parsed = parse(raw);
   } catch (error) {
-    throw new ConfigError(`Cannot parse YAML at ${path}: ${(error as Error).message}`);
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new ConfigError(`Cannot parse YAML at ${path}: ${detail}`);
   }
 
   const result = configSchema.safeParse(parsed);

@@ -154,10 +154,17 @@ ignored the rules.
 - No template placeholders survive (`<!-- ... -->`, `TBD`, `TODO`).
 - **What to Test** has at least `minItems` entries. This is the section agents most
   often reduce to one vague line.
-- The cited Jira key satisfies `linkPolicy`. With `linkPolicy: parent`, a Development
-  subtask is rejected in favour of its parent. This mirrors observed practice: across
-  recent merged PRs whose title carried a Development subtask, every one linked the
-  parent Story or Bug in the body — five of five, no exceptions.
+- The cited Jira key resolves to the level `linkPolicy` requires. With
+  `linkPolicy: story` the body must cite a Story or Bug: a Development subtask is
+  rejected in favour of its parent, while a title key that is already a Story or Bug
+  is cited as-is. This mirrors observed practice — across recent merged PRs whose
+  title carried a Development subtask, five of five linked the parent.
+
+  The policy is expressed as a target *level*, not as "use the parent", because both
+  shapes occur: `ABC-31454` is a Development subtask under Story `ABC-31444`, whereas
+  `ABC-31789` is itself a Story with no parent. A rule phrased as "climb to the
+  parent" produces a dangling link for the second case, and the neighbouring key it
+  lands on may belong to unrelated work.
 - The branch name matches the configured pattern.
 - The target branch is permitted for this branch type.
 

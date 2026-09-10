@@ -96,6 +96,23 @@ describe("extractIssueKeysFromBody", () => {
     const body = "## Related Tickets\n\n- ABC-9\n";
     expect(extractIssueKeysFromBody(body, renamed)).toEqual(["ABC-9"]);
   });
+
+  it("de-duplicates a key cited via a markdown link, whose text and URL both match", () => {
+    // "- [ABC-1](https://jira.example.com/browse/ABC-1)" is the ordinary citation shape
+    // — the key appears once in the link text and once in the URL, so a naive regex match
+    // counts it twice.
+    const body =
+      "## Issues Addressed\n\n- [ABC-1](https://jira.example.com/browse/ABC-1)\n";
+    expect(extractIssueKeysFromBody(body, config)).toEqual(["ABC-1"]);
+  });
+
+  it("keeps two genuinely different cited keys, in the order they appear", () => {
+    const body =
+      "## Issues Addressed\n\n" +
+      "- [ABC-2](https://jira.example.com/browse/ABC-2)\n" +
+      "- [ABC-1](https://jira.example.com/browse/ABC-1)\n";
+    expect(extractIssueKeysFromBody(body, config)).toEqual(["ABC-2", "ABC-1"]);
+  });
 });
 
 describe("selectIssueKeys", () => {

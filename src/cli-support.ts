@@ -34,9 +34,14 @@ export async function resolveIssue(
 }
 
 /**
- * All issue keys cited in the body's issues section, in the order they appear. Returns an
- * empty array when the section is absent or has no matches — the `issue-key-missing` rule
- * in validate/rules.ts is what reports that as a finding; this function just extracts.
+ * All issue keys cited in the body's issues section, in the order they first appear, with
+ * duplicates removed. Returns an empty array when the section is absent or has no matches —
+ * the `issue-key-missing` rule in validate/rules.ts is what reports that as a finding; this
+ * function just extracts.
+ *
+ * De-duplication matters because the ordinary citation shape is a markdown link whose text
+ * and URL both carry the key — e.g. "- [ABC-1](https://…/browse/ABC-1)" — so a plain regex
+ * match on the section would count that one citation twice.
  */
 export function extractIssueKeysFromBody(
   body: string,
@@ -46,7 +51,7 @@ export function extractIssueKeysFromBody(
   const section = parsed.sections[config.jira.section];
   if (section === undefined) return [];
   const matches = section.match(new RegExp(config.jira.keyPattern, "g"));
-  return matches ?? [];
+  return [...new Set(matches ?? [])];
 }
 
 /**

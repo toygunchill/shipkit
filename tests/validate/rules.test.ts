@@ -50,6 +50,8 @@ describe("validate", () => {
     const body = goodBody.replace(/## What to Test[\s\S]*?(?=## Issues Addressed)/, "");
     const result = validate({ title: TITLE, body, config });
     expect(rules(result)).toContain("section-missing");
+    const finding = result.findings.find((f) => f.rule === "section-missing");
+    expect(finding?.section).toBe("What to Test");
   });
 
   it("does not report a missing optional section", () => {
@@ -72,6 +74,8 @@ describe("validate", () => {
       .replace("- Switching invoice type keeps the derived default.\n", "");
     const result = validate({ title: TITLE, body, config });
     expect(rules(result)).toContain("section-min-items");
+    const finding = result.findings.find((f) => f.rule === "section-min-items");
+    expect(finding?.section).toBe("What to Test");
   });
 
   it("reports leftover template placeholders", () => {
@@ -90,5 +94,21 @@ describe("validate", () => {
     );
     const result = validate({ title: TITLE, body, config });
     expect(rules(result)).toContain("issue-key-missing");
+    const finding = result.findings.find((f) => f.rule === "issue-key-missing");
+    expect(finding?.section).toBe("Issues Addressed");
+  });
+
+  it("reports both section-empty and issue-key-missing for empty Issues Addressed", () => {
+    const body = goodBody.replace(
+      "- [ABC-31086](https://jira.example.com/browse/ABC-31086)",
+      "",
+    );
+    const result = validate({ title: TITLE, body, config });
+    expect(rules(result)).toContain("section-empty");
+    expect(rules(result)).toContain("issue-key-missing");
+    const emptyFinding = result.findings.find((f) => f.rule === "section-empty");
+    const keyFinding = result.findings.find((f) => f.rule === "issue-key-missing");
+    expect(emptyFinding?.section).toBe("Issues Addressed");
+    expect(keyFinding?.section).toBe("Issues Addressed");
   });
 });

@@ -41,7 +41,7 @@ export function validate({ title, body, config }: ValidateInput): ValidationResu
   }
 
   const issues = parsed.sections[ISSUES_SECTION];
-  if (issues && !new RegExp(config.jira.keyPattern).test(issues)) {
+  if (issues !== undefined && !new RegExp(config.jira.keyPattern).test(issues)) {
     findings.push({
       rule: "issue-key-missing",
       message: `${ISSUES_SECTION} has no key matching ${config.jira.keyPattern}`,

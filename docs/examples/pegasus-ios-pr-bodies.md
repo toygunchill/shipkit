@@ -83,17 +83,18 @@ to Turkish. This matches how passenger information already behaves, and Android.
 ---
 ---
 
-# Example 2 — UI regression fix
+# Example 2 — Feature adoption with incidental fixes
 
 *Basis: `[ABC-31454] feat(credit-card-fields): adopt Brand Identity floating-label inputs`.*
 
 ## Summary
 
-The Brand Identity rework changed how the floating label is built, and two
-behaviours regressed with it: on focus the label cross-faded into place instead of
-sliding up, and tapping the label no longer focused the field. Both are restored.
-The input box now also keeps a single height in both states, so the trailing icons
-stop shifting as the label moves.
+Adopts the Brand Identity floating-label input on the credit-card fields. The
+rework changed how the floating label is built, and along the way two behaviours
+that had regressed are restored: on focus the label cross-faded into place instead
+of sliding up, and tapping the label no longer focused the field. The input box
+now also keeps a single height in both states, so the trailing icons stop shifting
+as the label moves.
 
 ---
 

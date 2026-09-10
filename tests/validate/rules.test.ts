@@ -145,3 +145,52 @@ describe("validate", () => {
     expect(keyFinding?.section).toBe("Issues Addressed");
   });
 });
+
+describe("branch-pattern", () => {
+  it("accepts a branch matching the configured pattern", () => {
+    const result = validate({
+      title: TITLE, body: goodBody, config,
+      branch: "bugfix/squadb/31087-invoice-default-citizenship",
+    });
+    expect(result.findings.map((f) => f.rule)).not.toContain("branch-pattern");
+  });
+
+  it("reports a branch that does not match", () => {
+    const result = validate({
+      title: TITLE, body: goodBody, config,
+      branch: "bugfix/squadb/31087-invoice-default-citizenship-3.75",
+    });
+    expect(result.findings.map((f) => f.rule)).toContain("branch-pattern");
+  });
+
+  it("stays silent when no branch is supplied", () => {
+    const result = validate({ title: TITLE, body: goodBody, config });
+    expect(result.findings.map((f) => f.rule)).not.toContain("branch-pattern");
+  });
+});
+
+describe("issue-level", () => {
+  const story = { key: "ABC-31444", type: "Story", summary: "s" };
+  const subtask = {
+    key: "ABC-31454", type: "Development", summary: "Geliştirme",
+    parent: { key: "ABC-31444", type: "Story", summary: "s" },
+  };
+
+  it("accepts a Story cited directly", () => {
+    const result = validate({ title: TITLE, body: goodBody, config, issues: [story] });
+    expect(result.findings.map((f) => f.rule)).not.toContain("issue-level");
+  });
+
+  it("rejects a Development subtask and names its parent", () => {
+    const result = validate({ title: TITLE, body: goodBody, config, issues: [subtask] });
+    const finding = result.findings.find((f) => f.rule === "issue-level");
+    expect(finding).toBeDefined();
+    expect(finding?.message).toContain("ABC-31444");
+  });
+
+  it("accepts an issue with no parent whatever its type", () => {
+    const orphan = { key: "ABC-31789", type: "Story", summary: "removal" };
+    const result = validate({ title: TITLE, body: goodBody, config, issues: [orphan] });
+    expect(result.findings.map((f) => f.rule)).not.toContain("issue-level");
+  });
+});

@@ -1,4 +1,5 @@
 import type { Section, ShipkitConfig } from "../config/schema.js";
+import type { IssueFacts } from "../jira/types.js";
 import { parseBody } from "./body.js";
 import type { Finding, ValidationResult } from "./types.js";
 
@@ -6,7 +7,11 @@ export type ValidateInput = {
   title: string;
   body: string;
   config: ShipkitConfig;
+  branch?: string;
+  issues?: IssueFacts[];
 };
+
+const STORY_LEVEL = new Set(["Story", "Bug"]);
 
 function countItems(content: string): number {
   return content
@@ -14,7 +19,7 @@ function countItems(content: string): number {
     .filter((line) => /^\s*(?:[-*+]|\d+[.)])\s+\S/.test(line)).length;
 }
 
-export function validate({ title, body, config }: ValidateInput): ValidationResult {
+export function validate({ title, body, config, branch, issues }: ValidateInput): ValidationResult {
   const findings: Finding[] = [];
   const parsed = parseBody(body);
 
@@ -39,13 +44,34 @@ export function validate({ title, body, config }: ValidateInput): ValidationResu
   }
 
   const issuesSection = config.jira.section;
-  const issues = parsed.sections[issuesSection];
-  if (issues !== undefined && !new RegExp(config.jira.keyPattern).test(issues)) {
+  const issuesText = parsed.sections[issuesSection];
+  if (issuesText !== undefined && !new RegExp(config.jira.keyPattern).test(issuesText)) {
     findings.push({
       rule: "issue-key-missing",
       message: `${issuesSection} has no key matching ${config.jira.keyPattern}`,
       section: issuesSection,
     });
+  }
+
+  if (branch !== undefined && !new RegExp(config.branch.pattern).test(branch)) {
+    findings.push({
+      rule: "branch-pattern",
+      message: `Branch "${branch}" does not match ${config.branch.pattern}`,
+    });
+  }
+
+  if (config.jira.linkPolicy === "story") {
+    for (const issue of issues ?? []) {
+      if (!STORY_LEVEL.has(issue.type) && issue.parent !== undefined) {
+        findings.push({
+          rule: "issue-level",
+          message:
+            `${issue.key} is a ${issue.type}; cite its parent ${issue.parent.key} ` +
+            `(${issue.parent.type}) instead`,
+          section: config.jira.section,
+        });
+      }
+    }
   }
 
   return { ok: findings.length === 0, findings };

@@ -38,6 +38,7 @@ describe("assembleBrief", () => {
     const brief = assembleBrief({ repo, target, config });
     expect(brief.rules.titlePattern).toBe(config.pr.titlePattern);
     expect(brief.rules.branchPattern).toBe(config.branch.pattern);
+    expect(brief.rules.keyPattern).toBe(config.jira.keyPattern);
     expect(brief.rules.forbidden).toEqual(config.pr.forbidden);
   });
 
@@ -55,6 +56,15 @@ describe("assembleBrief", () => {
     const issue = { key: "ABC-31789", type: "Story", summary: "removal" };
     const brief = assembleBrief({ repo, target, config, issue });
     expect(brief.ticket?.cite).toBe("ABC-31789");
+  });
+
+  it("cites a Bug even when it has a parent", () => {
+    const issue = {
+      key: "ABC-31086", type: "Bug", summary: "b",
+      parent: { key: "ABC-31000", type: "Epic", summary: "e" },
+    };
+    const brief = assembleBrief({ repo, target, config, issue });
+    expect(brief.ticket?.cite).toBe("ABC-31086");
   });
 
   it("omits the ticket when none was resolved", () => {

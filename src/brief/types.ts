@@ -19,6 +19,7 @@ export type Brief = {
   rules: {
     titlePattern: string;
     branchPattern: string;
+    keyPattern: string;
     forbidden: string[];
     issuesSection: string;
     linkPolicy: string;

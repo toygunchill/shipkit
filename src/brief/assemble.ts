@@ -34,6 +34,7 @@ export function assembleBrief({ repo, target, config, issue }: AssembleInput): B
     rules: {
       titlePattern: config.pr.titlePattern,
       branchPattern: config.branch.pattern,
+      keyPattern: config.jira.keyPattern,
       forbidden: config.pr.forbidden,
       issuesSection: config.jira.section,
       linkPolicy: config.jira.linkPolicy,

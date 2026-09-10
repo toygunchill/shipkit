@@ -42,6 +42,25 @@ export function renderBody(
   sections: Record<string, string>,
   config: ShipkitConfig,
 ): string {
+  const knownNames = config.pr.sections.map((section) => section.name);
+  const knownSet = new Set(knownNames);
+  const unknownKeys = Object.keys(sections).filter((key) => !knownSet.has(key));
+
+  if (unknownKeys.length > 0) {
+    // Silently dropping a key the config doesn't recognise is its own kind of repair: an
+    // agent that writes "What To Test" instead of "What to Test" loses that prose and is
+    // then told section-empty for a section it did fill. Naming the near-miss, and listing
+    // what the config actually declares, makes the typo visible instead of erased.
+    const unknownPlural = unknownKeys.length > 1;
+    const unknownList = unknownKeys.map((s) => `"${s}"`).join(", ");
+    const knownList = knownNames.map((s) => `"${s}"`).join(", ");
+    throw new ResponseError(
+      `${unknownPlural ? "Sections" : "Section"} ${unknownList} ` +
+        `${unknownPlural ? "are not configured sections" : "is not a configured section"}. ` +
+        `Configured sections are ${knownList}.`,
+    );
+  }
+
   const headingPattern = /^##(?!#)\s+/;
   const offendingSections: string[] = [];
 

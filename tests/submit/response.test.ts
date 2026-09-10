@@ -64,9 +64,18 @@ describe("renderBody", () => {
     expect(parsed.sections["What to Test"]).toBe("- a");
   });
 
-  it("omits sections not in config even if present in response", () => {
-    const body = renderBody({ Summary: "s", "Unknown Section": "x" }, config);
-    expect(body).not.toContain("Unknown Section");
+  it("throws when the response has a section the config does not declare, naming it and the configured sections", () => {
+    // Reversed from Task 3: silently dropping an unrecognised key is its own kind of repair
+    // — an agent that mistypes a section name loses that prose and is then told section-empty
+    // for a section it did fill. The refusal must name the near-miss and what config expects.
+    expect(() => renderBody({ Summary: "s", "Unknown Section": "x" }, config)).toThrow(
+      ResponseError,
+    );
+    expect(() => renderBody({ Summary: "s", "Unknown Section": "x" }, config)).toThrow(
+      'Section "Unknown Section" is not a configured section. Configured sections are ' +
+        '"Summary", "Screenshots / Screen Recordings", "What to Test", "Issues Addressed", ' +
+        '"Analysis JIRA Issue".',
+    );
   });
 
   it("throws when a rendered section contains a level-two heading", () => {
@@ -98,9 +107,10 @@ describe("renderBody", () => {
     expect(parsed.sections.Summary).toContain("### Subsection");
   });
 
-  it("does not throw for level-two headings in config-absent sections", () => {
+  it("throws for a config-absent section before even reaching the heading check", () => {
     const sections = { Summary: "s", "Unknown Section": "## Heading\n\nText" };
-    expect(() => renderBody(sections, config)).not.toThrow();
+    expect(() => renderBody(sections, config)).toThrow(ResponseError);
+    expect(() => renderBody(sections, config)).toThrow('Section "Unknown Section"');
   });
 
   it("preserves bare rules in section content through round-trip", async () => {

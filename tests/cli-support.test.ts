@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   extractIssueKeysFromBody,
+  firstIssueKey,
   isValidBase,
   resolveIssue,
   selectIssueKeys,
@@ -8,6 +9,18 @@ import {
 } from "../src/cli-support.js";
 
 const KEY_PATTERN = "DCP-\\d+";
+
+describe("firstIssueKey", () => {
+  it("returns the first key matching the pattern anywhere in the text", () => {
+    expect(firstIssueKey("[ABC-31087] fix(invoice): default citizenship", KEY_PATTERN)).toBe(
+      "ABC-31087",
+    );
+  });
+
+  it("returns undefined when there is no match", () => {
+    expect(firstIssueKey("fix(invoice): default citizenship", KEY_PATTERN)).toBeUndefined();
+  });
+});
 
 describe("ticketFromBranch", () => {
   it("extracts the key embedded in a branch name", () => {
@@ -17,6 +30,12 @@ describe("ticketFromBranch", () => {
 
   it("returns undefined when the branch has no matching key", () => {
     expect(ticketFromBranch("feature/no-ticket-here", KEY_PATTERN)).toBeUndefined();
+  });
+
+  it("delegates to firstIssueKey", () => {
+    expect(ticketFromBranch("bugfix/ABC-31087/invoice-fix", KEY_PATTERN)).toBe(
+      firstIssueKey("bugfix/ABC-31087/invoice-fix", KEY_PATTERN),
+    );
   });
 });
 
@@ -76,6 +95,23 @@ describe("extractIssueKeysFromBody", () => {
     const renamed = { jira: { section: "Related Tickets", keyPattern: KEY_PATTERN } };
     const body = "## Related Tickets\n\n- ABC-9\n";
     expect(extractIssueKeysFromBody(body, renamed)).toEqual(["ABC-9"]);
+  });
+
+  it("de-duplicates a key cited via a markdown link, whose text and URL both match", () => {
+    // "- [ABC-1](https://jira.example.com/browse/ABC-1)" is the ordinary citation shape
+    // — the key appears once in the link text and once in the URL, so a naive regex match
+    // counts it twice.
+    const body =
+      "## Issues Addressed\n\n- [ABC-1](https://jira.example.com/browse/ABC-1)\n";
+    expect(extractIssueKeysFromBody(body, config)).toEqual(["ABC-1"]);
+  });
+
+  it("keeps two genuinely different cited keys, in the order they appear", () => {
+    const body =
+      "## Issues Addressed\n\n" +
+      "- [ABC-2](https://jira.example.com/browse/ABC-2)\n" +
+      "- [ABC-1](https://jira.example.com/browse/ABC-1)\n";
+    expect(extractIssueKeysFromBody(body, config)).toEqual(["ABC-2", "ABC-1"]);
   });
 });
 

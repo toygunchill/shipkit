@@ -1,17 +1,11 @@
-import { execFileSync } from "node:child_process";
+import { execRunner } from "./exec.js";
 import { VcsError, type RepoState } from "./types.js";
 
 export { VcsError };
 export type { RepoState };
 
 function git(args: string[], cwd: string): string {
-  try {
-    return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-  } catch (error) {
-    const detail =
-      (error as { stderr?: string }).stderr ?? (error instanceof Error ? error.message : String(error));
-    throw new VcsError(`git ${args.join(" ")} failed: ${String(detail).trim()}`);
-  }
+  return execRunner("git", cwd)(args);
 }
 
 export function currentBranch(cwd: string = process.cwd()): string {

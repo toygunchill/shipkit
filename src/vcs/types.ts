@@ -6,3 +6,11 @@ export type RepoState = {
   diffstat: string;
   commits: string[];
 };
+
+export type PullRequestState = {
+  number: number;
+  url: string;
+  baseRefName: string;
+  labels: string[];
+  approvals: string[];
+};

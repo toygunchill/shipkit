@@ -159,12 +159,13 @@ function git(args: string[], cwd: string): string {
 }
 
 export function readRepoState(base: string, cwd: string = process.cwd()): RepoState {
-  const range = `${base}...HEAD`;
+  const diffRange = `${base}...HEAD`;
+  const logRange = `${base}..HEAD`;
   return {
     branch: git(["rev-parse", "--abbrev-ref", "HEAD"], cwd).trim(),
-    changedFiles: git(["diff", "--name-only", range], cwd).split("\n").filter(Boolean),
-    diffstat: git(["diff", "--stat", range], cwd).trim(),
-    commits: git(["log", "--format=%s", range], cwd).split("\n").filter(Boolean),
+    changedFiles: git(["diff", "--name-only", diffRange], cwd).split("\n").filter(Boolean),
+    diffstat: git(["diff", "--stat", diffRange], cwd).trim(),
+    commits: git(["log", "--format=%s", logRange], cwd).split("\n").filter(Boolean),
   };
 }
 ```

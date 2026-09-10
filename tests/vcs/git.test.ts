@@ -48,4 +48,16 @@ describe("readRepoState", () => {
   it("throws VcsError for an unknown base", () => {
     expect(() => readRepoState("no-such-branch", repo)).toThrow(VcsError);
   });
+
+  it("excludes commits added to base after feature branch diverged", () => {
+    // Simulate advancing the base branch after feature branch creation
+    git(["checkout", "-q", "main"], repo);
+    writeFileSync(join(repo, "c.txt"), "base-only\n");
+    git(["add", "."], repo);
+    git(["commit", "-q", "-m", "fix: base branch update"], repo);
+    git(["checkout", "-q", "feature/x"], repo);
+
+    // The commits should only include the feature branch commit, not the base's
+    expect(readRepoState("main", repo).commits).toEqual(["feat: add b and change a"]);
+  });
 });

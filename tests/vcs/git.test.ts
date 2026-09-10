@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readRepoState, VcsError } from "../../src/vcs/git.js";
 
 let repo: string;
@@ -10,6 +10,10 @@ let repo: string;
 function git(args: string[], cwd: string): void {
   execFileSync("git", args, { cwd, stdio: "pipe" });
 }
+
+afterAll(() => {
+  rmSync(repo, { recursive: true, force: true });
+});
 
 beforeAll(() => {
   repo = mkdtempSync(join(tmpdir(), "shipkit-git-"));
@@ -59,5 +63,17 @@ describe("readRepoState", () => {
 
     // The commits should only include the feature branch commit, not the base's
     expect(readRepoState("main", repo).commits).toEqual(["feat: add b and change a"]);
+  });
+
+  it("treats a --base that looks like a git option as an invalid ref, and creates no file", () => {
+    // Without `--end-of-options`, git parses this as `git diff --output=<path>`, writing the
+    // diff to <path> instead of stdout, and exits 0 — a read-only command mutating the disk.
+    const marker = `shipkit-probe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const maliciousBase = `--output=${join(tmpdir(), marker)}`;
+
+    expect(() => readRepoState(maliciousBase, repo)).toThrow(VcsError);
+
+    const created = readdirSync(tmpdir()).filter((name) => name.startsWith(marker));
+    expect(created).toEqual([]);
   });
 });

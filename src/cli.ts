@@ -12,9 +12,12 @@ import {
 import { ConfigError, loadConfig } from "./config/load.js";
 import { fetchIssue, JiraError } from "./jira/client.js";
 import type { IssueFacts } from "./jira/types.js";
+import { loadResponse, renderBody } from "./submit/response.js";
+import { runSubmit, type SubmitDeps } from "./submit/run.js";
 import { validate } from "./validate/rules.js";
 import { currentBranch, readRepoState, VcsError } from "./vcs/git.js";
-import { baseCandidates } from "./vcs/github.js";
+import { baseCandidates, findPullRequest } from "./vcs/github.js";
+import { commitAll, createPullRequest, pushBranch } from "./vcs/mutate.js";
 
 const program = new Command();
 program.name("shipkit").version("0.1.0").exitOverride();
@@ -133,6 +136,32 @@ program
       }
       throw error;
     }
+  });
+
+const realSubmitDeps: SubmitDeps = {
+  loadConfig,
+  loadResponse,
+  renderBody,
+  currentBranch,
+  resolveIssue,
+  readRepoState,
+  findPullRequest,
+  commitAll,
+  pushBranch,
+  createPullRequest,
+  out: (line: string) => console.log(line),
+  err: (line: string) => console.error(line),
+};
+
+program
+  .command("submit")
+  .description("Validate the agent's answer, warn, then commit, push and open the pull request")
+  .requiredOption("--input <path>", "file holding the agent's answer")
+  .requiredOption("--base <branch>", "target branch for the pull request")
+  .option("--config <path>", "path to .shipkit.yml", ".shipkit.yml")
+  .option("--yes", "proceed despite pre-flight warnings", false)
+  .action(async (options: { input: string; base: string; config: string; yes: boolean }) => {
+    process.exitCode = await runSubmit(options, realSubmitDeps);
   });
 
 try {

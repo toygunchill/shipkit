@@ -72,6 +72,14 @@ describe("preflight", () => {
     expect(finding?.message).toContain("develop");
   });
 
+  it("stays silent when the pull request base matches the chosen base", () => {
+    const result = preflight({
+      ...base,
+      pullRequest: { number: 1, baseRefName: "develop", labels: [], approvals: [] },
+    });
+    expect(result.warnings).toEqual([]);
+  });
+
   it("warns about a blocking label, case-insensitively", () => {
     const withLabels = loadConfig("tests/fixtures/blocking-labels.shipkit.yml");
     const result = preflight({

@@ -28,4 +28,16 @@ describe("parseBody", () => {
   it("returns nothing for an empty body", () => {
     expect(parseBody("")).toEqual({ sections: {}, order: [] });
   });
+
+  it("does not treat a heading with no space after ## as a section", () => {
+    const parsed = parseBody("##Summary\n\ntext\n");
+    expect(parsed.order).toEqual([]);
+    expect(parsed.sections).toEqual({});
+  });
+
+  it("does not misresolve a section named after an Object.prototype member", () => {
+    const parsed = parseBody("## constructor\n\n- a\n");
+    expect(parsed.sections.constructor).toBe("- a");
+    expect(parsed.sections.toString).toBeUndefined();
+  });
 });

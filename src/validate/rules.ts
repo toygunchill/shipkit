@@ -8,12 +8,10 @@ export type ValidateInput = {
   config: ShipkitConfig;
 };
 
-const ISSUES_SECTION = "Issues Addressed";
-
 function countItems(content: string): number {
   return content
     .split("\n")
-    .filter((line) => /^\s*[-*]\s+\S/.test(line)).length;
+    .filter((line) => /^\s*(?:[-*+]|\d+[.)])\s+\S/.test(line)).length;
 }
 
 export function validate({ title, body, config }: ValidateInput): ValidationResult {
@@ -40,12 +38,13 @@ export function validate({ title, body, config }: ValidateInput): ValidationResu
     findings.push(...checkSection(section, parsed.sections[section.name]));
   }
 
-  const issues = parsed.sections[ISSUES_SECTION];
+  const issuesSection = config.jira.section;
+  const issues = parsed.sections[issuesSection];
   if (issues !== undefined && !new RegExp(config.jira.keyPattern).test(issues)) {
     findings.push({
       rule: "issue-key-missing",
-      message: `${ISSUES_SECTION} has no key matching ${config.jira.keyPattern}`,
-      section: ISSUES_SECTION,
+      message: `${issuesSection} has no key matching ${config.jira.keyPattern}`,
+      section: issuesSection,
     });
   }
 

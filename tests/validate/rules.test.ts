@@ -43,13 +43,13 @@ describe("validate", () => {
 
   it("rejects a title that does not match the pattern", () => {
     const result = validate({ title: "fix invoice", body: goodBody, config });
-    expect(rules(result)).toContain("title-pattern");
+    expect(rules(result)).toEqual(["title-pattern"]);
   });
 
   it("reports a missing required section", () => {
     const body = goodBody.replace(/## What to Test[\s\S]*?(?=## Issues Addressed)/, "");
     const result = validate({ title: TITLE, body, config });
-    expect(rules(result)).toContain("section-missing");
+    expect(rules(result)).toEqual(["section-missing"]);
     const finding = result.findings.find((f) => f.rule === "section-missing");
     expect(finding?.section).toBe("What to Test");
   });
@@ -65,7 +65,7 @@ describe("validate", () => {
       "",
     );
     const result = validate({ title: TITLE, body, config });
-    expect(rules(result)).toContain("section-empty");
+    expect(rules(result)).toEqual(["section-empty"]);
   });
 
   it("reports too few items in What to Test", () => {
@@ -73,9 +73,27 @@ describe("validate", () => {
       .replace("- Passenger without one sees Foreign.\n", "")
       .replace("- Switching invoice type keeps the derived default.\n", "");
     const result = validate({ title: TITLE, body, config });
-    expect(rules(result)).toContain("section-min-items");
+    expect(rules(result)).toEqual(["section-min-items"]);
     const finding = result.findings.find((f) => f.rule === "section-min-items");
     expect(finding?.section).toBe("What to Test");
+  });
+
+  it("counts numbered and plus-marked list items", () => {
+    const body = goodBody
+      .replace(
+        "- Passenger with a national ID sees Turkish.",
+        "1. Passenger with a national ID sees Turkish.",
+      )
+      .replace(
+        "- Passenger without one sees Foreign.",
+        "2) Passenger without one sees Foreign.",
+      )
+      .replace(
+        "- Switching invoice type keeps the derived default.",
+        "+ Switching invoice type keeps the derived default.",
+      );
+    const result = validate({ title: TITLE, body, config });
+    expect(rules(result)).toEqual([]);
   });
 
   it("reports leftover template placeholders", () => {
@@ -84,7 +102,7 @@ describe("validate", () => {
       "<!-- drag the screenshot here -->",
     );
     const result = validate({ title: TITLE, body, config });
-    expect(rules(result)).toContain("forbidden-text");
+    expect(rules(result)).toEqual(["forbidden-text"]);
   });
 
   it("reports Issues Addressed without an issue key", () => {
@@ -93,9 +111,24 @@ describe("validate", () => {
       "- none",
     );
     const result = validate({ title: TITLE, body, config });
-    expect(rules(result)).toContain("issue-key-missing");
+    expect(rules(result)).toEqual(["issue-key-missing"]);
     const finding = result.findings.find((f) => f.rule === "issue-key-missing");
     expect(finding?.section).toBe("Issues Addressed");
+  });
+
+  it("follows a renamed issues section instead of the old hardcoded name", () => {
+    const renamedConfig = {
+      ...config,
+      jira: { ...config.jira, section: "Related Tickets" },
+    };
+    const body = goodBody.replace(
+      "## Issues Addressed\n\n- [ABC-31086](https://jira.example.com/browse/ABC-31086)",
+      "## Related Tickets\n\n- none",
+    );
+    const result = validate({ title: TITLE, body, config: renamedConfig });
+    expect(rules(result)).toContain("issue-key-missing");
+    const finding = result.findings.find((f) => f.rule === "issue-key-missing");
+    expect(finding?.section).toBe("Related Tickets");
   });
 
   it("reports both section-empty and issue-key-missing for empty Issues Addressed", () => {

@@ -3,11 +3,11 @@ export type ParsedBody = {
   order: string[];
 };
 
-const HEADING = /^##[^#]\s*(.+?)\s*$/;
+const HEADING = /^##(?!#)\s+(.+?)\s*$/;
 const SEPARATOR = /^-{3,}$/;
 
 export function parseBody(markdown: string): ParsedBody {
-  const sections: Record<string, string> = {};
+  const sections: Record<string, string> = Object.create(null) as Record<string, string>;
   const order: string[] = [];
   let current: string | null = null;
   let buffer: string[] = [];

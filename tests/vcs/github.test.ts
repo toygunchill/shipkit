@@ -29,6 +29,13 @@ describe("defaultBranch", () => {
     expect(calls).toEqual([DEFAULT_BRANCH_ARGS]);
   });
 
+  it("wraps a plain Error from an injected runner as VcsError", () => {
+    const run = () => {
+      throw new Error("gh: command not found");
+    };
+    expect(() => defaultBranch(run)).toThrow(VcsError);
+  });
+
   it("throws VcsError when JSON shape is wrong", () => {
     const { run } = fakeRunner(new Map([[JSON.stringify(DEFAULT_BRANCH_ARGS), JSON.stringify({})]]));
     expect(() => defaultBranch(run)).toThrow(VcsError);

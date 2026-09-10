@@ -6,7 +6,10 @@ export type GhRunner = (args: string[]) => string;
 const defaultRunner: GhRunner = execRunner("gh");
 
 function call<T>(run: GhRunner, args: string[]): T {
-  const raw = run(args);
+  // The runner is wrapped too, not just the parse. An injected runner is free to throw a
+  // plain Error, and every caller above expects VcsError — it is what runSubmit's catch
+  // turns into exit 2. Letting a raw Error through here would crash instead.
+  const raw = asVcsError("gh", args, () => run(args));
   return asVcsError("gh", args, () => JSON.parse(raw) as T);
 }
 

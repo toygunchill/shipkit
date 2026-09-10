@@ -1040,6 +1040,27 @@ git commit -m "feat(cli): add the submit command"
 - No test executes `git` or `gh` against a real repository or remote.
 - `git status` is clean after the suite runs.
 
+## Carried forward from the final review
+
+Two findings from this plan's final whole-branch review were deliberately deferred.
+Both are real; neither is a fix, because each needs its own tests.
+
+**`brief` emits no `responseSchema`.** The spec's agent contract is "brief -> fill ->
+submit", and `submit` now defines a concrete required shape — `title`, `commitMessage`,
+`sections`. The brief mentions none of it. `commitMessage` in particular appears nowhere
+an agent can read, so an agent following the documented flow has to guess the field names
+and learns it guessed wrong only at the very end of a task. The zod schema in
+`src/submit/response.ts` already describes the shape; derive the JSON Schema from it and
+add it to the brief.
+
+**`git add --all` sweeps in stray working-tree files.** `commitAll` stages the entire
+tree, so any unrelated edit sitting in the checkout is committed and pushed into the pull
+request with no warning. The spec's pre-flight table promises exactly this check — "diff
+carries M files unrelated to the ticket" — and `readRepoState` already returns
+`changedFiles` and `diffstat`, both discarded at the `preflight` call site in
+`src/submit/run.ts`. `foreign-commits` does not substitute: it reads commit subjects, so a
+stray file with no commit of its own is invisible to it. This one goes first.
+
 ## Next plan
 
 **`init` and `branch`:** `init` reconstructs a `.shipkit.yml` the way `docs/examples/example-app.shipkit.yml` was reconstructed by hand — reading the branch pattern from the repository ruleset, the required approvals from branch protection, the blocking labels from the merge-gate workflow, and the template's boilerplate from the bodies of merged pull requests. `branch` suggests a name that satisfies the pattern.

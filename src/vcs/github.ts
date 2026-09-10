@@ -32,6 +32,18 @@ export function defaultBranch(run: GhRunner = defaultRunner): string {
     run,
     ["repo", "view", "--json", "defaultBranchRef"],
   );
+  
+  // Validate the shape: defaultBranchRef.name must be a string
+  if (
+    typeof data !== "object" ||
+    data === null ||
+    typeof (data as Record<string, unknown>).defaultBranchRef !== "object" ||
+    (data as Record<string, unknown>).defaultBranchRef === null ||
+    typeof ((data as Record<string, unknown>).defaultBranchRef as Record<string, unknown>).name !== "string"
+  ) {
+    throw new VcsError(`gh ${["repo", "view", "--json", "defaultBranchRef"].join(" ")} returned unexpected shape`);
+  }
+  
   return data.defaultBranchRef.name;
 }
 
@@ -41,6 +53,22 @@ export function baseCandidates(run: GhRunner = defaultRunner): string[] {
     run,
     ["api", "repos/{owner}/{repo}/branches", "--paginate", "--jq", "[.[] | {name}]"],
   );
+  
+  // Validate the shape: must be an array of objects with a string name property
+  if (!Array.isArray(branches)) {
+    throw new VcsError(`gh ${["api", "repos/{owner}/{repo}/branches", "--paginate", "--jq", "[.[] | {name}]"].join(" ")} returned unexpected shape`);
+  }
+  
+  for (const branch of branches) {
+    if (
+      typeof branch !== "object" ||
+      branch === null ||
+      typeof (branch as Record<string, unknown>).name !== "string"
+    ) {
+      throw new VcsError(`gh ${["api", "repos/{owner}/{repo}/branches", "--paginate", "--jq", "[.[] | {name}]"].join(" ")} returned unexpected shape`);
+    }
+  }
+  
   const releases = branches
     .map((b) => b.name)
     .filter((name) => name.startsWith("release/"))

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { baseCandidates, defaultBranch } from "../../src/vcs/github.js";
+import { VcsError } from "../../src/vcs/types.js";
 
 const fake = (replies: Record<string, string>) => (args: string[]): string => {
   const key = args.join(" ");
@@ -12,6 +13,11 @@ describe("defaultBranch", () => {
   it("reads the repository default", () => {
     const run = fake({ "defaultBranchRef": JSON.stringify({ defaultBranchRef: { name: "develop" } }) });
     expect(defaultBranch(run)).toBe("develop");
+  });
+
+  it("throws VcsError when JSON shape is wrong", () => {
+    const run = fake({ "defaultBranchRef": JSON.stringify({}) });
+    expect(() => defaultBranch(run)).toThrow(VcsError);
   });
 });
 
@@ -26,5 +32,13 @@ describe("baseCandidates", () => {
       ]),
     });
     expect(baseCandidates(run)).toEqual(["develop", "release/3.75.0", "release/3.76.0"]);
+  });
+
+  it("throws VcsError when branches call returns non-array JSON", () => {
+    const run = fake({
+      "defaultBranchRef": JSON.stringify({ defaultBranchRef: { name: "develop" } }),
+      "api repos": JSON.stringify({ message: "API rate limit exceeded" }),
+    });
+    expect(() => baseCandidates(run)).toThrow(VcsError);
   });
 });

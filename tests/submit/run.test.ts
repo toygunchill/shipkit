@@ -87,7 +87,11 @@ function makeDeps(
         loadResponse: () => VALID_RESPONSE,
         renderBody: (sections: Record<string, string>, config: ShipkitConfig) => renderBody(sections, config),
         currentBranch: () => BRANCH,
-        resolveIssue: () => Promise.resolve(undefined as IssueFacts | undefined),
+        // VALID_RESPONSE's title and Issues Addressed section both cite ABC-1 — resolving it
+        // as Story-level keeps issue-level and issue-unverified silent by default, the same
+        // way a real run with a working SHIPKIT_JIRA_TOKEN would. Tests that care about the
+        // unresolved/non-story cases override this explicitly.
+        resolveIssue: (key: string) => Promise.resolve({ key, type: "Story", summary: "" } as IssueFacts),
         readRepoState: () => ({ branch: BRANCH, changedFiles: [], diffstat: "", commits: [] }),
         findPullRequest: () => NO_PR,
         commitAll: () => undefined,
@@ -288,5 +292,75 @@ describe("runSubmit", () => {
     expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
     expect(err.join("\n")).toContain("git log --end-of-options develop..HEAD failed: unknown revision");
     expect(err.join("\n")).not.toContain("commit was created");
+  });
+
+  describe("Finding 1: the Jira gate must not depend on the branch carrying a key", () => {
+    // The exact reproduction from the review: under the reference config, branch.pattern
+    // admits only lowercase branches and jira.keyPattern is `DCP-\d+` — the two are mutually
+    // exclusive, so a branch that satisfies branch.pattern never carries a key. Deriving the
+    // ticket identity from the branch therefore always produced `undefined` on every run that
+    // survived validation, silently switching off issue-level, foreign-commits and
+    // issue-unverified together. This is not a synthetic fixture — it is the real reference
+    // config the review used, loaded exactly as the CLI would.
+    const REFERENCE_CONFIG = loadConfig("docs/examples/example-app.shipkit.yml");
+    const REPRO_BRANCH = "bugfix/squadb/31087-invoice"; // passes branch.pattern; carries no DCP-key at all
+    const REPRO_RESPONSE: SubmitResponse = {
+      title: "[ABC-1] fix(x): y",
+      commitMessage: "fix(x): y",
+      sections: {
+        Summary: "It was broken; now it is not.",
+        "Screenshots / Screen Recordings": "Nothing to show — logic only.",
+        "What to Test": "- one\n- two\n- three",
+        "Issues Addressed": "- [ABC-1](https://jira.example.com/browse/ABC-1)",
+      },
+    };
+    // Story-level, so issue-level has nothing to flag — isolates the foreign-commits
+    // assertion below from an unrelated issue-level finding.
+    const STORY_FACTS: IssueFacts = { key: "ABC-1", type: "Story", summary: "s" };
+
+    function reproDeps(overrides: Partial<SubmitDeps> = {}) {
+      return makeDeps({
+        loadConfig: () => REFERENCE_CONFIG,
+        loadResponse: () => REPRO_RESPONSE,
+        currentBranch: () => REPRO_BRANCH,
+        resolveIssue: (key: string) => Promise.resolve(key === "ABC-1" ? STORY_FACTS : undefined),
+        readRepoState: () => ({
+          branch: REPRO_BRANCH,
+          changedFiles: [],
+          diffstat: "",
+          // Cites a different key than the response title (ABC-1) — this is the stray
+          // commit foreign-commits exists to catch.
+          commits: ["[ABC-27975] fix(split-passenger): popup"],
+        }),
+        ...overrides,
+      });
+    }
+
+    it("resolves the key the body cites (issue-level) and warns about the stray commit (foreign-commits), instead of running silently", async () => {
+      const { deps, calls, err } = reproDeps();
+
+      const code = await runSubmit(OPTIONS, deps);
+
+      // issue-level actually ran: resolveIssue was called with the body's cited key, ABC-1 —
+      // before the fix, ticketFromBranch(REPRO_BRANCH, ...) is undefined, so this call would
+      // never happen with that key.
+      expect(calls.some((c) => c.fn === "resolveIssue" && c.args[0] === "ABC-1")).toBe(true);
+
+      // foreign-commits actually ran and caught the stray commit — before the fix, ticketKey
+      // is undefined so the whole check is skipped and the run exits 0 with empty stderr.
+      expect(code).toBe(2);
+      expect(err.join("\n")).toContain("foreign-commits");
+      expect(err.join("\n")).toContain("ABC-27975");
+    });
+
+    it("discriminates: without the fix (ticketFromBranch on this branch), the exact same run is silent", async () => {
+      // Pins the "before" half of the reproduction directly, rather than relying on reading
+      // the review by eye: deriving the identity from the branch (this test's stand-in for
+      // the old, unfixed code path) is undefined here, which is exactly why the whole gate
+      // went silent. ticketFromBranch is still exported and behaves the same as ever — it is
+      // simply no longer what run.ts uses for this purpose.
+      const { ticketFromBranch } = await import("../../src/cli-support.js");
+      expect(ticketFromBranch(REPRO_BRANCH, REFERENCE_CONFIG.jira.keyPattern)).toBeUndefined();
+    });
   });
 });

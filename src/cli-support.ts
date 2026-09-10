@@ -5,10 +5,15 @@ import { fetchIssue } from "./jira/client.js";
 import type { IssueFacts } from "./jira/types.js";
 import { parseBody } from "./validate/body.js";
 
+/** The first key matching `keyPattern` anywhere in `text`, or undefined when there is none. */
+export function firstIssueKey(text: string, keyPattern: string): string | undefined {
+  const match = new RegExp(keyPattern).exec(text);
+  return match?.[0];
+}
+
 /** Extracts the issue key embedded in a branch name, e.g. `feature/x/ABC-123-thing`. */
 export function ticketFromBranch(branch: string, keyPattern: string): string | undefined {
-  const match = new RegExp(keyPattern).exec(branch);
-  return match?.[0];
+  return firstIssueKey(branch, keyPattern);
 }
 
 /**

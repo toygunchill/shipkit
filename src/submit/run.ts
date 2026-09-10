@@ -1,4 +1,4 @@
-import { isValidBase, ticketFromBranch } from "../cli-support.js";
+import { extractIssueKeysFromBody, firstIssueKey, isValidBase } from "../cli-support.js";
 import { ConfigError } from "../config/load.js";
 import type { ShipkitConfig } from "../config/schema.js";
 import { JiraError } from "../jira/client.js";
@@ -18,16 +18,21 @@ export type SubmitOptions = {
 
 /**
  * One member per adapter the sequence calls, plus two output sinks. Pure functions used by
- * the sequence (`isValidBase`, `ticketFromBranch`, `validate`, `preflight`) are imported
- * directly above instead of injected — they take no dependency worth faking, and every test
- * in tests/submit/run.test.ts exercises the real ones.
+ * the sequence (`isValidBase`, `firstIssueKey`, `extractIssueKeysFromBody`, `validate`,
+ * `preflight`) are imported directly above instead of injected — they take no dependency
+ * worth faking, and every test in tests/submit/run.test.ts exercises the real ones.
+ *
+ * `resolveIssue` is called once per key the response body cites (via
+ * `extractIssueKeysFromBody`), never with an undefined key — so its "no key" short-circuit
+ * (see cli-support.ts) never triggers here; only its "no token" short-circuit can produce an
+ * `undefined` for a call made from this module.
  */
 export type SubmitDeps = {
   loadConfig: (path: string) => ShipkitConfig;
   loadResponse: (path: string) => SubmitResponse;
   renderBody: (sections: Record<string, string>, config: ShipkitConfig) => string;
   currentBranch: () => string;
-  resolveIssue: (key: string | undefined, config: ShipkitConfig) => Promise<IssueFacts | undefined>;
+  resolveIssue: (key: string, config: ShipkitConfig) => Promise<IssueFacts | undefined>;
   readRepoState: (base: string) => RepoState;
   findPullRequest: (branch: string) => PullRequestState | null;
   commitAll: (message: string) => void;
@@ -62,15 +67,26 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
     const response = deps.loadResponse(options.input);
     const body = deps.renderBody(response.sections, config);
     const branch = deps.currentBranch();
-    const ticketKey = ticketFromBranch(branch, config.jira.keyPattern);
-    const issue = await deps.resolveIssue(ticketKey, config);
+
+    // `issue-level` checks the keys the body *cites* (the same source of truth `check`
+    // uses), not the branch's key — see the report for why the branch cannot be trusted
+    // to carry one at all under configs like docs/examples/example-app.shipkit.yml.
+    const citedKeys = extractIssueKeysFromBody(body, config);
+    const resolvedIssues = await Promise.all(
+      citedKeys.map((key) => deps.resolveIssue(key, config)),
+    );
+    const issues = resolvedIssues.filter((issue): issue is IssueFacts => issue !== undefined);
+    // "Every cited key was resolved." Vacuously true when nothing was cited — there is then
+    // nothing for issue-level to have skipped, so issue-unverified (below) has nothing to warn
+    // about either, regardless of what ticketKey (the title's key) turns out to be.
+    const issueVerified = resolvedIssues.every((issue) => issue !== undefined);
 
     const result = validate({
       title: response.title,
       body,
       config,
       branch,
-      issues: issue === undefined ? undefined : [issue],
+      issues,
     });
     if (!result.ok) {
       for (const finding of result.findings) {
@@ -79,13 +95,18 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       return 1;
     }
 
+    // The response title's key, not the branch's — titlePattern guarantees the title carries
+    // one, which is what foreign-commits needs as this change's identity to compare commits
+    // against.
+    const ticketKey = firstIssueKey(response.title, config.jira.keyPattern);
+
     const repo = deps.readRepoState(options.base);
     const warnings = preflight({
       branch,
       base: options.base,
       commits: repo.commits,
       ticketKey,
-      issueVerified: issue !== undefined,
+      issueVerified,
       pullRequest: deps.findPullRequest(branch),
       config,
     }).warnings;

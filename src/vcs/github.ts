@@ -1,32 +1,13 @@
-import { execFileSync } from "node:child_process";
+import { asVcsError, execRunner } from "./exec.js";
 import { VcsError, type PullRequestState } from "./types.js";
 
 export type GhRunner = (args: string[]) => string;
 
-const defaultRunner: GhRunner = (args) => {
-  try {
-    return execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-  } catch (error) {
-    const detail =
-      (error as { stderr?: string }).stderr ?? (error instanceof Error ? error.message : String(error));
-    throw new VcsError(`gh ${args.join(" ")} failed: ${String(detail).trim()}`);
-  }
-};
+const defaultRunner: GhRunner = execRunner("gh");
 
 function call<T>(run: GhRunner, args: string[]): T {
-  let raw: string;
-  try {
-    raw = run(args);
-  } catch (error) {
-    if (error instanceof VcsError) throw error;
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new VcsError(`gh ${args.join(" ")} failed: ${detail}`);
-  }
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    throw new VcsError(`gh ${args.join(" ")} returned unparseable JSON`);
-  }
+  const raw = run(args);
+  return asVcsError("gh", args, () => JSON.parse(raw) as T);
 }
 
 export function defaultBranch(run: GhRunner = defaultRunner): string {

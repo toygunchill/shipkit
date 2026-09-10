@@ -47,8 +47,9 @@ export async function fetchIssue(
   try {
     raw = await fetcher(url, token);
   } catch (error) {
-    if (error instanceof JiraError) throw error;
-    const message = redactToken((error as Error).message, token);
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const message = redactToken(rawMessage, token);
+    if (error instanceof JiraError) throw new JiraError(message);
     throw new JiraError(`Cannot reach Jira for ${key}: ${message}`);
   }
 

@@ -72,4 +72,27 @@ describe("fetchIssue", () => {
       }) as Error,
     );
   });
+
+  it("redacts the token even when the Fetcher throws a JiraError directly", async () => {
+    // Fetcher is exported public API — a custom implementation can construct its own
+    // JiraError, and the `if (error instanceof JiraError) throw error;` short-circuit
+    // used to skip redaction entirely on that branch.
+    const token = "custom_fetcher_secret_999";
+    const failing = async () => {
+      throw new JiraError(`upstream said: token ${token} was rejected`);
+    };
+    await expect(fetchIssue(BASE, "ABC-1", token, failing)).rejects.toThrow(
+      expect.objectContaining({ message: expect.not.stringContaining(token) }) as Error,
+    );
+    await expect(fetchIssue(BASE, "ABC-1", token, failing)).rejects.toBeInstanceOf(JiraError);
+  });
+
+  it("throws JiraError for a parent present but missing its fields (deliberately strict)", async () => {
+    // A parent this malformed cannot be leveled, and issue-level depends on knowing the
+    // parent's level to decide whether to recommend it. Silently skipping the parent here
+    // would fail-open issue-level for a subtask whose parent Jira returned incompletely.
+    await expect(
+      fetchIssue(BASE, "ABC-31454", "tok", async () => payload({ parent: { key: "ABC-31444" } })),
+    ).rejects.toThrow(JiraError);
+  });
 });

@@ -42,6 +42,28 @@ export function renderBody(
   sections: Record<string, string>,
   config: ShipkitConfig,
 ): string {
+  const headingPattern = /^##(?!#)\s+/;
+  const offendingSections: string[] = [];
+
+  for (const section of config.pr.sections) {
+    const content = sections[section.name];
+    if (content) {
+      for (const line of content.split("\n")) {
+        if (headingPattern.test(line)) {
+          offendingSections.push(section.name);
+          break;
+        }
+      }
+    }
+  }
+
+  if (offendingSections.length > 0) {
+    const sectionList = offendingSections.map((s) => `"${s}"`).join(", ");
+    throw new ResponseError(
+      `Sections ${sectionList} contain level-two headings (##). Use ### for sub-headings.`,
+    );
+  }
+
   return config.pr.sections
     .map((section) => `## ${section.name}\n\n${(sections[section.name] ?? "").trim()}\n`)
     .join("\n---\n\n");

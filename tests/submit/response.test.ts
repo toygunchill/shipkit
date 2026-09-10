@@ -68,4 +68,33 @@ describe("renderBody", () => {
     const body = renderBody({ Summary: "s", "Unknown Section": "x" }, config);
     expect(body).not.toContain("Unknown Section");
   });
+
+  it("throws when a rendered section contains a level-two heading", () => {
+    const sections = { Summary: "Some text\n\n## Subsection\n\nMore text" };
+    expect(() => renderBody(sections, config)).toThrow(ResponseError);
+    expect(() => renderBody(sections, config)).toThrow(/Summary/);
+  });
+
+  it("allows level-three headings in section content", async () => {
+    const sections = { Summary: "Text\n\n### Subsection\n\nMore text", "What to Test": "- item" };
+    const body = renderBody(sections, config);
+    expect(body).toContain("### Subsection");
+    const { parseBody } = await import("../../src/validate/body.js");
+    const parsed = parseBody(body);
+    expect(parsed.sections.Summary).toContain("### Subsection");
+  });
+
+  it("does not throw for level-two headings in config-absent sections", () => {
+    const sections = { Summary: "s", "Unknown Section": "## Heading\n\nText" };
+    expect(() => renderBody(sections, config)).not.toThrow();
+  });
+
+  it("preserves bare rules in section content through round-trip", async () => {
+    const sections = { Summary: "Text\n\n---\n\nMore text" };
+    const body = renderBody(sections, config);
+    const { parseBody } = await import("../../src/validate/body.js");
+    const parsed = parseBody(body);
+    expect(parsed.sections.Summary).not.toContain("---");
+    expect(parsed.sections.Summary).toBe("Text\n\n\nMore text");
+  });
 });

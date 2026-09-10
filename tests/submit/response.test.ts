@@ -71,8 +71,22 @@ describe("renderBody", () => {
 
   it("throws when a rendered section contains a level-two heading", () => {
     const sections = { Summary: "Some text\n\n## Subsection\n\nMore text" };
-    expect(() => renderBody(sections, config)).toThrow(ResponseError);
-    expect(() => renderBody(sections, config)).toThrow(/Summary/);
+    expect(() => renderBody(sections, config)).toThrow(
+      ResponseError,
+    );
+    expect(() => renderBody(sections, config)).toThrow(
+      'Section "Summary" contains level-two headings (##). Use ### for sub-headings.',
+    );
+  });
+
+  it("uses plural grammar when multiple sections have level-two headings", () => {
+    const sections = {
+      Summary: "Some text\n\n## Subsection\n\nMore text",
+      "What to Test": "- item\n\n## Other heading",
+    };
+    expect(() => renderBody(sections, config)).toThrow(
+      'Sections "Summary", "What to Test" contain level-two headings (##). Use ### for sub-headings.',
+    );
   });
 
   it("allows level-three headings in section content", async () => {

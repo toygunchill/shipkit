@@ -59,8 +59,11 @@ export function renderBody(
 
   if (offendingSections.length > 0) {
     const sectionList = offendingSections.map((s) => `"${s}"`).join(", ");
+    const plural = offendingSections.length > 1;
+    const noun = plural ? "Sections" : "Section";
+    const verb = plural ? "contain" : "contains";
     throw new ResponseError(
-      `Sections ${sectionList} contain level-two headings (##). Use ### for sub-headings.`,
+      `${noun} ${sectionList} ${verb} level-two headings (##). Use ### for sub-headings.`,
     );
   }
 

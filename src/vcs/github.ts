@@ -105,13 +105,18 @@ export function findPullRequest(
   }
   if (list.length === 0) return null;
 
-  const head = list[0] as { number?: unknown; baseRefName?: unknown };
-  if (typeof head.number !== "number" || typeof head.baseRefName !== "string") {
+  const head = list[0];
+  if (
+    typeof head !== "object" ||
+    head === null ||
+    typeof (head as Record<string, unknown>).number !== "number" ||
+    typeof (head as Record<string, unknown>).baseRefName !== "string"
+  ) {
     throw new VcsError("gh pr list returned an entry without number or baseRefName");
   }
 
   const detail = call<unknown>(run, [
-    "pr", "view", String(head.number), "--json", "labels,latestReviews",
+    "pr", "view", String((head as Record<string, unknown>).number), "--json", "labels,latestReviews",
   ]);
   if (typeof detail !== "object" || detail === null) {
     throw new VcsError("gh pr view did not return an object");
@@ -120,15 +125,36 @@ export function findPullRequest(
   const labels = Array.isArray(record.labels) ? record.labels : [];
   const reviews = Array.isArray(record.latestReviews) ? record.latestReviews : [];
 
+  // Validate labels array entries
+  const labelNames: string[] = [];
+  for (const label of labels) {
+    if (typeof label !== "object" || label === null) {
+      throw new VcsError("gh pr view returned a label entry that is not an object");
+    }
+    const name = (label as Record<string, unknown>).name;
+    if (typeof name === "string") {
+      labelNames.push(name);
+    }
+  }
+
+  // Validate reviews array entries
+  const approvalLogins: string[] = [];
+  for (const review of reviews) {
+    if (typeof review !== "object" || review === null) {
+      throw new VcsError("gh pr view returned a review entry that is not an object");
+    }
+    if ((review as Record<string, unknown>).state === "APPROVED") {
+      const login = ((review as Record<string, unknown>).author as Record<string, unknown> | undefined)?.login;
+      if (typeof login === "string") {
+        approvalLogins.push(login);
+      }
+    }
+  }
+
   return {
-    number: head.number,
-    baseRefName: head.baseRefName,
-    labels: labels
-      .map((l) => (l as { name?: unknown }).name)
-      .filter((n): n is string => typeof n === "string"),
-    approvals: reviews
-      .filter((r) => (r as { state?: unknown }).state === "APPROVED")
-      .map((r) => (r as { author?: { login?: unknown } }).author?.login)
-      .filter((n): n is string => typeof n === "string"),
+    number: (head as Record<string, unknown>).number as number,
+    baseRefName: (head as Record<string, unknown>).baseRefName as string,
+    labels: labelNames,
+    approvals: approvalLogins,
   };
 }

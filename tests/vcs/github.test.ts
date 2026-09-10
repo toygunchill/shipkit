@@ -163,4 +163,48 @@ describe("findPullRequest", () => {
     );
     expect(() => findPullRequest("feature/x", run)).toThrow(VcsError);
   });
+
+  it("throws VcsError when gh pr list returns an array with a null entry", () => {
+    const { run } = fakeRunner(
+      new Map([
+        [
+          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,baseRefName"]),
+          JSON.stringify([null]),
+        ],
+      ]),
+    );
+    expect(() => findPullRequest("feature/x", run)).toThrow(VcsError);
+  });
+
+  it("throws VcsError when labels contains a null entry", () => {
+    const { run } = fakeRunner(
+      new Map([
+        [
+          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,baseRefName"]),
+          JSON.stringify([{ number: 7, baseRefName: "develop" }]),
+        ],
+        [
+          JSON.stringify(["pr", "view", "7", "--json", "labels,latestReviews"]),
+          JSON.stringify({ labels: [null], latestReviews: [] }),
+        ],
+      ]),
+    );
+    expect(() => findPullRequest("feature/x", run)).toThrow(VcsError);
+  });
+
+  it("throws VcsError when latestReviews contains a null entry", () => {
+    const { run } = fakeRunner(
+      new Map([
+        [
+          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,baseRefName"]),
+          JSON.stringify([{ number: 7, baseRefName: "develop" }]),
+        ],
+        [
+          JSON.stringify(["pr", "view", "7", "--json", "labels,latestReviews"]),
+          JSON.stringify({ labels: [], latestReviews: [null] }),
+        ],
+      ]),
+    );
+    expect(() => findPullRequest("feature/x", run)).toThrow(VcsError);
+  });
 });

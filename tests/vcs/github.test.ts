@@ -92,7 +92,7 @@ describe("findPullRequest", () => {
     const { run } = fakeRunner(
       new Map([
         [
-          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,baseRefName"]),
+          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,url,baseRefName"]),
           JSON.stringify([]),
         ],
       ]),
@@ -104,8 +104,8 @@ describe("findPullRequest", () => {
     const { run } = fakeRunner(
       new Map([
         [
-          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,baseRefName"]),
-          JSON.stringify([{ number: 881, baseRefName: "release/3.76.0" }]),
+          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,url,baseRefName"]),
+          JSON.stringify([{ number: 881, url: "https://github.com/x/y/pull/881", baseRefName: "release/3.76.0" }]),
         ],
         [
           JSON.stringify(["pr", "view", "881", "--json", "labels,latestReviews"]),
@@ -121,18 +121,31 @@ describe("findPullRequest", () => {
     );
     expect(findPullRequest("feature/x", run)).toEqual({
       number: 881,
+      url: "https://github.com/x/y/pull/881",
       baseRefName: "release/3.76.0",
       labels: ["in test"],
       approvals: ["alice"],
     });
   });
 
+  it("throws VcsError when the pull request entry is missing a url", () => {
+    const { run } = fakeRunner(
+      new Map([
+        [
+          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,url,baseRefName"]),
+          JSON.stringify([{ number: 7, baseRefName: "develop" }]),
+        ],
+      ]),
+    );
+    expect(() => findPullRequest("feature/x", run)).toThrow(VcsError);
+  });
+
   it("sends the exact arguments for both calls", () => {
     const { run } = fakeRunner(
       new Map([
         [
-          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,baseRefName"]),
-          JSON.stringify([{ number: 7, baseRefName: "develop" }]),
+          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,url,baseRefName"]),
+          JSON.stringify([{ number: 7, url: "https://github.com/x/y/pull/7", baseRefName: "develop" }]),
         ],
         [
           JSON.stringify(["pr", "view", "7", "--json", "labels,latestReviews"]),
@@ -147,7 +160,7 @@ describe("findPullRequest", () => {
     };
     findPullRequest("feature/x", wrappedRun);
     expect(calls).toEqual([
-      ["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,baseRefName"],
+      ["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,url,baseRefName"],
       ["pr", "view", "7", "--json", "labels,latestReviews"],
     ]);
   });
@@ -156,7 +169,7 @@ describe("findPullRequest", () => {
     const { run } = fakeRunner(
       new Map([
         [
-          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,baseRefName"]),
+          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,url,baseRefName"]),
           JSON.stringify({ message: "rate limited" }),
         ],
       ]),
@@ -168,7 +181,7 @@ describe("findPullRequest", () => {
     const { run } = fakeRunner(
       new Map([
         [
-          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,baseRefName"]),
+          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,url,baseRefName"]),
           JSON.stringify([null]),
         ],
       ]),
@@ -180,8 +193,8 @@ describe("findPullRequest", () => {
     const { run } = fakeRunner(
       new Map([
         [
-          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,baseRefName"]),
-          JSON.stringify([{ number: 7, baseRefName: "develop" }]),
+          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,url,baseRefName"]),
+          JSON.stringify([{ number: 7, url: "https://github.com/x/y/pull/7", baseRefName: "develop" }]),
         ],
         [
           JSON.stringify(["pr", "view", "7", "--json", "labels,latestReviews"]),
@@ -196,8 +209,8 @@ describe("findPullRequest", () => {
     const { run } = fakeRunner(
       new Map([
         [
-          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,baseRefName"]),
-          JSON.stringify([{ number: 7, baseRefName: "develop" }]),
+          JSON.stringify(["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,url,baseRefName"]),
+          JSON.stringify([{ number: 7, url: "https://github.com/x/y/pull/7", baseRefName: "develop" }]),
         ],
         [
           JSON.stringify(["pr", "view", "7", "--json", "labels,latestReviews"]),

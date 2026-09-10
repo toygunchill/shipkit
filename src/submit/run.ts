@@ -101,13 +101,14 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
     const ticketKey = firstIssueKey(response.title, config.jira.keyPattern);
 
     const repo = deps.readRepoState(options.base);
+    const existingPr = deps.findPullRequest(branch);
     const warnings = preflight({
       branch,
       base: options.base,
       commits: repo.commits,
       ticketKey,
       issueVerified,
-      pullRequest: deps.findPullRequest(branch),
+      pullRequest: existingPr,
       config,
     }).warnings;
 
@@ -125,6 +126,17 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
     committed = true;
     deps.pushBranch(branch);
     pushed = true;
+
+    // `gh pr create` refuses outright when an open pull request already exists for this head
+    // branch — exactly the state approvals-dismissed/base-mismatch/blocking-label exist to
+    // warn about. The push above is the job in that case; stop here instead of letting the
+    // create call throw and report a false failure.
+    if (existingPr !== null) {
+      deps.out(existingPr.url);
+      deps.err("Pushed to the existing pull request; it was updated, not opened.");
+      return 0;
+    }
+
     const url = deps.createPullRequest({
       title: response.title,
       body,

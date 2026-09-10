@@ -190,7 +190,13 @@ describe("runSubmit", () => {
   });
 
   it("returns 2, reports warnings, and mutates nothing when preflight warns without --yes", async () => {
-    const pr: PullRequestState = { number: 1, baseRefName: "develop", labels: [], approvals: ["alice", "bob"] };
+    const pr: PullRequestState = {
+      number: 1,
+      url: "https://github.com/x/y/pull/1",
+      baseRefName: "develop",
+      labels: [],
+      approvals: ["alice", "bob"],
+    };
     const { deps, calls, err } = makeDeps({ findPullRequest: () => pr });
 
     const code = await runSubmit({ ...OPTIONS, yes: false }, deps);
@@ -202,8 +208,17 @@ describe("runSubmit", () => {
     expect(calls.some((c) => c.fn === "createPullRequest")).toBe(false);
   });
 
-  it("returns 0 and proceeds when preflight warns and --yes is given", async () => {
-    const pr: PullRequestState = { number: 1, baseRefName: "develop", labels: [], approvals: ["alice"] };
+  it("returns 0, pushes, and stops without calling createPullRequest when preflight warns and --yes is given, because a pull request already exists", async () => {
+    // Finding 2: `gh pr create` refuses outright when an open pull request already exists
+    // for the head branch — exactly the state approvals-dismissed exists to warn about. The
+    // push is the job in that case; createPullRequest must not be called at all.
+    const pr: PullRequestState = {
+      number: 1,
+      url: "https://github.com/x/y/pull/1",
+      baseRefName: "develop",
+      labels: [],
+      approvals: ["alice"],
+    };
     const { deps, calls, out, err } = makeDeps({ findPullRequest: () => pr });
 
     const code = await runSubmit({ ...OPTIONS, yes: true }, deps);
@@ -212,8 +227,32 @@ describe("runSubmit", () => {
     expect(err.join("\n")).toContain("approvals-dismissed");
     expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
     expect(calls.some((c) => c.fn === "pushBranch")).toBe(true);
-    expect(calls.some((c) => c.fn === "createPullRequest")).toBe(true);
-    expect(out).toEqual(["https://github.com/x/y/pull/1"]);
+    expect(calls.some((c) => c.fn === "createPullRequest")).toBe(false);
+    expect(out).toEqual([pr.url]);
+    expect(err.join("\n")).toContain("updated, not opened");
+  });
+
+  it("pushes and stops without creating a pull request when one already exists for the branch, even with no warnings", async () => {
+    // Same fix as above, but with nothing for preflight to warn about — the create-refusal
+    // bug in the sequence being fixed here does not depend on --yes or on any warning having
+    // fired; it depends only on whether a pull request already exists for the branch.
+    const pr: PullRequestState = {
+      number: 42,
+      url: "https://github.com/x/y/pull/42",
+      baseRefName: "develop",
+      labels: [],
+      approvals: [],
+    };
+    const { deps, calls, out, err } = makeDeps({ findPullRequest: () => pr });
+
+    const code = await runSubmit({ ...OPTIONS, yes: false }, deps);
+
+    expect(code).toBe(0);
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
+    expect(calls.some((c) => c.fn === "pushBranch")).toBe(true);
+    expect(calls.some((c) => c.fn === "createPullRequest")).toBe(false);
+    expect(out).toEqual([pr.url]);
+    expect(err.join("\n")).toContain("updated, not opened");
   });
 
   it("returns 0, prints the URL, and needs no --yes on a clean run", async () => {

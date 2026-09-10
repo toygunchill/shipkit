@@ -9,6 +9,7 @@ export type RepoState = {
 
 export type PullRequestState = {
   number: number;
+  url: string;
   baseRefName: string;
   labels: string[];
   approvals: string[];

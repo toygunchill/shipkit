@@ -98,7 +98,7 @@ export function findPullRequest(
   run: GhRunner = defaultRunner,
 ): PullRequestState | null {
   const list = call<unknown>(run, [
-    "pr", "list", "--head", branch, "--state", "open", "--json", "number,baseRefName",
+    "pr", "list", "--head", branch, "--state", "open", "--json", "number,url,baseRefName",
   ]);
   if (!Array.isArray(list)) {
     throw new VcsError("gh pr list did not return an array");
@@ -110,9 +110,10 @@ export function findPullRequest(
     typeof head !== "object" ||
     head === null ||
     typeof (head as Record<string, unknown>).number !== "number" ||
+    typeof (head as Record<string, unknown>).url !== "string" ||
     typeof (head as Record<string, unknown>).baseRefName !== "string"
   ) {
-    throw new VcsError("gh pr list returned an entry without number or baseRefName");
+    throw new VcsError("gh pr list returned an entry without number, url or baseRefName");
   }
 
   const detail = call<unknown>(run, [
@@ -153,6 +154,7 @@ export function findPullRequest(
 
   return {
     number: (head as Record<string, unknown>).number as number,
+    url: (head as Record<string, unknown>).url as string,
     baseRefName: (head as Record<string, unknown>).baseRefName as string,
     labels: labelNames,
     approvals: approvalLogins,

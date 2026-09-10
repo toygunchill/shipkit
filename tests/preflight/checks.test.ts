@@ -22,7 +22,7 @@ describe("preflight", () => {
   it("warns that a push will dismiss existing approvals", () => {
     const result = preflight({
       ...base,
-      pullRequest: { number: 1, baseRefName: "develop", labels: [], approvals: ["alice", "bob"] },
+      pullRequest: { number: 1, url: "https://github.com/x/y/pull/1", baseRefName: "develop", labels: [], approvals: ["alice", "bob"] },
     });
     const finding = result.warnings.find((w) => w.check === "approvals-dismissed");
     expect(finding?.message).toContain("2");
@@ -31,7 +31,7 @@ describe("preflight", () => {
   it("stays silent when the pull request has no approvals", () => {
     const result = preflight({
       ...base,
-      pullRequest: { number: 1, baseRefName: "develop", labels: [], approvals: [] },
+      pullRequest: { number: 1, url: "https://github.com/x/y/pull/1", baseRefName: "develop", labels: [], approvals: [] },
     });
     expect(ids(result)).not.toContain("approvals-dismissed");
   });
@@ -65,7 +65,7 @@ describe("preflight", () => {
   it("warns when the chosen base differs from the open pull request's", () => {
     const result = preflight({
       ...base,
-      pullRequest: { number: 1, baseRefName: "release/3.76.0", labels: [], approvals: [] },
+      pullRequest: { number: 1, url: "https://github.com/x/y/pull/1", baseRefName: "release/3.76.0", labels: [], approvals: [] },
     });
     const finding = result.warnings.find((w) => w.check === "base-mismatch");
     expect(finding?.message).toContain("release/3.76.0");
@@ -75,7 +75,7 @@ describe("preflight", () => {
   it("stays silent when the pull request base matches the chosen base", () => {
     const result = preflight({
       ...base,
-      pullRequest: { number: 1, baseRefName: "develop", labels: [], approvals: [] },
+      pullRequest: { number: 1, url: "https://github.com/x/y/pull/1", baseRefName: "develop", labels: [], approvals: [] },
     });
     expect(result.warnings).toEqual([]);
   });
@@ -85,7 +85,7 @@ describe("preflight", () => {
     const result = preflight({
       ...base,
       config: withLabels,
-      pullRequest: { number: 1, baseRefName: "develop", labels: ["In Test"], approvals: [] },
+      pullRequest: { number: 1, url: "https://github.com/x/y/pull/1", baseRefName: "develop", labels: ["In Test"], approvals: [] },
     });
     expect(ids(result)).toContain("blocking-label");
   });
@@ -106,7 +106,7 @@ describe("preflight", () => {
     const result = preflight({
       ...base,
       config: withLabels,
-      pullRequest: { number: 1, baseRefName: "develop", labels: ["needs-design"], approvals: [] },
+      pullRequest: { number: 1, url: "https://github.com/x/y/pull/1", baseRefName: "develop", labels: ["needs-design"], approvals: [] },
     });
     expect(ids(result)).not.toContain("blocking-label");
   });

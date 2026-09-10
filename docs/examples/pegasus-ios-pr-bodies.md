@@ -25,7 +25,7 @@ Bodies are written in English throughout, including section content.
 
 | Section | Does | Does not |
 |---|---|---|
-| Summary | 5–6 lines: what was wrong, what changed, and anything a reviewer would otherwise ask | Restate the diff, walk through the implementation, or list every file |
+| Summary | 5–6 lines: what was wrong, what changed, and anything a reviewer would otherwise ask. Written for someone who has not opened the diff | Restate the diff, name types and methods, quote commit hashes, or walk through the implementation |
 | Screenshots | Before/after, or a plain sentence saying why there is nothing to show | Sit empty with the placeholder comment still in it |
 | What to Test | The handful of checks a QA engineer needs, in their language, plus the obvious regressions | Enumerate every edge case, or say "test the payment screen" |
 | Issues Addressed | Links at Story/Bug level — the parent when the title carries a subtask, the title's own key when it is already a Story or Bug | Link a Development subtask, or guess at a neighbouring key |
@@ -43,10 +43,10 @@ is a real change, so the wording can be checked against the diff.
 ## Summary
 
 Add Invoice always defaulted citizenship to **Turkish**, so a foreign passenger was
-shown a form asking for a TCKN. Citizenship is now derived from the passenger's
-`nationalId`: present means Turkish (TCKN shown), absent means foreign (TCKN hidden).
-`clearFields()` resets to the same derived value instead of a hard-coded Turkish.
-This matches `PassengerInfoViewModel` and the Android behaviour.
+shown a form asking for a TCKN. Citizenship now follows the passenger: a national ID
+on file means Turkish and the TCKN field is shown, no national ID means foreign and
+the field is hidden. Clearing the form applies the same rule rather than falling back
+to Turkish. This matches how passenger information already behaves, and Android.
 
 ---
 
@@ -89,12 +89,11 @@ This matches `PassengerInfoViewModel` and the Android behaviour.
 
 ## Summary
 
-The Brand Identity rework split the floating label into two `Text` views, reverting
-`58696b888f`. Two view identities meant SwiftUI cross-faded the label instead of
-sliding it, and the floating caption lost `.allowsHitTesting(false)`, so tapping the
-label no longer focused the field. Restored the single overlay label and reserved the
-caption row unconditionally, so the box keeps one height and the trailing controls no
-longer shift when the label floats.
+The Brand Identity rework changed how the floating label is built, and two
+behaviours regressed with it: on focus the label cross-faded into place instead of
+sliding up, and tapping the label no longer focused the field. Both are restored.
+The input box now also keeps a single height in both states, so the trailing icons
+stop shifting as the label moves.
 
 ---
 
@@ -142,10 +141,10 @@ points` — 46 files, +15/−3924.*
 ## Summary
 
 IFE is now sold only inside the booking flow. Removes the non-booking entry points —
-main menu, Search PNR, and Travel Assistant — along with the legacy `IFESelection`
-screen and the router paths leading to it. Booking IFE sales, the reissue availability
-check, and `PGSSsrType.ife` with its analytics, summary and check-in code are
-deliberately untouched. Net effect is roughly 3,900 lines removed across 46 files.
+main menu, Search PNR, and Travel Assistant — along with the legacy IFE selection
+screen. Booking IFE sales, the reissue availability check, and IFE in analytics,
+summaries and check-in are deliberately untouched. Roughly 3,900 lines removed across
+46 files.
 
 ---
 

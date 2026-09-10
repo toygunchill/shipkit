@@ -53,10 +53,10 @@ questions.
 |---|---|---|
 | Form factor | CLI | Every agent can run a shell command. Agent-agnosticism comes free. |
 | Who writes the prose | The agent | It already holds the full context of the change. A second LLM call would cost money and lose that context. |
-| Rule source | `.shipkit.yml` in the consuming repo, bootstrapped by `shipkit init` | A hand-written config nobody writes is a product nobody uses. Inference removes the starting cost. |
+| Rule source | `.shipkit.yml` in the consuming repo. `shipkit init` reads the machine-checkable rules from authoritative APIs and ships a starter body template for the team to edit. | Rulesets and branch protection are facts. The body template is not — see "Why the template cannot be inferred". |
 | Autonomy | End-to-end, with a pre-flight gate | Matches how the tool is used — at the end of a task — while protecting the irreversible steps. |
 | Home | Standalone repository | The product is not part of any consuming project. Consumers get only a config file. |
-| Jira | Connected via API | Required to resolve the Bug-vs-subtask question correctly. |
+| Jira | Connected via API | Required to resolve the subtask-vs-parent question correctly. |
 | Agent contract | Brief → fill → submit | The CLI states the rules; the agent does not have to remember them. |
 | Language | Node + TypeScript, distributed on npm | `npx shipkit` needs no install step. |
 
@@ -75,28 +75,50 @@ shipkit deterministic and testable, and keeps the LLM cost at zero.
 ## Command surface
 
 ```
-shipkit init                     Infer .shipkit.yml from the repository; human reviews and commits it
+shipkit init                     Write .shipkit.yml: rules read from the forge,
+                                 body template seeded for the team to edit
 shipkit branch "<description>"   Suggest a compliant branch name
-shipkit brief                    Emit the JSON brief for the agent
+shipkit brief [--base <branch>]  Emit the JSON brief for the agent;
+                                 asks for the target branch when not given
 shipkit submit --input <file>    Validate → pre-flight → commit → push → open PR
 shipkit check                    Validate only; no side effects. Usable in CI.
 ```
 
+`brief` is the only command that may prompt. When stdin is not a terminal — an agent
+running unattended, or CI — it fails with the list of valid targets instead of
+guessing, so a missing decision surfaces as an error rather than a wrong base.
+
 ### `shipkit init`
 
-Writes a config by observation rather than interrogation:
+`init` draws a hard line between what the forge can prove and what only the team knows.
 
-- **PR template** — fetch the last N merged PRs, diff their bodies, and keep the
-  headings and boilerplate they share. A structure repeated across merged PRs is the
-  de-facto template, whether or not a template file exists.
-- **Title and branch patterns** — derive a regex from merged PR titles and branch
-  names; cross-check against any repository ruleset the API exposes.
-- **Approvals and blocking labels** — read branch protection and the labels that
-  correlate with failing merge gates.
-- **Jira base URL and key pattern** — extract from links already present in PR bodies.
+**Read from authoritative sources — these are facts, not guesses:**
 
-Output is a commented `.shipkit.yml` for a human to review. Inference proposes; it never
-silently governs.
+- **Branch name pattern** — from the repository ruleset.
+- **Required approvals** — from branch protection.
+- **Blocking labels** — from the merge-gate workflow.
+- **Jira base URL and key pattern** — from links already present in PR bodies.
+
+**Not inferred — authored once, by the team:**
+
+- **The PR body template.** `init` writes a starter template into `.shipkit.yml` and
+  stops for review. The starter is seeded from the project's best-formed PRs, offered
+  as a proposal to edit rather than a consensus to accept.
+
+### Why the template cannot be inferred
+
+The obvious design — diff the last N merged PR bodies and keep what they share — was
+tried against the motivating repository and rejected. Of 80 recent merged PRs, 88%
+carry an `Issues Addressed` heading, but the rest of the structure varies enough that
+an intersection would produce something thinner than any real PR and truer to none of
+them.
+
+More importantly, inference would encode the current average. The team's stated
+intent is the opposite: pick a baseline deliberately and hold new PRs to it. A tool
+that mirrors existing inconsistency cannot fix it.
+
+So the template is a decision the team makes once, with shipkit offering a good
+starting point and enforcing it forever after.
 
 ## The contract
 
@@ -133,7 +155,9 @@ ignored the rules.
 - **What to Test** has at least `minItems` entries. This is the section agents most
   often reduce to one vague line.
 - The cited Jira key satisfies `linkPolicy`. With `linkPolicy: parent`, a Development
-  subtask is rejected in favour of its parent Bug.
+  subtask is rejected in favour of its parent. This mirrors observed practice: across
+  recent merged PRs whose title carried a Development subtask, every one linked the
+  parent Story or Bug in the body — five of five, no exceptions.
 - The branch name matches the configured pattern.
 - The target branch is permitted for this branch type.
 
@@ -152,18 +176,24 @@ because the failure it catches actually happened while this tool was being desig
 
 Pre-flight reports; the human decides. It does not silently refuse.
 
-## Target branch resolution
+## Target branch
 
-Resolved in order, first match wins:
+shipkit does not attempt to derive the target branch. The choice depends on release
+timing and scope — whether a fix rides the current train or waits for the next one —
+which is a human judgement the repository does not record.
 
-1. Explicit `--base`.
-2. A rule in `.shipkit.yml` matching the branch prefix and, optionally, the ticket's
-   `fixVersion` (this is what routes a bugfix to `release/3.76.0` rather than
-   `develop`).
-3. The repository default branch.
+Resolution is therefore:
 
-The chosen branch and the reason for it appear in the brief, so the agent can question
-it, and in the pre-flight output, so the human can.
+1. Explicit `--base`, when the caller already knows.
+2. Otherwise **ask**. shipkit lists the plausible targets (the default branch and any
+   live release branches), marks the repository default as the suggestion, and waits.
+
+The answer is echoed in the brief so the agent writes against the right base, and
+re-stated at pre-flight so a wrong pick is caught before the PR exists.
+
+An earlier draft resolved this from the ticket's `fixVersion`. It was dropped: the
+field is not reliably set, and guessing wrong here is exactly the failure that costs
+a round of dismissed approvals.
 
 ## Modules
 

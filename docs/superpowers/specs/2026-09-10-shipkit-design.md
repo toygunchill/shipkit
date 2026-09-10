@@ -12,7 +12,7 @@ none of which an agent can read:
 
 | Convention | Where it lives today |
 |---|---|
-| PR body structure (Summary / Screenshots / What to Test / Issues Addressed) | Nowhere. Copied by hand from an older PR. |
+| PR body structure (Summary / Screenshots / What to Test / Issues Addressed) | A template outside the repository. GitHub injects it when a PR is opened in the browser; nothing in a checkout can read it. |
 | PR title format `[ABC-00000] type(scope): subject` | Tribal knowledge. |
 | Branch name regex | A server-side GitHub ruleset. Discovered only when a push is rejected. |
 | Target branch choice (develop vs release/x.y.z) | Tribal knowledge. |
@@ -23,6 +23,37 @@ The repository's only agent-facing rules file, `.github/copilot-instructions.md`
 covers Swift style exclusively and says nothing about commits, branches, or pull
 requests. So every agent — Claude Code, Copilot, Codex, Antigravity — improvises the
 final mile, and a human fixes it afterwards.
+
+### What the template being unreachable costs
+
+A first draft of this design claimed the body structure was written down nowhere.
+That was wrong, and the correction sharpens the problem rather than softening it. The
+template exists and is applied — its instruction lines appear verbatim across merged
+pull requests:
+
+> Please link only parent Development-level Jira issues such as Story or Task.
+> Sub-tasks should not be linked here.
+
+It even states the link rule this design derives empirically elsewhere. But it lives
+outside the repository — not in `.github/`, not anywhere in git history — so it reaches
+authors only through the browser at PR-creation time, and never reaches an agent
+working from a clone.
+
+Running the finished `check` against the 78 most recent merged pull requests with a
+config reconstructed from that template:
+
+| Signal | Count |
+|---|---|
+| Left the template's instruction text in place, unfilled | **56 / 78 (72%)** |
+| `Issues Addressed` present but citing no issue key | 39 / 78 |
+| Title not matching the house format | 26 / 78 |
+| At least one required section absent | 26 / 78 |
+| Fully compliant | 2 / 78 |
+
+The 72% is the number that matters. In most merged pull requests the section headings
+are present and the prose under them is the template's own instructions — the author
+answered nothing, and review passed anyway. A tool that only reformatted output would
+not touch this; refusing to open the pull request is what does.
 
 shipkit closes that gap: it makes the conventions machine-readable, tells the agent
 what to write, refuses output that does not comply, and warns before irreversible

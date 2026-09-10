@@ -108,9 +108,23 @@ describe("renderBody", () => {
   });
 
   it("throws for a config-absent section before even reaching the heading check", () => {
-    const sections = { Summary: "s", "Unknown Section": "## Heading\n\nText" };
+    // The fixture must actually discriminate the ordering: the heading lives in a
+    // *configured* section (Summary), and an unknown key ("Unknown Section") is present
+    // alongside it. If the heading check ran first, the error would name "Summary" and its
+    // level-two heading; since the unknown-key check runs first, it must name "Unknown
+    // Section" instead, and say nothing about a heading.
+    const sections = {
+      Summary: "Some text\n\n## Subsection\n\nMore text",
+      "Unknown Section": "x",
+    };
     expect(() => renderBody(sections, config)).toThrow(ResponseError);
     expect(() => renderBody(sections, config)).toThrow('Section "Unknown Section"');
+    try {
+      renderBody(sections, config);
+      throw new Error("expected renderBody to throw");
+    } catch (error) {
+      expect((error as Error).message).not.toContain("heading");
+    }
   });
 
   it("preserves bare rules in section content through round-trip", async () => {

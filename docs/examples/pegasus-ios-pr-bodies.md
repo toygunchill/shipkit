@@ -85,7 +85,7 @@ to Turkish. This matches how passenger information already behaves, and Android.
 
 # Example 2 — UI regression fix
 
-*Basis: `fix(floating-field): restore the sliding label and its tap-through`.*
+*Basis: `[ABC-31454] feat(credit-card-fields): adopt Brand Identity floating-label inputs`.*
 
 ## Summary
 

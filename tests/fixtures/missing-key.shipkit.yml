@@ -1,0 +1,7 @@
+pr:
+  titlePattern: '^\[DCP-\d+\] .+'
+  sections:
+    - name: Summary
+      required: true
+branch:
+  pattern: '^feature/.+'

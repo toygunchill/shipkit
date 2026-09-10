@@ -26,7 +26,24 @@ describe("loadConfig", () => {
     expect(() => loadConfig("tests/fixtures/nope.yml")).toThrow(ConfigError);
   });
 
-  it("throws when a required key is absent", () => {
+  it("throws when sections is empty", () => {
     expect(() => loadConfig("tests/fixtures/invalid.shipkit.yml")).toThrow(ConfigError);
+  });
+
+  it("throws when a required key is absent", () => {
+    expect(() => loadConfig("tests/fixtures/missing-key.shipkit.yml")).toThrow(ConfigError);
+  });
+
+  it("throws when the YAML cannot be parsed", () => {
+    expect(() => loadConfig("tests/fixtures/malformed.shipkit.yml")).toThrow(ConfigError);
+  });
+
+  it("throws a ConfigError when titlePattern is not a valid regex", () => {
+    expect(() => loadConfig("tests/fixtures/invalid-regex.shipkit.yml")).toThrow(ConfigError);
+  });
+
+  it("defaults jira.section to Issues Addressed", () => {
+    const config = loadConfig(FIXTURE);
+    expect(config.jira.section).toBe("Issues Addressed");
   });
 });

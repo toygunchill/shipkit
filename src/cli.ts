@@ -2,31 +2,22 @@
 import { readFileSync } from "node:fs";
 import { Command, CommanderError } from "commander";
 import { assembleBrief } from "./brief/assemble.js";
+import {
+  extractIssueKeysFromBody,
+  isValidBase,
+  resolveIssue,
+  selectIssueKeys,
+  ticketFromBranch,
+} from "./cli-support.js";
 import { ConfigError, loadConfig } from "./config/load.js";
 import { fetchIssue, JiraError } from "./jira/client.js";
 import type { IssueFacts } from "./jira/types.js";
 import { validate } from "./validate/rules.js";
-import { readRepoState } from "./vcs/git.js";
+import { currentBranch, readRepoState, VcsError } from "./vcs/git.js";
 import { baseCandidates } from "./vcs/github.js";
-import { VcsError } from "./vcs/types.js";
 
 const program = new Command();
 program.name("shipkit").version("0.1.0").exitOverride();
-
-function ticketFromBranch(branch: string, keyPattern: string): string | undefined {
-  const match = new RegExp(keyPattern).exec(branch);
-  return match?.[0];
-}
-
-async function resolveIssue(
-  key: string | undefined,
-  config: { jira: { baseUrl: string } },
-): Promise<IssueFacts | undefined> {
-  if (key === undefined) return undefined;
-  const token = process.env.SHIPKIT_JIRA_TOKEN;
-  if (token === undefined || token.length === 0) return undefined;
-  return fetchIssue(config.jira.baseUrl, key, token);
-}
 
 program
   .command("check")
@@ -34,39 +25,62 @@ program
   .requiredOption("--title <title>", "pull-request title")
   .requiredOption("--body-file <path>", "file holding the pull-request body")
   .option("--config <path>", "path to .shipkit.yml", ".shipkit.yml")
-  .option("--branch <name>", "branch name to validate")
-  .option("--issue <key>", "issue key cited by this change")
+  .option("--branch <name>", "branch name to validate (defaults to the checked-out branch)")
+  .option("--issue <key>", "override which cited issue key to check against Jira")
   .action(async (options: { title: string; bodyFile: string; config: string; branch?: string; issue?: string }) => {
     let body: string;
     try {
       body = readFileSync(options.bodyFile, "utf8");
     } catch {
       console.error(`Cannot read body file at ${options.bodyFile}`);
-      process.exit(2);
+      process.exitCode = 2;
+      return;
     }
 
     try {
       const config = loadConfig(options.config);
-      const issue = await resolveIssue(options.issue, config);
-      const result = validate({
-        title: options.title,
-        body,
-        config,
-        branch: options.branch,
-        issues: issue === undefined ? undefined : [issue],
-      });
+
+      let branch = options.branch;
+      if (branch === undefined) {
+        try {
+          branch = currentBranch();
+        } catch {
+          // Not a git repository, or git is unavailable — branch-pattern silently
+          // does not run rather than failing the whole command.
+          branch = undefined;
+        }
+      }
+
+      let issues: IssueFacts[] | undefined;
+      if (options.issue !== undefined) {
+        const token = process.env.SHIPKIT_JIRA_TOKEN;
+        if (token === undefined || token.length === 0) {
+          console.error(
+            "issue-level validation was requested with --issue, but SHIPKIT_JIRA_TOKEN is unset",
+          );
+          process.exitCode = 2;
+          return;
+        }
+        const bodyKeys = extractIssueKeysFromBody(body, config);
+        const keys = selectIssueKeys(bodyKeys, options.issue);
+        issues = await Promise.all(keys.map((key) => fetchIssue(config.jira.baseUrl, key, token)));
+      }
+
+      const result = validate({ title: options.title, body, config, branch, issues });
       if (result.ok) {
         console.log("ok");
-        process.exit(0);
+        process.exitCode = 0;
+        return;
       }
       for (const finding of result.findings) {
         console.error(`${finding.rule}: ${finding.message}`);
       }
-      process.exit(1);
+      process.exitCode = 1;
     } catch (error) {
       if (error instanceof ConfigError || error instanceof JiraError) {
         console.error(error.message);
-        process.exit(2);
+        process.exitCode = 2;
+        return;
       }
       throw error;
     }
@@ -83,7 +97,16 @@ program
         "--base is required when stdin is not a terminal. Valid targets are the repository's " +
           "default branch or an active release/* branch — pass one explicitly with --base.",
       );
-      process.exit(2);
+      process.exitCode = 2;
+      return;
+    }
+
+    if (options.base !== undefined && !isValidBase(options.base)) {
+      console.error(
+        `Invalid --base "${options.base}": expected a branch or ref name, not an option`,
+      );
+      process.exitCode = 2;
+      return;
     }
 
     try {
@@ -101,23 +124,28 @@ program
       const issue = await resolveIssue(key, config);
       const brief = assembleBrief({ repo, target: { branch: base, reason }, config, issue });
       console.log(JSON.stringify(brief, null, 2));
-      process.exit(0);
+      process.exitCode = 0;
     } catch (error) {
       if (error instanceof ConfigError || error instanceof VcsError || error instanceof JiraError) {
         console.error(error.message);
-        process.exit(2);
+        process.exitCode = 2;
+        return;
       }
       throw error;
     }
   });
 
 try {
-  program.parse();
+  // parseAsync (not parse) so that a rejection from an async action's `throw error` — an
+  // internal bug, not a validation finding — surfaces here instead of becoming an unhandled
+  // promise rejection that bypasses this try/catch entirely.
+  await program.parseAsync();
 } catch (error) {
   if (error instanceof CommanderError) {
     const isHelpOrVersion =
       error.code === "commander.helpDisplayed" || error.code === "commander.version";
-    process.exit(isHelpOrVersion ? 0 : 2);
+    process.exitCode = isHelpOrVersion ? 0 : 2;
+  } else {
+    throw error;
   }
-  throw error;
 }

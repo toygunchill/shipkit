@@ -193,4 +193,13 @@ describe("issue-level", () => {
     const result = validate({ title: TITLE, body: goodBody, config, issues: [orphan] });
     expect(result.findings.map((f) => f.rule)).not.toContain("issue-level");
   });
+
+  it("accepts a Bug cited directly even if it has a parent", () => {
+    const bugWithParent = {
+      key: "ABC-31086", type: "Bug", summary: "b",
+      parent: { key: "ABC-31000", type: "Epic", summary: "e" },
+    };
+    const result = validate({ title: TITLE, body: goodBody, config, issues: [bugWithParent] });
+    expect(result.findings.map((f) => f.rule)).not.toContain("issue-level");
+  });
 });

@@ -8,8 +8,9 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
-    "check": "tsc --noEmit"
+    "test": "npm run build && vitest run",
+    "check": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "commander": "^12.1.0",

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { Command } from "commander";
+import { Command, CommanderError } from "commander";
 import { ConfigError, loadConfig } from "./config/load.js";
 import { validate } from "./validate/rules.js";
 
 const program = new Command();
-program.name("shipkit").version("0.1.0");
+program.name("shipkit").version("0.1.0").exitOverride();
 
 program
   .command("check")
@@ -42,4 +42,13 @@ program
     }
   });
 
-program.parse();
+try {
+  program.parse();
+} catch (error) {
+  if (error instanceof CommanderError) {
+    const isHelpOrVersion =
+      error.code === "commander.helpDisplayed" || error.code === "commander.version";
+    process.exit(isHelpOrVersion ? 0 : 2);
+  }
+  throw error;
+}

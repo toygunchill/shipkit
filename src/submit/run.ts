@@ -50,6 +50,13 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
     return 2;
   }
 
+  // Tracks how far the mutating tail got before a VcsError escaped, so the error report can
+  // say what state the repository was actually left in — a local commit is cheap to keep,
+  // amend, or drop, but only telling the reader it exists lets them make that call instead of
+  // discovering it themselves the next time `commitAll` fails on "nothing to commit".
+  let committed = false;
+  let pushed = false;
+
   try {
     const config = deps.loadConfig(options.config);
     const response = deps.loadResponse(options.input);
@@ -94,7 +101,9 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
     }
 
     deps.commitAll(response.commitMessage);
+    committed = true;
     deps.pushBranch(branch);
+    pushed = true;
     const url = deps.createPullRequest({
       title: response.title,
       body,
@@ -111,6 +120,18 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       error instanceof JiraError
     ) {
       deps.err(error.message);
+      // Only a VcsError thrown by pushBranch or createPullRequest can land here with
+      // `committed` true — readRepoState/findPullRequest failures happen before commitAll,
+      // and the other error classes can't occur this late in the sequence at all. Guarding on
+      // `error instanceof VcsError` anyway keeps the claim tied to the failure it actually
+      // describes, not merely to which local ran last.
+      if (error instanceof VcsError && committed) {
+        deps.err(
+          pushed
+            ? "A commit was created and already pushed to the remote branch; no pull request was opened. It is yours to keep, amend, or drop."
+            : "A commit was created locally and has not been pushed. It is yours to keep, amend, or drop.",
+        );
+      }
       return 2;
     }
     throw error;

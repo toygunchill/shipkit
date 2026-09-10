@@ -233,7 +233,7 @@ describe("runSubmit", () => {
   });
 
   it("returns 2 when pushBranch throws VcsError, after commitAll already ran", async () => {
-    const { deps, calls } = makeDeps({
+    const { deps, calls, err } = makeDeps({
       pushBranch: () => {
         throw new VcsError("git push --set-upstream origin failed: rejected");
       },
@@ -247,5 +247,46 @@ describe("runSubmit", () => {
     // nothing pushed and no pull request opened).
     const order = calls.filter((c) => ["commitAll", "pushBranch", "createPullRequest"].includes(c.fn)).map((c) => c.fn);
     expect(order).toEqual(["commitAll", "pushBranch"]);
+    // The underlying git message is still reported, plus a line saying a commit now exists
+    // locally and was never pushed — otherwise a re-run's "nothing to commit" failure from
+    // commitAll would be the reader's first clue that anything was left behind.
+    expect(err.join("\n")).toContain("git push --set-upstream origin failed: rejected");
+    expect(err.join("\n")).toContain("A commit was created locally and has not been pushed.");
+    expect(err.join("\n")).not.toContain("already pushed");
+  });
+
+  it("returns 2 when createPullRequest throws VcsError, and says the commit was already pushed", async () => {
+    const { deps, calls, err } = makeDeps({
+      createPullRequest: () => {
+        throw new VcsError("gh pr create failed: not authenticated");
+      },
+    });
+
+    const code = await runSubmit(OPTIONS, deps);
+
+    expect(code).toBe(2);
+    const order = calls.filter((c) => ["commitAll", "pushBranch", "createPullRequest"].includes(c.fn)).map((c) => c.fn);
+    expect(order).toEqual(["commitAll", "pushBranch", "createPullRequest"]);
+    // By this point the commit has been pushed to the remote branch, so a claim of "has not
+    // been pushed" would be false — the wording must reflect that no pull request exists yet
+    // rather than reusing the pre-push sentence verbatim.
+    expect(err.join("\n")).toContain("gh pr create failed: not authenticated");
+    expect(err.join("\n")).toContain("A commit was created and already pushed to the remote branch");
+    expect(err.join("\n")).not.toContain("has not been pushed");
+  });
+
+  it("does not claim a commit exists when a VcsError is raised before commitAll runs", async () => {
+    const { deps, calls, err } = makeDeps({
+      readRepoState: () => {
+        throw new VcsError("git log --end-of-options develop..HEAD failed: unknown revision");
+      },
+    });
+
+    const code = await runSubmit(OPTIONS, deps);
+
+    expect(code).toBe(2);
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
+    expect(err.join("\n")).toContain("git log --end-of-options develop..HEAD failed: unknown revision");
+    expect(err.join("\n")).not.toContain("commit was created");
   });
 });

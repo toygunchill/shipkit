@@ -940,6 +940,7 @@ describe("the approval surface", () => {
         head: sent!.head,
         title: sent!.title,
         commitMessage: sent!.commitMessage,
+        diffstat: sent!.diffstat,
         warnings: sent!.warnings,
       }),
     );

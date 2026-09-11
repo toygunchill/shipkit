@@ -294,18 +294,23 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
 
       // Reading the facts is what makes a situation; both the question and the check
       // after the answer are built from the same helper so they cannot drift.
-      const situationOf = (facts: { head: string; warnings: Warning[] }): Situation => ({
+      const situationOf = (facts: {
+        head: string;
+        diffstat: string;
+        warnings: Warning[];
+      }): Situation => ({
         repo: repoPath,
         branch,
         base: options.base,
         head: facts.head,
         title: response.title,
         commitMessage: response.commitMessage,
+        diffstat: facts.diffstat,
         warnings: facts.warnings,
       });
 
       const head = deps.readHeadSha();
-      const situation = situationOf({ head, warnings });
+      const situation = situationOf({ head, diffstat: repo.diffstat, warnings });
       approvalFingerprint = fingerprint(situation);
       const answer = await deps.requestApproval(
         {
@@ -317,7 +322,10 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
           head: situation.head,
           title: response.title,
           commitMessage: response.commitMessage,
-          diffstat: repo.diffstat,
+          // `situation.diffstat`, never a second reading of it: the wire carries
+          // exactly the string that was hashed, so what the panel renders is
+          // provably what the fingerprint was taken over.
+          diffstat: situation.diffstat,
           // In canonical order, so what a person is shown can never diverge from what
           // was hashed — preflight emits these in check-order, not alphabetical.
           warnings: sortWarnings(warnings),
@@ -335,10 +343,15 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       if (approval === "approved") {
         const freshHead = deps.readHeadSha();
         const freshPr = deps.findPullRequest(branch);
+        // One reading, not two: the commits that feed preflight and the diffstat
+        // that goes into the hash have to describe the same moment, or a commit
+        // landing between the two calls produces a fingerprint that never
+        // matched anything.
+        const freshRepo = deps.readRepoState(options.base);
         const freshWarnings = preflight({
           branch,
           base: options.base,
-          commits: deps.readRepoState(options.base).commits,
+          commits: freshRepo.commits,
           ticketKey,
           issueVerified,
           pullRequest: freshPr,
@@ -349,8 +362,13 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
         }).warnings;
 
         if (
-          fingerprint(situationOf({ head: freshHead, warnings: freshWarnings })) !==
-          approvalFingerprint
+          fingerprint(
+            situationOf({
+              head: freshHead,
+              diffstat: freshRepo.diffstat,
+              warnings: freshWarnings,
+            }),
+          ) !== approvalFingerprint
         ) {
           const message =
             "The situation changed while the approval was pending; asking again from the start.";

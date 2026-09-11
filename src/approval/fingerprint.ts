@@ -11,10 +11,21 @@ export type Situation = {
   title: string;
   /** The commit message, as the application displays it. */
   commitMessage: string;
+  /** The size of the change, as the application displays it. */
+  diffstat: string;
   warnings: Warning[];
 };
 
-const VERSION = "shipkit-approval-v1";
+/**
+ * The marker for *this* canonical form, bumped to v2 when `diffstat` joined the
+ * hash. Deliberately not `PROTOCOL_VERSION`, which stays at 1: the wire shape
+ * did not change — `diffstat` was always transmitted and the application always
+ * displayed it — only what is bound did. Resyncing the two would announce a
+ * version disagreement to every surface that is in fact perfectly compatible,
+ * and a shipkit and an application that disagree about the hash already refuse
+ * each other by fingerprint mismatch, which is the check that matters.
+ */
+const VERSION = "shipkit-approval-v2";
 
 /**
  * Warnings ordered by check id, then message, using code-unit order — the same order
@@ -62,6 +73,7 @@ export function canonical(situation: Situation): string {
     field(situation.head),
     field(situation.title),
     field(situation.commitMessage),
+    field(situation.diffstat),
     String(sorted.length),
   ];
   for (const warning of sorted) {

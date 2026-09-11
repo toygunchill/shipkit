@@ -10,11 +10,12 @@ public struct Situation: Sendable, Equatable {
     public let head: String
     public let title: String
     public let commitMessage: String
+    public let diffstat: String
     public let warnings: [Warning]
 
     public init(
         repo: String, branch: String, base: String, head: String,
-        title: String, commitMessage: String, warnings: [Warning]
+        title: String, commitMessage: String, diffstat: String, warnings: [Warning]
     ) {
         self.repo = repo
         self.branch = branch
@@ -22,11 +23,20 @@ public struct Situation: Sendable, Equatable {
         self.head = head
         self.title = title
         self.commitMessage = commitMessage
+        self.diffstat = diffstat
         self.warnings = warnings
     }
 }
 
-private let version = "shipkit-approval-v1"
+/// The marker for *this* canonical form, bumped to v2 when `diffstat` joined
+/// the hash. Deliberately not `protocolVersion`, which stays at 1: the wire
+/// shape did not change — `diffstat` was always transmitted and `ApprovalPanel`
+/// always displayed it — only what is bound did. Resyncing the two would
+/// announce a version disagreement to every shipkit that is in fact perfectly
+/// compatible, and a shipkit and an application that disagree about the hash
+/// already refuse each other by fingerprint mismatch, which is the check that
+/// matters.
+private let version = "shipkit-approval-v2"
 
 /// Code-unit order, matching the TypeScript. Not `localeCompare`, which is
 /// locale-sensitive, and not a collation that would put "alpha" before "Alpha".
@@ -84,6 +94,7 @@ public func canonical(_ situation: Situation) -> String {
         field(situation.head),
         field(situation.title),
         field(situation.commitMessage),
+        field(situation.diffstat),
         String(sorted.count),
     ]
     for warning in sorted {
@@ -105,7 +116,8 @@ public extension ApprovalRequest {
     var situation: Situation {
         Situation(
             repo: repo, branch: branch, base: base, head: head,
-            title: title, commitMessage: commitMessage, warnings: warnings
+            title: title, commitMessage: commitMessage, diffstat: diffstat,
+            warnings: warnings
         )
     }
 }

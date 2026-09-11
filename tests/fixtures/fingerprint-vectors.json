@@ -8,9 +8,10 @@
       "head": "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
       "title": "fix(invoice): default citizenship",
       "commitMessage": "fix(invoice): default citizenship",
+      "diffstat": "12 files changed, 148 insertions(+), 37 deletions(-)",
       "warnings": []
     },
-    "fingerprint": "e051929ea996355dba72c20c511fd29754d9c2addd485aa70d4d4e2cacc6db75"
+    "fingerprint": "35226206c3f123a3fcfa572ddec787f12ae9116c899772b8a25da0f74c20519a"
   },
   {
     "name": "two warnings",
@@ -21,6 +22,7 @@
       "head": "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
       "title": "fix(invoice): default citizenship",
       "commitMessage": "fix(invoice): default citizenship",
+      "diffstat": "12 files changed, 148 insertions(+), 37 deletions(-)",
       "warnings": [
         {
           "check": "approvals-dismissed",
@@ -32,7 +34,7 @@
         }
       ]
     },
-    "fingerprint": "13099b9d05e2f39848d02eafb73514b44438357a6b9b2190a963076d0f09b05f"
+    "fingerprint": "7fe2cb5c521d5d9bede9f50376d14ee862902f994bb4cfc543d9d8005ac09c10"
   },
   {
     "name": "warnings out of order",
@@ -43,6 +45,7 @@
       "head": "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
       "title": "fix(invoice): default citizenship",
       "commitMessage": "fix(invoice): default citizenship",
+      "diffstat": " src/a.swift | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)",
       "warnings": [
         {
           "check": "blocking-label",
@@ -58,7 +61,7 @@
         }
       ]
     },
-    "fingerprint": "1f43a20c95e8bcd581d390d40e587503e3b61f719fa1e9e38ebf47f05d180cce"
+    "fingerprint": "9f8e29d058d05a283718887ed0d13fc61bfef696d0ca7546e85f4d583787e8ba"
   },
   {
     "name": "non-ascii in every field",
@@ -69,6 +72,7 @@
       "head": "b44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
       "title": "düzelt(fatura): vatandaşlık varsayılanı",
       "commitMessage": "düzelt(fatura): vatandaşlık varsayılanı",
+      "diffstat": " kaynak/fatura.swift | 4 ++--\n 1 dosya değişti",
       "warnings": [
         {
           "check": "foreign-commits",
@@ -76,7 +80,7 @@
         }
       ]
     },
-    "fingerprint": "29a0c06c792f97413e7c1f886b6628ee7f09df61284ef29533d859c453c6e806"
+    "fingerprint": "f75364fab96777b0ca22db46d27d1efecf3ec8a816832d6535e52868c9a3f5f4"
   },
   {
     "name": "a message that looks like the encoding",
@@ -87,6 +91,7 @@
       "head": "c44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
       "title": "x",
       "commitMessage": "y",
+      "diffstat": "1:2\n3:4",
       "warnings": [
         {
           "check": "x",
@@ -94,7 +99,7 @@
         }
       ]
     },
-    "fingerprint": "886938618412fd16b07f0dae8a195c68d3d0d890f2eaaf1cad293c6fd7287d2b"
+    "fingerprint": "7f6b137c396b14183de59fd6c921c54ce637c2b4df4e4eb6f093f148f3ee2b2c"
   },
   {
     "name": "astral characters (emoji)",
@@ -105,6 +110,7 @@
       "head": "d44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
       "title": "fix 🎉 the thing",
       "commitMessage": "fix 🎉 the thing",
+      "diffstat": " party.swift 🎉 | 1 +\n 1 file changed, 1 insertion(+)",
       "warnings": [
         {
           "check": "untracked-files",
@@ -112,7 +118,7 @@
         }
       ]
     },
-    "fingerprint": "638e730acc8c4c065642195409cf969d0cc389d0e05e7035284f07208e5a912c"
+    "fingerprint": "026bac7f17da7acdd480d3b0010a5d41fdf4bd4ebfe4019bc6dea3321256525b"
   },
   {
     "name": "multi-digit warning count",
@@ -123,6 +129,7 @@
       "head": "e44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
       "title": "t",
       "commitMessage": "m",
+      "diffstat": " 400 files changed, 9999 insertions(+), 1 deletion(-)",
       "warnings": [
         {
           "check": "a",
@@ -166,7 +173,7 @@
         }
       ]
     },
-    "fingerprint": "ba5120ffd8c42be1902625b3a950ae1d1fe277c3683782b4b444f574663fb56a"
+    "fingerprint": "b773238eb545fc6135dae41e77ffc42bee2cf40b7700c54e85c27c5d90c552da"
   },
   {
     "name": "empty-string field",
@@ -177,9 +184,10 @@
       "head": "f44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
       "title": "",
       "commitMessage": "",
+      "diffstat": "",
       "warnings": []
     },
-    "fingerprint": "20dec7d57deda5f8668b92f26ab976961bc55d2896a1336b7c2d46fe6dbfa8d8"
+    "fingerprint": "37140bf69efc42dc40d949f5cdcdb7be70af8057576619055a275c050c2df042"
   },
   {
     "name": "astral vs. BMP-above-U+E000, same check (UTF-16 vs. Unicode-scalar sort)",
@@ -190,6 +198,7 @@
       "head": "g44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
       "title": "t",
       "commitMessage": "m",
+      "diffstat": " a.swift | 1 +",
       "warnings": [
         {
           "check": "x",
@@ -201,7 +210,7 @@
         }
       ]
     },
-    "fingerprint": "781c73eb37bcdb4925641ac518430bb9d329fbff07c4f5871dd884059800df17"
+    "fingerprint": "077c39be5f2f21ac1179b0c6a95e634d843d4cce351cd7c8c89cce9fdfa3901c"
     },
   {
     "name": "check ids canonically equal but byte-different (combining mark vs. precomposed)",
@@ -212,6 +221,7 @@
       "head": "h44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
       "title": "t",
       "commitMessage": "m",
+      "diffstat": " b.swift | 1 +",
       "warnings": [
         {
           "check": "caf\u0065\u0301",
@@ -223,7 +233,7 @@
         }
       ]
     },
-    "fingerprint": "00acd8f4ce8eabb436a8b72781b2d02ed0868984b3aaf1d9872312bb2a4cbd8e"
+    "fingerprint": "94be8c17a3aff93cb787470ff0a41226389a7006a39012bd5b6eedb6b5c9ba5d"
   },
   {
     "name": "check ids canonically equal but byte-different, messages identical",
@@ -234,6 +244,7 @@
       "head": "i44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
       "title": "t",
       "commitMessage": "m",
+      "diffstat": " c.swift | 1 +",
       "warnings": [
         {
           "check": "caf\u00e9",
@@ -245,6 +256,6 @@
         }
       ]
     },
-    "fingerprint": "f5edc9d547ea1d5bd6c0674ee9fbcbb5098e87dfcbabfd7c7b34f3ab06c88858"
+    "fingerprint": "c2c90950db97a8cc576141e6b27fbb570794d697e3e3b37cbc2d881c94106d25"
   }
 ]

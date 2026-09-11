@@ -41,8 +41,18 @@ describe("configPath", () => {
     expect(configPath({ repo: "/repo" })).toBe("/repo/.shipkit.yml");
   });
 
-  it("uses an explicit config as given", () => {
+  it("uses an explicit absolute config as given", () => {
     expect(configPath({ repo: "/repo", config: "/elsewhere/x.yml" })).toBe("/elsewhere/x.yml");
+  });
+
+  it("resolves a relative config against the repository, not the process cwd", () => {
+    expect(configPath({ repo: "/repo", config: "team/.shipkit.yml" })).toBe(
+      "/repo/team/.shipkit.yml",
+    );
+  });
+
+  it("treats an empty-string config as absent", () => {
+    expect(configPath({ repo: "/repo", config: "" })).toBe("/repo/.shipkit.yml");
   });
 });
 
@@ -100,6 +110,13 @@ describe("handlePreview", () => {
     const { deps, seen } = makeDeps();
     await handlePreview({ ...ARGS, acknowledge: ["untracked-files"] }, deps);
     expect(seen[0].mode).toBe("preview");
+    expect(seen[0].acknowledge).toEqual([]);
+  });
+
+  it("forwards an empty acknowledge even when handed a non-empty array", async () => {
+    const { deps, seen } = makeDeps();
+    await handlePreview({ ...ARGS, acknowledge: ["untracked-files", "unpushed-commits"] }, deps);
+    expect(seen[0].acknowledge).toEqual([]);
   });
 });
 
@@ -120,6 +137,25 @@ describe("handleApply", () => {
     await handleApply(ARGS, deps);
 
     expect(seen[0].acknowledge).toEqual([]);
+  });
+
+  // A model can send arguments a compile-time type never sees. The bare string "all" is
+  // exactly what runSubmit's own "all" acknowledgement means — if it slipped through here
+  // unchecked it would open the gate on every warning, not just the ones actually acknowledged.
+  it("treats a bare string acknowledge as nothing acknowledged, not as all", async () => {
+    const { deps, seen } = makeDeps();
+
+    await handleApply({ ...ARGS, acknowledge: "all" as unknown as string[] }, deps);
+
+    expect(seen[0].acknowledge).toEqual([]);
+  });
+
+  it("forwards a genuine array acknowledge as-is, including one literally named 'all'", async () => {
+    const { deps, seen } = makeDeps();
+
+    await handleApply({ ...ARGS, acknowledge: ["all"] }, deps);
+
+    expect(seen[0].acknowledge).toEqual(["all"]);
   });
 
   it("reports a thrown adapter failure as content rather than throwing", async () => {

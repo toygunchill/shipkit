@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { assembleBrief } from "../brief/assemble.js";
 import type { ShipkitConfig } from "../config/schema.js";
 import { briefContent, failureContent, applyContent, previewContent } from "./result.js";
@@ -27,11 +27,25 @@ export type SubmitArgs = {
 };
 
 export function configPath(args: { repo: string; config?: string }): string {
-  return args.config ?? join(args.repo, ".shipkit.yml");
+  // "" is absent too — `??` alone would read it as an explicit path and fail open.
+  if (!args.config) return join(args.repo, ".shipkit.yml");
+  // A relative config is relative to the caller's repository, not the server process's cwd —
+  // a long-lived server serves several repositories from one process. An absolute path is
+  // left exactly as given.
+  return isAbsolute(args.config) ? args.config : join(args.repo, args.config);
 }
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// Arguments arrive from a model, before any schema validates them (that lands in a later
+// task). The declared `string[] | undefined` type of `SubmitArgs["acknowledge"]` is only a
+// compile-time hint here — at runtime the value can be anything a caller sends, including the
+// bare string "all", which `runSubmit` reads as everything-acknowledged. Anything that is not
+// genuinely an array of strings means nothing was acknowledged, same as a missing value.
+function acknowledged(value: unknown): string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : [];
 }
 
 export async function handleBrief(args: BriefArgs, deps: ToolDeps): Promise<ToolContent> {
@@ -68,9 +82,10 @@ async function run(
       // apparatus the CLI needs is skipped rather than handed a value to special-case.
       responsePath: undefined,
       mode,
-      // A missing acknowledge means nothing was acknowledged. Defaulting it to "all" would
-      // turn the gate into a formality the caller never has to notice.
-      acknowledge: mode === "apply" ? (args.acknowledge ?? []) : [],
+      // A missing or malformed acknowledge means nothing was acknowledged. Defaulting it to
+      // "all" — whether the value is absent or simply not an array — would turn the gate into
+      // a formality the caller never has to notice.
+      acknowledge: mode === "apply" ? acknowledged(args.acknowledge) : [],
     },
     deps.submitDeps(args.repo),
   );

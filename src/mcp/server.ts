@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { realpathSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { loadConfig } from "../config/load.js";
 import { resolveIssue } from "../cli-support.js";
@@ -19,7 +20,15 @@ import { handleApply, handleBrief, handlePreview } from "./tools.js";
 import type { ToolDeps } from "./tools.js";
 
 const repoAndBase = {
-  repo: z.string().describe("Absolute path to the repository to act on"),
+  // A relative path (e.g. "." or "repo") resolves against the server process's own cwd, not
+  // the caller's intended repository — configPath and every adapter would then read and
+  // mutate whatever directory the long-lived server happens to have been started from,
+  // silently, since that directory is a perfectly valid git repository too. Requiring an
+  // absolute path here, not just documenting it, is what prevents that.
+  repo: z
+    .string()
+    .refine((value) => isAbsolute(value), { message: "repo must be an absolute path" })
+    .describe("Absolute path to the repository to act on"),
   base: z.string().describe("Branch the pull request targets, e.g. develop"),
   config: z.string().optional().describe("Path to .shipkit.yml; defaults to <repo>/.shipkit.yml"),
 };

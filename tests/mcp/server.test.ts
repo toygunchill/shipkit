@@ -8,12 +8,22 @@ import type { SubmitDeps, SubmitOptions, SubmitResult } from "../../src/submit/r
 
 const CONFIG = loadConfig("tests/fixtures/valid.shipkit.yml");
 
-function fakeDeps(seen: SubmitOptions[]): ToolDeps {
+function fakeDeps(seen: SubmitOptions[], calls: string[] = []): ToolDeps {
   return {
-    submitDeps: () => ({}) as SubmitDeps,
-    loadConfig: () => CONFIG,
-    readRepoState: () => ({ branch: "bugfix/x/1-y", changedFiles: [], diffstat: "", commits: [] }),
+    submitDeps: () => {
+      calls.push("submitDeps");
+      return {} as SubmitDeps;
+    },
+    loadConfig: () => {
+      calls.push("loadConfig");
+      return CONFIG;
+    },
+    readRepoState: () => {
+      calls.push("readRepoState");
+      return { branch: "bugfix/x/1-y", changedFiles: [], diffstat: "", commits: [] };
+    },
     runSubmit: async (options: SubmitOptions) => {
+      calls.push("runSubmit");
       seen.push(options);
       return {
         code: 0, findings: [], warnings: [], body: "## Summary\n\ns\n",
@@ -23,9 +33,9 @@ function fakeDeps(seen: SubmitOptions[]): ToolDeps {
   };
 }
 
-async function connect(seen: SubmitOptions[]) {
+async function connect(seen: SubmitOptions[], calls: string[] = []) {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const server = createServer(fakeDeps(seen));
+  const server = createServer(fakeDeps(seen, calls));
   const client = new Client({ name: "test", version: "0" });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   return client;
@@ -70,6 +80,28 @@ describe("the MCP server", () => {
       expect(tool.inputSchema.required).toContain("repo");
       expect(tool.inputSchema.required).toContain("base");
     }
+  });
+
+  // A relative repo (e.g. ".") resolves against the server process's own cwd, not the
+  // caller's intended directory — configPath and every adapter would then read and mutate
+  // whatever directory the long-lived server happens to have been started from. The schema
+  // must catch this before the handler runs at all, not merely fail somewhere downstream.
+  it("rejects a relative repo before any dependency is called", async () => {
+    const seen: SubmitOptions[] = [];
+    const calls: string[] = [];
+    const client = await connect(seen, calls);
+
+    const result = await client.callTool({
+      name: "shipkit_preview",
+      arguments: {
+        repo: ".", base: "develop",
+        title: "[ABC-1] fix(x): y", commitMessage: "fix(x): y",
+        sections: { Summary: "s" },
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(calls).toEqual([]);
   });
 
   it("routes a preview call through to the core in preview mode", async () => {

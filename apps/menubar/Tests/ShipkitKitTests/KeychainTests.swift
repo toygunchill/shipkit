@@ -6,44 +6,54 @@ import Testing
 // real "shipkit" item or with another test run.
 private let testService = "shipkit-test-\(UUID().uuidString)"
 
+// Swift Testing runs tests in a suite concurrently by default. Four tests
+// sharing one account raced on the same keychain item -- duplicate-item
+// errors on `swift test`, and once a hang on a live SecurityAgent prompt. A
+// fresh UUID account per test function makes them genuinely independent
+// rather than dependent on `--no-parallel` to serialize them.
+
 @Test func readsNilWhenTheItemIsAbsent() throws {
     let keychain = Keychain(service: testService)
-    #expect(try keychain.read(account: "jira") == nil)
+    #expect(try keychain.read(account: UUID().uuidString) == nil)
 }
 
 @Test func writesThenReadsBackTheSameSecret() throws {
     let keychain = Keychain(service: testService)
-    defer { try? keychain.delete(account: "jira") }
+    let account = UUID().uuidString
+    defer { try? keychain.delete(account: account) }
 
-    try keychain.write("s3cret", account: "jira")
-    #expect(try keychain.read(account: "jira") == "s3cret")
+    try keychain.write("s3cret", account: account)
+    #expect(try keychain.read(account: account) == "s3cret")
 }
 
 @Test func replacesAnExistingSecret() throws {
     let keychain = Keychain(service: testService)
-    defer { try? keychain.delete(account: "jira") }
+    let account = UUID().uuidString
+    defer { try? keychain.delete(account: account) }
 
-    try keychain.write("first", account: "jira")
-    try keychain.write("second", account: "jira")
-    #expect(try keychain.read(account: "jira") == "second")
+    try keychain.write("first", account: account)
+    try keychain.write("second", account: account)
+    #expect(try keychain.read(account: account) == "second")
 }
 
 @Test func deletingAnAbsentItemIsNotAnError() throws {
     let keychain = Keychain(service: testService)
-    #expect(throws: Never.self) { try keychain.delete(account: "jira") }
+    #expect(throws: Never.self) { try keychain.delete(account: UUID().uuidString) }
 }
 
 @Test func deleteRemovesIt() throws {
     let keychain = Keychain(service: testService)
-    try keychain.write("gone-soon", account: "jira")
-    try keychain.delete(account: "jira")
-    #expect(try keychain.read(account: "jira") == nil)
+    let account = UUID().uuidString
+    try keychain.write("gone-soon", account: account)
+    try keychain.delete(account: account)
+    #expect(try keychain.read(account: account) == nil)
 }
 
 @Test func handlesANonAsciiSecret() throws {
     let keychain = Keychain(service: testService)
-    defer { try? keychain.delete(account: "jira") }
+    let account = UUID().uuidString
+    defer { try? keychain.delete(account: account) }
 
-    try keychain.write("şifre-🎉", account: "jira")
-    #expect(try keychain.read(account: "jira") == "şifre-🎉")
+    try keychain.write("şifre-🎉", account: account)
+    #expect(try keychain.read(account: account) == "şifre-🎉")
 }

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   canonical,
+  changedFields,
   fingerprint,
   sortWarnings,
   type Situation,
@@ -154,6 +155,44 @@ describe("fingerprint", () => {
 
   it("is stable across calls", () => {
     expect(fingerprint(BASE)).toBe(fingerprint(structuredClone(BASE)));
+  });
+});
+
+// Built for `runSubmit`'s refusal after a fingerprint mismatch: "the situation changed"
+// alone gives a person nothing to act on, so the refusal names which field moved instead.
+describe("changedFields", () => {
+  it("is empty for two identical situations", () => {
+    expect(changedFields(BASE, structuredClone(BASE))).toEqual([]);
+  });
+
+  it("names diffstat alone when only the diffstat differs", () => {
+    const after = { ...BASE, diffstat: "13 files changed, 149 insertions(+), 37 deletions(-)" };
+    expect(changedFields(BASE, after)).toEqual(["diffstat"]);
+  });
+
+  it("names head alone when only the head commit differs", () => {
+    const after = { ...BASE, head: "b44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd" };
+    expect(changedFields(BASE, after)).toEqual(["head"]);
+  });
+
+  it("names warnings when the warning list differs, without touching unrelated fields", () => {
+    const after = { ...BASE, warnings: [] };
+    expect(changedFields(BASE, after)).toEqual(["warnings"]);
+  });
+
+  it("names every field that changed, in a fixed order, not just the first", () => {
+    const after: Situation = {
+      ...BASE,
+      head: "b44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      diffstat: "0 files changed",
+      warnings: [],
+    };
+    expect(changedFields(BASE, after)).toEqual(["head", "diffstat", "warnings"]);
+  });
+
+  it("treats a reordering of the same warnings as no change", () => {
+    const after = { ...BASE, warnings: [...BASE.warnings].reverse() };
+    expect(changedFields(BASE, after)).toEqual([]);
   });
 });
 

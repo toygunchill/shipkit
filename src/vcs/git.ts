@@ -100,7 +100,12 @@ export function readPushDiffstat(
     gitWithIndex(["read-tree", "--end-of-options", mergeBase], cwd, index);
     gitWithIndex(["add", "--all", ...pathspec], cwd, index);
     return gitWithIndex(
-      ["diff", "--cached", "--stat", "--end-of-options", mergeBase, ...pathspec],
+      // `--no-relative` overrides `diff.relative`. That config makes git print paths (and
+      // count "N files changed") relative to `cwd` even with an explicit `:/` pathspec —
+      // measured, not assumed: from a subdirectory, with `diff.relative` set, a file outside
+      // cwd drops out of the stat entirely rather than just displaying oddly. `readUntrackedFiles`
+      // above fends off the same axis with `:/` and `--full-name`; `:/` alone doesn't reach here.
+      ["diff", "--cached", "--stat", "--no-relative", "--end-of-options", mergeBase, ...pathspec],
       cwd,
       index,
     ).trim();

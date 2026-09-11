@@ -211,7 +211,7 @@
       ]
     },
     "fingerprint": "077c39be5f2f21ac1179b0c6a95e634d843d4cce351cd7c8c89cce9fdfa3901c"
-    },
+  },
   {
     "name": "check ids canonically equal but byte-different (combining mark vs. precomposed)",
     "situation": {

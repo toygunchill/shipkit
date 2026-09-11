@@ -1106,6 +1106,35 @@ describe("the approval surface", () => {
     expect(calls.some((c) => c.fn === "createPullRequest")).toBe(false);
   });
 
+  // "The situation changed" alone gives a person on a churning repository nothing to act
+  // on, and the retry it invites fails the same way forever — an editor autosave or a
+  // watcher's output during the 120-second wait moves the diffstat every time. Naming the
+  // field points at what actually happened instead.
+  it("names which field changed when the re-derived situation no longer matches", async () => {
+    let reads = 0;
+    const { deps, err } = makeDeps({
+      ...warned,
+      requestApproval: async () => ({ outcome: "approved" as const }),
+      // First read is the one hashed into the request; the second stands in for a
+      // watcher or autosave touching the tree while the person was deciding.
+      readPushDiffstat: () => {
+        reads += 1;
+        return reads === 1
+          ? " a.ts | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)"
+          : " a.ts | 2 +-\n b.ts | 1 +\n 2 files changed, 2 insertions(+), 1 deletion(-)";
+      },
+    });
+
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+
+    expect(result.code).toBe(2);
+    expect(result.message).toContain("diffstat");
+    expect(result.message).not.toBe(
+      "The situation changed while the approval was pending; asking again from the start.",
+    );
+    expect(err.join("\n")).toContain("diffstat");
+  });
+
   it("never asks in preview mode", async () => {
     const { deps, calls } = makeDeps(warned);
     await runSubmit({ ...OPTIONS, mode: "preview", acknowledge: [] }, deps);

@@ -65,8 +65,20 @@ describe("gate", () => {
     });
   });
 
+  it("opens under echo when a person approved", () => {
+    expect(gate({ policy: "echo", warnings: W, acknowledge: [], outcome: "approved" })).toEqual({
+      open: true,
+    });
+  });
+
   it("refuses when a person denied", () => {
     const result = gate({ policy: "echo", warnings: W, acknowledge: [], outcome: "denied" });
+    expect(result.open).toBe(false);
+    expect(result).toMatchObject({ reason: "denied" });
+  });
+
+  it("refuses under human when a person denied", () => {
+    const result = gate({ policy: "human", warnings: W, acknowledge: [], outcome: "denied" });
     expect(result.open).toBe(false);
     expect(result).toMatchObject({ reason: "denied" });
   });
@@ -76,12 +88,24 @@ describe("gate", () => {
     expect(result).toMatchObject({ open: false, reason: "timed-out" });
   });
 
+  it("refuses under human when the wait ran out", () => {
+    const result = gate({ policy: "human", warnings: W, acknowledge: [], outcome: "timed-out" });
+    expect(result).toMatchObject({ open: false, reason: "timed-out" });
+  });
+
   // The property that keeps the application optional: with nothing listening,
   // echo falls back to exactly today's refusal.
   it("falls back to the echo refusal when no surface is running", () => {
     const result = gate({ policy: "echo", warnings: W, acknowledge: [], outcome: "no-surface" });
     expect(result).toMatchObject({ open: false, reason: "unacknowledged" });
     expect(result.open === false && result.unacknowledged).toHaveLength(2);
+  });
+
+  // The echo fallback also means that with nothing listening and the ids covering
+  // the warnings, echo opens exactly as it did before any of this existed.
+  it("opens under echo when no surface is running but the ids cover the warnings", () => {
+    const result = gate({ policy: "echo", warnings: W, acknowledge: "all", outcome: "no-surface" });
+    expect(result).toEqual({ open: true });
   });
 
   // And the same situation under human is a different refusal, because the

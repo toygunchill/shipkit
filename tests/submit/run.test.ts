@@ -101,6 +101,11 @@ function makeDeps(
         // unresolved/non-story cases override this explicitly.
         resolveIssue: (key: string) => Promise.resolve({ key, type: "Story", summary: "" } as IssueFacts),
         readRepoState: () => ({ branch: BRANCH, changedFiles: [], diffstat: "", commits: [] }),
+        // What the push will deliver, which is what the panel shows and what the
+        // fingerprint binds — deliberately not the empty string `readRepoState`
+        // returns here, so a run that fell back to the committed-work diffstat
+        // would be visible rather than indistinguishable.
+        readPushDiffstat: () => " a.ts | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)",
         findPullRequest: () => NO_PR,
         readUntrackedFiles: () => [],
         readRepoRoot: () => "/repo",
@@ -122,6 +127,7 @@ function makeDeps(
     currentBranch: record("currentBranch", merged.currentBranch),
     resolveIssue: record("resolveIssue", merged.resolveIssue),
     readRepoState: record("readRepoState", merged.readRepoState),
+    readPushDiffstat: record("readPushDiffstat", merged.readPushDiffstat),
     findPullRequest: record("findPullRequest", merged.findPullRequest),
     readUntrackedFiles: record("readUntrackedFiles", merged.readUntrackedFiles),
     readRepoRoot: record("readRepoRoot", merged.readRepoRoot),
@@ -144,6 +150,7 @@ const DOMAIN_DEPS = [
   "currentBranch",
   "resolveIssue",
   "readRepoState",
+  "readPushDiffstat",
   "findPullRequest",
   "readUntrackedFiles",
   "readRepoRoot",
@@ -944,6 +951,52 @@ describe("the approval surface", () => {
         warnings: sent!.warnings,
       }),
     );
+  });
+
+  // The size of the change is half of what the reader is judging, and `commitAll` stages
+  // the whole working tree — so the number on the panel has to be the number the push
+  // delivers, measured with the same exclusion the commit is given. Asking
+  // `readRepoState` instead returns `base...HEAD`, committed work only, which on a branch
+  // whose work is still uncommitted is the empty string.
+  it("shows the size of what will be pushed, excluding what the commit excludes", async () => {
+    let sent: ApprovalRequest | undefined;
+    let asked: [string, string[]] | undefined;
+    const { deps, calls } = makeDeps({
+      ...warned,
+      readRepoState: () => ({ branch: BRANCH, changedFiles: [], diffstat: "", commits: [] }),
+      readPushDiffstat: (base: string, exclude: string[]) => {
+        asked = [base, exclude];
+        return " a.ts | 400 ++++\n 400 files changed, 9999 insertions(+)";
+      },
+      requestApproval: async (request: ApprovalRequest) => {
+        sent = request;
+        return { outcome: "denied" as const };
+      },
+    });
+
+    await runSubmit(
+      { ...OPTIONS, responsePath: "/repo/scratch/response.json", mode: "apply", acknowledge: [] },
+      deps,
+    );
+
+    expect(sent?.diffstat).toContain("400 files changed");
+    // The same base and the same exclusion `commitAll` would have been given: a stat
+    // that names the response file contradicts the exclusion the commit applies.
+    expect(asked).toEqual([OPTIONS.base, ["scratch/response.json"]]);
+    // And it is the value that was hashed, not a second reading of the repository.
+    expect(sent?.fingerprint).toBe(
+      fingerprint({
+        repo: sent!.repo,
+        branch: sent!.branch,
+        base: sent!.base,
+        head: sent!.head,
+        title: sent!.title,
+        commitMessage: sent!.commitMessage,
+        diffstat: sent!.diffstat,
+        warnings: sent!.warnings,
+      }),
+    );
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
   });
 
   // preflight emits approvals-dismissed, then foreign-commits, then base-mismatch for this

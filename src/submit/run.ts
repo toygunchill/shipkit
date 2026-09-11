@@ -85,6 +85,12 @@ export type SubmitDeps = {
   currentBranch: () => string;
   resolveIssue: (key: string, config: ShipkitConfig) => Promise<IssueFacts | undefined>;
   readRepoState: (base: string) => RepoState;
+  /**
+   * What the push will deliver, not what is already committed. Takes the same
+   * `exclude` that `commitAll` is given, because the size of the change a person
+   * approves has to be the size of the change that lands.
+   */
+  readPushDiffstat: (base: string, exclude: string[]) => string;
   findPullRequest: (branch: string) => PullRequestState | null;
   readUntrackedFiles: () => string[];
   readRepoRoot: () => string;
@@ -310,7 +316,16 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       });
 
       const head = deps.readHeadSha();
-      const situation = situationOf({ head, diffstat: repo.diffstat, warnings });
+      // Not `repo.diffstat`. That is `base...HEAD`, committed work only, and
+      // `commitAll` below stages the whole working tree — so on a branch whose work
+      // is still uncommitted it is the empty string, and the panel renders a blank
+      // line where the size of the change belongs. The same `exclude` the commit
+      // gets, so the stat cannot name a file the commit will leave out.
+      const situation = situationOf({
+        head,
+        diffstat: deps.readPushDiffstat(options.base, exclude),
+        warnings,
+      });
       approvalFingerprint = fingerprint(situation);
       const answer = await deps.requestApproval(
         {
@@ -343,10 +358,6 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       if (approval === "approved") {
         const freshHead = deps.readHeadSha();
         const freshPr = deps.findPullRequest(branch);
-        // One reading, not two: the commits that feed preflight and the diffstat
-        // that goes into the hash have to describe the same moment, or a commit
-        // landing between the two calls produces a fingerprint that never
-        // matched anything.
         const freshRepo = deps.readRepoState(options.base);
         const freshWarnings = preflight({
           branch,
@@ -365,7 +376,11 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
           fingerprint(
             situationOf({
               head: freshHead,
-              diffstat: freshRepo.diffstat,
+              // Read again, like everything else here. A file written into the
+              // working tree while the person was deciding is a file the push will
+              // now carry, and the whole point of re-hashing is that a situation
+              // which changed underneath an approval no longer satisfies it.
+              diffstat: deps.readPushDiffstat(options.base, exclude),
               warnings: freshWarnings,
             }),
           ) !== approvalFingerprint

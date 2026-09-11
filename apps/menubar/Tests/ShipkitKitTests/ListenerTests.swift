@@ -549,3 +549,127 @@ private func askRaw(_ path: String, _ line: String) -> String? {
     #expect(arrived == .success)
     #expect(result.value?.contains("\"decision\":\"approved\"") == true)
 }
+
+/// Connects and sends `line`, one byte at a time via its own `send` call,
+/// rather than in a single `send`. `serve`'s read buffer moved from
+/// being allocated once before its loop to once per iteration (a regression
+/// this test guards against separately), but a byte-at-a-time client is also
+/// the shape that actually exercises the loop's *accumulation* across many
+/// `recv` calls -- a single `send`, however long, satisfies the loop in one
+/// iteration and never proves the collected bytes from earlier iterations
+/// survive into later ones.
+private func askInChunks(_ path: String, _ line: String) throws -> String {
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    #expect(fd >= 0)
+    defer { close(fd) }
+
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    let capacity = MemoryLayout.size(ofValue: address.sun_path)
+    _ = withUnsafeMutablePointer(to: &address.sun_path) { pointer in
+        path.withCString { source in
+            strncpy(UnsafeMutableRawPointer(pointer).assumingMemoryBound(to: CChar.self),
+                    source, capacity - 1)
+        }
+    }
+    let size = socklen_t(MemoryLayout<sockaddr_un>.size)
+    let connected = withUnsafePointer(to: &address) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, size) }
+    }
+    #expect(connected == 0)
+
+    for byte in Array(line.utf8) {
+        var single = byte
+        _ = withUnsafePointer(to: &single) { send(fd, $0, 1, 0) }
+    }
+
+    var buffer = [UInt8](repeating: 0, count: 4096)
+    let read = recv(fd, &buffer, buffer.count, 0)
+    #expect(read > 0)
+    return String(decoding: buffer[0..<max(read, 0)], as: UTF8.self)
+}
+
+// The finding: moving `recv`'s buffer onto a GCD queue put `var localBuffer =
+// [UInt8](repeating: 0, count: 65536)` *inside* `runBlocking`'s closure, so
+// every loop iteration allocated and zero-filled a fresh 64KB buffer instead
+// of reusing one allocated before the loop. The loop only ends on a newline
+// or at the 1 MB cap, so a client trickling bytes one at a time can drive it
+// through on the order of a million iterations -- each one now paying that
+// allocation. The buffer is hoisted back out; this test pins the behaviour
+// the hoist has to preserve rather than the allocation count itself, since
+// nothing in this test's outcome can observe an allocation directly: a
+// client sending its line in many small pieces still gets answered
+// correctly, and the loop's 1 MB cap still refuses an oversized body.
+@Test func answersARequestSentInManySmallChunks() async throws {
+    let path = scratchSocket()
+    defer { removeScratchDirectory(for: path) }
+    let listener = noSecret(socketPath: path) { _ in .approved }
+    try await listener.start()
+    defer { Task { await listener.stop() } }
+
+    let reply = try askInChunks(path, requestLine() + "\n")
+    #expect(reply.contains("\"decision\":\"approved\""))
+    #expect(reply.hasSuffix("\n"))
+}
+
+// The same trickling delivery, but past the loop's 1 MB cap: a reused buffer
+// that accidentally stopped accumulating across iterations (for instance by
+// only ever keeping the most recent chunk) would either never see the cap
+// tripped, or would see it tripped on the wrong count. Sent as one large
+// `send` rather than byte-by-byte -- a body long past the cap does not need
+// slow delivery to exercise the accumulation, and this keeps the test fast.
+@Test func refusesABodyThatExceedsTheOneMegabyteCapEvenWhenChunked() async throws {
+    let path = scratchSocket()
+    defer { removeScratchDirectory(for: path) }
+    let asked = SyncBox(false)
+    let listener = noSecret(socketPath: path) { _ in
+        asked.set(true)
+        return .approved
+    }
+    try await listener.start()
+    defer { Task { await listener.stop() } }
+
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    #expect(fd >= 0)
+    defer { close(fd) }
+    // The server closes its end as soon as the 1 MB cap trips -- that is the
+    // behaviour under test -- and this client is still mid-`send` of a 2 MB
+    // body when it does. Writing to an already-closed socket then delivers
+    // SIGPIPE, whose default disposition kills the whole test process, not
+    // just this connection. `SO_NOSIGPIPE` is the per-socket, macOS-specific
+    // way to ask for `EPIPE` from `send` instead, scoped to this one test
+    // socket rather than silencing the signal process-wide.
+    var noSigPipe: Int32 = 1
+    _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
+
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    let capacity = MemoryLayout.size(ofValue: address.sun_path)
+    _ = withUnsafeMutablePointer(to: &address.sun_path) { pointer in
+        path.withCString { source in
+            strncpy(UnsafeMutableRawPointer(pointer).assumingMemoryBound(to: CChar.self),
+                    source, capacity - 1)
+        }
+    }
+    let size = socklen_t(MemoryLayout<sockaddr_un>.size)
+    let connected = withUnsafePointer(to: &address) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, size) }
+    }
+    #expect(connected == 0)
+
+    // Well past the 1 MB cap, and with no newline anywhere in it: the loop
+    // must hit `collected.count > 1_048_576` and `return` -- closing without
+    // ever reaching the presenter -- rather than the newline path. The
+    // server may close its end (and this `send` may then fail with `EPIPE`)
+    // before all 2 MB are written; that is fine, and expected -- the
+    // assertions below are on what the server did, not on this send
+    // completing.
+    let oversized = Data(repeating: 0x41, count: 2_000_000)
+    _ = oversized.withUnsafeBytes { send(fd, $0.baseAddress, oversized.count, 0) }
+
+    var probe: UInt8 = 0
+    let read = recv(fd, &probe, 1, 0)
+    // The server closed without answering: no bytes, and no presenter call.
+    #expect(read == 0)
+    #expect(asked.value == false)
+}

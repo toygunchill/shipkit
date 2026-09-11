@@ -207,7 +207,17 @@ public actor Listener {
             let client = accept(newDescriptor, nil, nil)
             guard client >= 0 else { return }
             var timeout = timeval(tv_sec: Listener.receiveTimeoutSeconds, tv_usec: 0)
-            _ = setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+            guard setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size)) == 0 else {
+                // A connection this listener cannot bound with a receive
+                // timeout is exactly the one a silent client would otherwise
+                // ride forever -- the failure this timeout exists to prevent.
+                // The event handler cannot throw, so failing closed here
+                // means refusing the connection outright rather than serving
+                // it without the protection the rest of `serve` assumes is
+                // in place.
+                close(client)
+                return
+            }
             Task { await Listener.serve(client: client, on: self) }
         }
         source.setEventHandler(handler: onReadable)
@@ -230,15 +240,31 @@ public actor Listener {
         defer { close(client) }
 
         var collected = Data()
+        // Allocated once, outside the loop, and reused for every `recv`: a
+        // trickling client can drive this loop on the order of a million
+        // iterations before hitting the newline or the 1 MB cap below, and a
+        // fresh 64KB allocate-and-zero on every one of them is the kind of
+        // amplification a per-iteration `Array` buffer costs but a pointer
+        // allocated once does not. The compiler still refuses to treat
+        // `UnsafeMutablePointer` as `Sendable` on its own -- it has no way
+        // to know the pointee isn't concurrently touched elsewhere -- so
+        // `nonisolated(unsafe)` is the explicit assertion that it is safe
+        // here: this pointer is allocated fresh for this one connection,
+        // touched only inside the single `recv` call each loop iteration
+        // makes, and never shared beyond this function, unlike a mutable
+        // Swift `Array` that a `@Sendable` closure cannot capture at all.
+        let bufferSize = 65536
+        nonisolated(unsafe) let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+        defer { buffer.deallocate() }
         while true {
-            // Off the cooperative pool: see `runBlocking`.
-            let (read, chunk): (Int, [UInt8]) = await runBlocking {
-                var localBuffer = [UInt8](repeating: 0, count: 65536)
-                let n = recv(client, &localBuffer, localBuffer.count, 0)
-                return (n, localBuffer)
+            // Off the cooperative pool: see `runBlocking`. Only the byte
+            // count crosses back out of the closure; the bytes themselves
+            // are already in `buffer`, read directly from the calling side.
+            let read: Int = await runBlocking {
+                recv(client, buffer, bufferSize, 0)
             }
             if read <= 0 { break }
-            collected.append(contentsOf: chunk[0..<read])
+            collected.append(UnsafeBufferPointer(start: buffer, count: read))
             if collected.contains(0x0A) { break }
             if collected.count > 1_048_576 { return }
         }

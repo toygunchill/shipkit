@@ -142,6 +142,11 @@ describe("the MCP server", () => {
       },
     });
 
+    // Asserted before indexing seen[0]: a shipkit_apply mis-wired to another handler (e.g.
+    // handleBrief, which never calls runSubmit) leaves seen empty, and indexing straight into
+    // it fails with "TypeError: Cannot read properties of undefined" — a crash that hides the
+    // actual fault instead of naming it.
+    expect(seen).toHaveLength(1);
     expect(seen[0].mode).toBe("apply");
   });
 
@@ -159,6 +164,7 @@ describe("the MCP server", () => {
       },
     });
 
+    expect(seen).toHaveLength(1);
     expect(seen[0].acknowledge).toEqual(["warn-1", "warn-2"]);
   });
 
@@ -175,6 +181,7 @@ describe("the MCP server", () => {
       },
     });
 
+    expect(seen).toHaveLength(1);
     expect(seen[0].acknowledge).toEqual([]);
   });
 

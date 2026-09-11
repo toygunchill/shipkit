@@ -21,6 +21,10 @@ pr:
   # Two pull requests sat green-but-unmergeable behind "in test" before this check existed;
   # declare it here so it actually fires for the repository it was written for.
   blockingLabels: ["in test"]
+  # A push here can dismiss four approvals or ship another squad's commits, and
+  # both have happened. An agent echoing the warning ids back is evidence it read
+  # them; it is not evidence anyone agreed.
+  approval: human
   sections:
     - name: Summary
       required: true

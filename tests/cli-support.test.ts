@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  cliRemedy,
   extractIssueKeysFromBody,
   firstIssueKey,
   isValidBase,
@@ -7,6 +8,7 @@ import {
   selectIssueKeys,
   ticketFromBranch,
 } from "../src/cli-support.js";
+import type { SubmitResult } from "../src/submit/run.js";
 
 const KEY_PATTERN = "DCP-\\d+";
 
@@ -71,6 +73,22 @@ describe("resolveIssue", () => {
     await expect(
       resolveIssue("ABC-1", { jira: { baseUrl: "https://jira.example.com" } }),
     ).resolves.toBeUndefined();
+  });
+
+  it("resolves an issue using a keychain token when the environment has none", async () => {
+    delete process.env.SHIPKIT_JIRA_TOKEN;
+    let seenToken = "";
+    const issue = await resolveIssue(
+      "ABC-1",
+      { jira: { baseUrl: "https://example.invalid/jira" } },
+      async (_url: string, token: string) => {
+        seenToken = token;
+        return { key: "ABC-1", fields: { issuetype: { name: "Story" }, summary: "s" } };
+      },
+      () => "from-keychain",
+    );
+    expect(seenToken).toBe("from-keychain");
+    expect(issue?.key).toBe("ABC-1");
   });
 });
 
@@ -153,5 +171,50 @@ describe("isValidBase", () => {
 
   it("rejects an empty string", () => {
     expect(isValidBase("")).toBe(false);
+  });
+});
+
+describe("cliRemedy", () => {
+  const refused = (refusal: SubmitResult["refusal"]): SubmitResult => ({
+    code: 2,
+    findings: [],
+    warnings: [{ check: "untracked-files", message: "m" }],
+    message: "Refusing to proceed.",
+    committed: false,
+    pushed: false,
+    refusal,
+  });
+
+  it("suggests --yes for an unacknowledged refusal when --yes was not given", () => {
+    expect(cliRemedy(refused("unacknowledged"), false)).toBe(
+      "Re-run with --yes to accept these.",
+    );
+  });
+
+  it("says nothing when --yes was already given", () => {
+    expect(cliRemedy(refused("unacknowledged"), true)).toBeUndefined();
+  });
+
+  // Each is a different reason a reader could be misled into a --yes retry that
+  // reproduces the identical refusal — --yes cannot make a person appear, undo a
+  // denial, or restart a wait that already ran out.
+  it.each(["denied", "timed-out", "no-surface", "human-required"] as const)(
+    "says nothing for a %s refusal, even without --yes",
+    (reason) => {
+      expect(cliRemedy(refused(reason), false)).toBeUndefined();
+    },
+  );
+
+  it("says nothing on a successful result", () => {
+    const ok: SubmitResult = {
+      code: 0,
+      findings: [],
+      warnings: [],
+      committed: true,
+      pushed: true,
+      url: "https://github.com/x/y/pull/1",
+      updated: false,
+    };
+    expect(cliRemedy(ok, false)).toBeUndefined();
   });
 });

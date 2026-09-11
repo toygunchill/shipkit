@@ -49,3 +49,8 @@ export function readUntrackedFiles(cwd: string = process.cwd()): string[] {
 export function readRepoRoot(cwd: string = process.cwd()): string {
   return git(["rev-parse", "--show-toplevel"], cwd).trim();
 }
+
+/** The full commit id of `HEAD`, unabbreviated because it goes into a fingerprint. */
+export function readHeadSha(cwd: string = process.cwd()): string {
+  return git(["rev-parse", "HEAD"], cwd).trim();
+}

@@ -1,4 +1,14 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { fingerprint, sortWarnings, type Situation } from "../approval/fingerprint.js";
+import {
+  gate,
+  shouldRequestApproval,
+  type ApprovalAnswer,
+  type ApprovalOutcome,
+  type GateReason,
+  type GateResult,
+} from "../approval/policy.js";
+import { PROTOCOL_VERSION, type ApprovalRequest } from "../approval/protocol.js";
 import { extractIssueKeysFromBody, firstIssueKey, isValidBase } from "../cli-support.js";
 import { ConfigError } from "../config/load.js";
 import type { ShipkitConfig } from "../config/schema.js";
@@ -39,6 +49,23 @@ export type SubmitResult = {
   message?: string;
   committed: boolean;
   pushed: boolean;
+  /** What the person said, when one was asked. Absent when nobody was. */
+  approval?: ApprovalOutcome;
+  /**
+   * The situation the question was about. Present whenever one was asked, and
+   * the reason a timed-out call can be resumed: the surface keys its journal by
+   * this, so calling again with the same situation finds the decision waiting
+   * rather than starting over.
+   */
+  approvalFingerprint?: string;
+  /**
+   * Why the gate refused, when it did. Each interface words its own remedy from
+   * this rather than guessing one from `code` and `warnings.length` — a guess
+   * that cannot tell "unacknowledged" (where --yes / acknowledge would help)
+   * apart from "denied", "timed-out", "no-surface" or "human-required" (where
+   * it would not).
+   */
+  refusal?: GateReason;
 };
 
 /**
@@ -61,13 +88,42 @@ export type SubmitDeps = {
   findPullRequest: (branch: string) => PullRequestState | null;
   readUntrackedFiles: () => string[];
   readRepoRoot: () => string;
+  readHeadSha: () => string;
   realpath: (path: string) => string;
+  requestApproval: (request: ApprovalRequest, timeoutMs: number) => Promise<ApprovalAnswer>;
   commitAll: (message: string, exclude: string[]) => void;
   pushBranch: (branch: string) => void;
   createPullRequest: (input: { title: string; body: string; base: string; head: string }) => string;
   out: (line: string) => void;
   err: (line: string) => void;
 };
+
+/** One sentence per reason, naming the situation rather than any interface's remedy. */
+function refusalMessage(
+  decision: Extract<GateResult, { open: false }>,
+  approvalFingerprint?: string,
+): string {
+  switch (decision.reason) {
+    case "unacknowledged":
+      return `Refusing to proceed. Unacknowledged: ${decision.unacknowledged
+        .map((warning) => warning.check)
+        .join(", ")}`;
+    case "denied":
+      return "Refusing to proceed. The push was denied.";
+    case "timed-out":
+      // Naming the fingerprint is what makes this resumable. The surface keys
+      // its journal by it, so the same call made again finds the decision
+      // waiting instead of asking a second time.
+      return (
+        "Refusing to proceed. No decision arrived before the wait ran out. " +
+        `Call again to resume the same request (${approvalFingerprint ?? "unknown"}).`
+      );
+    case "no-surface":
+      return "Refusing to proceed. This repository requires an approval, and the approval surface is not running.";
+    case "human-required":
+      return "Refusing to proceed. This repository requires an approval from a person.";
+  }
+}
 
 /**
  * Validate the agent's answer, warn about what pushing will disturb, then commit, push and
@@ -151,7 +207,10 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       firstIssueKey(response.title, config.jira.keyPattern) ?? citedKeys[0];
 
     const repo = deps.readRepoState(options.base);
-    const existingPr = deps.findPullRequest(branch);
+    // Reassigned below when a re-derivation runs and the situation is unchanged: the
+    // open-or-update decision at the end of this function must act on the pull request
+    // as it stands now, not as it stood when the person was first asked.
+    let existingPr = deps.findPullRequest(branch);
     // The response file is shipkit's own input, never part of the change, so it is excluded
     // from staging rather than merely reported — and dropped from the warning too, since a
     // warning that fires on every single run is one nobody reads. Everything else untracked
@@ -219,26 +278,137 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       return { code: 0, findings: [], warnings, body, committed: false, pushed: false };
     }
 
-    // Echoing the ids, rather than setting a flag, is what makes this a gate. A caller must
-    // have received the warnings to name them, and the set is checked against what pre-flight
-    // produces now — so if a review landed or a label was added between the two calls, the
-    // ids no longer cover the situation and it closes again.
-    const unacknowledged =
-      options.acknowledge === "all"
-        ? []
-        : warnings.filter((warning) => !options.acknowledge.includes(warning.check));
+    let approval: ApprovalOutcome | undefined;
+    let approvalFingerprint: string | undefined;
+    // Set only when the surface's answer could not be taken at face value — chiefly a
+    // protocol version disagreement, which `requestApproval` maps to a plain "denied"
+    // outcome but carries the real reason in `detail` so it is not lost entirely.
+    let approvalDetail: string | undefined;
 
-    if (unacknowledged.length > 0) {
-      // Neutral on purpose: this message reaches every caller, and the remedy for getting
-      // past the gate differs per interface — the CLI has --yes, MCP has acknowledge: [...].
-      // Naming a flag that does not exist in the reader's interface is worse than naming
-      // none, so each caller supplies its own remedy after the fact instead of this function
-      // deciding it: src/cli.ts appends "Re-run with --yes" on a warnings refusal, and
-      // src/mcp/result.ts's applyContent already appends its own acknowledge guidance.
-      const message =
-        `Refusing to proceed. Unacknowledged: ${unacknowledged.map((w) => w.check).join(", ")}`;
+    if (shouldRequestApproval({ policy: config.pr.approval, warnings, acknowledge: options.acknowledge })) {
+      // repoRoot is not in scope here — it is only read above inside the
+      // `options.responsePath !== undefined` branch. It cannot be hoisted above this
+      // branch either: an existing test asserts readRepoRoot is never called when the
+      // response came from no file, and hoisting would call it on every run.
+      const repoPath = deps.realpath(deps.readRepoRoot());
+
+      // Reading the facts is what makes a situation; both the question and the check
+      // after the answer are built from the same helper so they cannot drift.
+      const situationOf = (facts: { head: string; warnings: Warning[] }): Situation => ({
+        repo: repoPath,
+        branch,
+        base: options.base,
+        head: facts.head,
+        title: response.title,
+        commitMessage: response.commitMessage,
+        warnings: facts.warnings,
+      });
+
+      const head = deps.readHeadSha();
+      const situation = situationOf({ head, warnings });
+      approvalFingerprint = fingerprint(situation);
+      const answer = await deps.requestApproval(
+        {
+          protocol: PROTOCOL_VERSION,
+          fingerprint: approvalFingerprint,
+          repo: situation.repo,
+          branch: situation.branch,
+          base: situation.base,
+          head: situation.head,
+          title: response.title,
+          commitMessage: response.commitMessage,
+          diffstat: repo.diffstat,
+          // In canonical order, so what a person is shown can never diverge from what
+          // was hashed — preflight emits these in check-order, not alphabetical.
+          warnings: sortWarnings(warnings),
+        },
+        config.pr.approvalTimeoutSeconds * 1000,
+      );
+      approval = answer.outcome;
+      approvalDetail = answer.detail;
+
+      // Minutes can pass while a person decides. An approval that survives the
+      // situation changing underneath it is worth nothing, so the facts are read
+      // again and hashed again before anything is pushed. This is the same
+      // property the echoed ids have — checked against what pre-flight produces
+      // now, not what it produced when the question was asked.
+      if (approval === "approved") {
+        const freshHead = deps.readHeadSha();
+        const freshPr = deps.findPullRequest(branch);
+        const freshWarnings = preflight({
+          branch,
+          base: options.base,
+          commits: deps.readRepoState(options.base).commits,
+          ticketKey,
+          issueVerified,
+          pullRequest: freshPr,
+          untrackedFiles: deps
+            .readUntrackedFiles()
+            .filter((file) => !responseInRepo || file !== relativeToRoot),
+          config,
+        }).warnings;
+
+        if (
+          fingerprint(situationOf({ head: freshHead, warnings: freshWarnings })) !==
+          approvalFingerprint
+        ) {
+          const message =
+            "The situation changed while the approval was pending; asking again from the start.";
+          deps.err(message);
+          for (const warning of freshWarnings) {
+            deps.err(`${warning.check}: ${warning.message}`);
+          }
+          return {
+            code: 2,
+            findings: [],
+            warnings: freshWarnings,
+            body,
+            message,
+            approval,
+            approvalFingerprint,
+            committed: false,
+            pushed: false,
+          };
+        }
+
+        // The re-derivation is authoritative: the open-or-update decision below must
+        // act on the pull request as it stands now, not on the one read before the
+        // person was asked. A pull request that opened during the wait — with no new
+        // warning of its own, so the fingerprint above still matched — must still be
+        // updated rather than collided with by an errant createPullRequest.
+        existingPr = freshPr;
+      }
+    }
+
+    const decision = gate({
+      policy: config.pr.approval,
+      warnings,
+      acknowledge: options.acknowledge,
+      outcome: approval,
+    });
+
+    if (!decision.open) {
+      // Neutral on purpose: the remedy differs per interface, and now per policy too.
+      // src/cli.ts appends "Re-run with --yes" when that would help, and
+      // src/mcp/result.ts appends its own acknowledge guidance.
+      const base = refusalMessage(decision, approvalFingerprint);
+      // `approvalDetail` is what turns "the push was denied" into a named version
+      // disagreement — without it, a stale protocol version is indistinguishable from a
+      // person having said no.
+      const message = approvalDetail !== undefined ? `${base} (${approvalDetail})` : base;
       deps.err(message);
-      return { code: 2, findings: [], warnings, body, message, committed: false, pushed: false };
+      return {
+        code: 2,
+        findings: [],
+        warnings,
+        body,
+        message,
+        approval,
+        approvalFingerprint,
+        refusal: decision.reason,
+        committed: false,
+        pushed: false,
+      };
     }
 
     deps.commitAll(response.commitMessage, exclude);
@@ -262,6 +432,8 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
         updated: true,
         committed: true,
         pushed: true,
+        approval,
+        approvalFingerprint,
       };
     }
 
@@ -281,6 +453,8 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       updated: false,
       committed: true,
       pushed: true,
+      approval,
+      approvalFingerprint,
     };
   } catch (error) {
     if (

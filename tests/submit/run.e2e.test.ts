@@ -10,6 +10,7 @@ import { renderBody } from "../../src/submit/response.js";
 import { runSubmit, type SubmitDeps } from "../../src/submit/run.js";
 import {
   currentBranch,
+  readHeadSha,
   readRepoRoot,
   readRepoState,
   readUntrackedFiles,
@@ -78,7 +79,13 @@ function realDeps(repo: string, opened: { input?: unknown }): SubmitDeps {
     findPullRequest: () => null,
     readUntrackedFiles: () => readUntrackedFiles(repo),
     readRepoRoot: () => readRepoRoot(repo),
+    readHeadSha: () => readHeadSha(repo),
     realpath: (path) => realpathSync(path),
+    // This suite must never open a real socket — every call here uses acknowledge: "all" or
+    // acknowledge: [] with no warnings, so shouldRequestApproval never actually fires this,
+    // but a future test that adds a warning must fail loud rather than reach for a real
+    // approval surface.
+    requestApproval: async () => ({ outcome: "no-surface" as const }),
     commitAll: (message, exclude) => commitAll(message, exclude, repo),
     pushBranch: (branch) => pushBranch(branch, repo),
     createPullRequest: (input) => {

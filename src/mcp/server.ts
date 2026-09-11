@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
+import { requestApproval } from "../approval/client.js";
 import { loadConfig } from "../config/load.js";
 import { resolveIssue } from "../cli-support.js";
 import { renderBody } from "../submit/response.js";
@@ -10,6 +11,7 @@ import { runSubmit } from "../submit/run.js";
 import type { SubmitDeps } from "../submit/run.js";
 import {
   currentBranch,
+  readHeadSha,
   readRepoRoot,
   readRepoState,
   readUntrackedFiles,
@@ -55,7 +57,9 @@ export function realToolDeps(): ToolDeps {
       findPullRequest: (branch) => findPullRequest(branch, repo),
       readUntrackedFiles: () => readUntrackedFiles(repo),
       readRepoRoot: () => readRepoRoot(repo),
+      readHeadSha: () => readHeadSha(repo),
       realpath: (path) => realpathSync(path),
+      requestApproval: (request, timeoutMs) => requestApproval(request, { timeoutMs }),
       commitAll: (message, exclude) => commitAll(message, exclude, repo),
       pushBranch: (branch) => pushBranch(branch, repo),
       createPullRequest: (input) => createPullRequest(input, repo),

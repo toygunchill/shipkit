@@ -1,9 +1,11 @@
 // Small, dependency-light helpers factored out of src/cli.ts so they can be unit-tested
 // directly. src/cli.ts itself runs `program.parse()` at import time and must not be
 // imported from tests.
-import { fetchIssue } from "./jira/client.js";
+import { fetchIssue, type Fetcher } from "./jira/client.js";
 import type { IssueFacts } from "./jira/types.js";
+import type { SubmitResult } from "./submit/run.js";
 import { parseBody } from "./validate/body.js";
+import { jiraToken } from "./secrets/keychain.js";
 
 /** The first key matching `keyPattern` anywhere in `text`, or undefined when there is none. */
 export function firstIssueKey(text: string, keyPattern: string): string | undefined {
@@ -26,11 +28,21 @@ export function ticketFromBranch(branch: string, keyPattern: string): string | u
 export async function resolveIssue(
   key: string | undefined,
   config: { jira: { baseUrl: string } },
+  fetcher: Fetcher = (url, token) =>
+    fetch(url, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    }).then((response) => {
+      if (!response.ok) {
+        throw new Error(`Jira responded ${response.status} for ${url}`);
+      }
+      return response.json();
+    }),
+  readToken: (() => string | undefined) = jiraToken,
 ): Promise<IssueFacts | undefined> {
   if (key === undefined) return undefined;
-  const token = process.env.SHIPKIT_JIRA_TOKEN;
+  const token = readToken();
   if (token === undefined || token.length === 0) return undefined;
-  return fetchIssue(config.jira.baseUrl, key, token);
+  return fetchIssue(config.jira.baseUrl, key, token, fetcher);
 }
 
 /**
@@ -72,4 +84,21 @@ const BASE_PATTERN = /^[A-Za-z0-9._/-]+$/;
 /** True when `base` is a plausible ref/branch name — never something git could parse as an option. */
 export function isValidBase(base: string): boolean {
   return base.length > 0 && !base.startsWith("-") && BASE_PATTERN.test(base);
+}
+
+/**
+ * The line the command line adds after a refusal, or nothing when it has no useful remedy.
+ *
+ * `runSubmit`'s own message is deliberately neutral about which interface is asking — it
+ * has no business knowing this caller has a --yes flag, and under the `human` policy --yes
+ * cannot help at all (an echoed id is not a person's decision). This is the CLI's own
+ * after-the-fact remedy, kept out of the core and driven by `result.refusal` — the exact
+ * gate reason — rather than guessed from `code`/`warnings.length`, which also matches
+ * "denied", "timed-out", "no-surface" and "human-required" and would send the reader into a
+ * --yes retry that reproduces the identical refusal.
+ */
+export function cliRemedy(result: SubmitResult, yesGiven: boolean): string | undefined {
+  if (yesGiven) return undefined;
+  if (result.refusal !== "unacknowledged") return undefined;
+  return "Re-run with --yes to accept these.";
 }

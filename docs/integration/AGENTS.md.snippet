@@ -37,5 +37,12 @@ Nothing has been committed at that point.
 If it exits 2 after printing warnings, read them. They describe something that is
 expensive to undo: approvals that a push will dismiss, commits from another ticket,
 a base that disagrees with the open pull request, a label that blocks the merge
-gate, or untracked files that staging would sweep into the commit. Ask before
-re-running with `--yes`.
+gate, or untracked files that staging would sweep into the commit.
+
+Read what shipkit printed before deciding what to do. If it names the warnings as
+unacknowledged, ask before re-running with `--yes`; do not pass `--yes` on your
+own judgement. If instead it says the approval surface is not running, or that
+this repository requires a person's approval, `--yes` cannot fix that — some
+repositories require a person's decision through a separate approval application
+before a push with warnings can proceed, and re-running with `--yes` reproduces
+the identical refusal. Tell the person what shipkit said and wait.

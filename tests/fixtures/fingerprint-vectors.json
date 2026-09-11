@@ -1,0 +1,184 @@
+[
+  {
+    "name": "no warnings",
+    "situation": {
+      "repo": "/Users/x/example-app",
+      "branch": "bugfix/squadb/31087-invoice",
+      "base": "develop",
+      "head": "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "title": "fix(invoice): default citizenship",
+      "commitMessage": "fix(invoice): default citizenship",
+      "warnings": []
+    },
+    "fingerprint": "e051929ea996355dba72c20c511fd29754d9c2addd485aa70d4d4e2cacc6db75"
+  },
+  {
+    "name": "two warnings",
+    "situation": {
+      "repo": "/Users/x/example-app",
+      "branch": "bugfix/squadb/31087-invoice",
+      "base": "release/3.76.0",
+      "head": "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "title": "fix(invoice): default citizenship",
+      "commitMessage": "fix(invoice): default citizenship",
+      "warnings": [
+        {
+          "check": "approvals-dismissed",
+          "message": "Pushing will dismiss 4 approval(s) on #881"
+        },
+        {
+          "check": "blocking-label",
+          "message": "Label(s) in test will block the merge gate"
+        }
+      ]
+    },
+    "fingerprint": "13099b9d05e2f39848d02eafb73514b44438357a6b9b2190a963076d0f09b05f"
+  },
+  {
+    "name": "warnings out of order",
+    "situation": {
+      "repo": "/Users/x/example-app",
+      "branch": "bugfix/squadb/31087-invoice",
+      "base": "release/3.76.0",
+      "head": "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "title": "fix(invoice): default citizenship",
+      "commitMessage": "fix(invoice): default citizenship",
+      "warnings": [
+        {
+          "check": "blocking-label",
+          "message": "Label(s) in test will block the merge gate"
+        },
+        {
+          "check": "base-mismatch",
+          "message": "Pull request #881 targets develop, but this run targets release/3.76.0"
+        },
+        {
+          "check": "approvals-dismissed",
+          "message": "Pushing will dismiss 4 approval(s) on #881"
+        }
+      ]
+    },
+    "fingerprint": "1f43a20c95e8bcd581d390d40e587503e3b61f719fa1e9e38ebf47f05d180cce"
+  },
+  {
+    "name": "non-ascii in every field",
+    "situation": {
+      "repo": "/Users/toygun/Belgeler/example-app",
+      "branch": "bugfix/ödeme/31087-fatura",
+      "base": "release/3.76.0",
+      "head": "b44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "title": "düzelt(fatura): vatandaşlık varsayılanı",
+      "commitMessage": "düzelt(fatura): vatandaşlık varsayılanı",
+      "warnings": [
+        {
+          "check": "foreign-commits",
+          "message": "Şube ABC-27975 taşıyor — ABC-31087 değil"
+        }
+      ]
+    },
+    "fingerprint": "29a0c06c792f97413e7c1f886b6628ee7f09df61284ef29533d859c453c6e806"
+  },
+  {
+    "name": "a message that looks like the encoding",
+    "situation": {
+      "repo": "/r",
+      "branch": "b",
+      "base": "d",
+      "head": "c44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "title": "x",
+      "commitMessage": "y",
+      "warnings": [
+        {
+          "check": "x",
+          "message": "a:1\n5:fake"
+        }
+      ]
+    },
+    "fingerprint": "886938618412fd16b07f0dae8a195c68d3d0d890f2eaaf1cad293c6fd7287d2b"
+  },
+  {
+    "name": "astral characters (emoji)",
+    "situation": {
+      "repo": "/Users/x/example-app",
+      "branch": "bugfix/🎉-celebration/123-party",
+      "base": "develop",
+      "head": "d44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "title": "fix 🎉 the thing",
+      "commitMessage": "fix 🎉 the thing",
+      "warnings": [
+        {
+          "check": "untracked-files",
+          "message": "fix 🎉 the thing"
+        }
+      ]
+    },
+    "fingerprint": "638e730acc8c4c065642195409cf969d0cc389d0e05e7035284f07208e5a912c"
+  },
+  {
+    "name": "multi-digit warning count",
+    "situation": {
+      "repo": "/r",
+      "branch": "b",
+      "base": "d",
+      "head": "e44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "title": "t",
+      "commitMessage": "m",
+      "warnings": [
+        {
+          "check": "a",
+          "message": "1"
+        },
+        {
+          "check": "a",
+          "message": "2"
+        },
+        {
+          "check": "b",
+          "message": "3"
+        },
+        {
+          "check": "c",
+          "message": "4"
+        },
+        {
+          "check": "d",
+          "message": "5"
+        },
+        {
+          "check": "e",
+          "message": "6"
+        },
+        {
+          "check": "f",
+          "message": "7"
+        },
+        {
+          "check": "g",
+          "message": "8"
+        },
+        {
+          "check": "h",
+          "message": "9"
+        },
+        {
+          "check": "i",
+          "message": "10"
+        }
+      ]
+    },
+    "fingerprint": "ba5120ffd8c42be1902625b3a950ae1d1fe277c3683782b4b444f574663fb56a"
+  },
+  {
+    "name": "empty-string field",
+    "situation": {
+      "repo": "/r",
+      "branch": "",
+      "base": "develop",
+      "head": "f44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "title": "",
+      "commitMessage": "",
+      "warnings": []
+    },
+    "fingerprint": "20dec7d57deda5f8668b92f26ab976961bc55d2896a1336b7c2d46fe6dbfa8d8"
+  }
+]

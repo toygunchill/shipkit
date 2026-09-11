@@ -1,5 +1,7 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { fingerprint } from "../../src/approval/fingerprint.js";
+import type { ApprovalRequest } from "../../src/approval/protocol.js";
 import { ConfigError, loadConfig } from "../../src/config/load.js";
 import type { ShipkitConfig } from "../../src/config/schema.js";
 import type { IssueFacts } from "../../src/jira/types.js";
@@ -81,6 +83,8 @@ function makeDeps(
         readUntrackedFiles: poisoned("readUntrackedFiles"),
         readRepoRoot: poisoned("readRepoRoot"),
         realpath: poisoned("realpath"),
+        readHeadSha: poisoned("readHeadSha"),
+        requestApproval: poisoned("requestApproval"),
         commitAll: poisoned("commitAll"),
         pushBranch: poisoned("pushBranch"),
         createPullRequest: poisoned("createPullRequest"),
@@ -101,6 +105,8 @@ function makeDeps(
         readUntrackedFiles: () => [],
         readRepoRoot: () => "/repo",
         realpath: (path: string) => path,
+        readHeadSha: () => "a".repeat(40),
+        requestApproval: async () => ({ outcome: "no-surface" as const }) /* extra args ignored */,
         commitAll: () => undefined,
         pushBranch: () => undefined,
         createPullRequest: () => "https://github.com/x/y/pull/1",
@@ -120,6 +126,8 @@ function makeDeps(
     readUntrackedFiles: record("readUntrackedFiles", merged.readUntrackedFiles),
     readRepoRoot: record("readRepoRoot", merged.readRepoRoot),
     realpath: record("realpath", merged.realpath),
+    readHeadSha: record("readHeadSha", merged.readHeadSha),
+    requestApproval: record("requestApproval", merged.requestApproval),
     commitAll: record("commitAll", merged.commitAll),
     pushBranch: record("pushBranch", merged.pushBranch),
     createPullRequest: record("createPullRequest", merged.createPullRequest),
@@ -140,6 +148,8 @@ const DOMAIN_DEPS = [
   "readUntrackedFiles",
   "readRepoRoot",
   "realpath",
+  "readHeadSha",
+  "requestApproval",
   "commitAll",
   "pushBranch",
   "createPullRequest",
@@ -826,5 +836,257 @@ describe("the acknowledgement gate", () => {
 
     expect(result.code).toBe(0);
     expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
+  });
+});
+
+describe("the approval surface", () => {
+  const warned = { readUntrackedFiles: () => [".env.local"] };
+
+  it("does not ask when there is nothing to warn about", async () => {
+    const { deps, calls } = makeDeps({});
+    await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
+    expect(calls.some((c) => c.fn === "requestApproval")).toBe(false);
+  });
+
+  it("does not ask under echo when the ids cover the warnings", async () => {
+    const { deps, calls } = makeDeps(warned);
+    await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
+    expect(calls.some((c) => c.fn === "requestApproval")).toBe(false);
+  });
+
+  it("asks under echo when they do not, and proceeds when approved", async () => {
+    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => ({ outcome: "approved" as const }) });
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+    expect(result.code).toBe(0);
+    expect(result.approval).toBe("approved");
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
+    // The fingerprint is what a repeated call would need to recognize this same
+    // situation — it must survive onto a successful result, not only a refusal.
+    expect(result.approvalFingerprint).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("refuses and mutates nothing when denied", async () => {
+    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => ({ outcome: "denied" as const }) });
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+    expect(result.code).toBe(2);
+    expect(result.refusal).toBe("denied");
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
+  });
+
+  // A listener answering the wrong protocol version produces a `ProtocolError` whose message
+  // already names both numbers; `requestApproval` maps that to a plain "denied" outcome but
+  // carries the message through as `detail`. Losing it here would tell the reader a person
+  // refused their push when nobody was ever asked.
+  it("names both protocol versions in the refusal when the surface disagrees on protocol", async () => {
+    const { deps } = makeDeps({
+      ...warned,
+      requestApproval: async () => ({
+        outcome: "denied" as const,
+        detail: "The approval surface speaks protocol 99; this shipkit speaks 1",
+      }),
+    });
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+    expect(result.code).toBe(2);
+    expect(result.refusal).toBe("denied");
+    expect(result.message).toContain("protocol 99");
+    expect(result.message).toContain("speaks 1");
+  });
+
+  it("refuses and mutates nothing when the wait runs out, naming the fingerprint to resume", async () => {
+    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => ({ outcome: "timed-out" as const }) });
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+    expect(result.code).toBe(2);
+    expect(result.refusal).toBe("timed-out");
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
+    // Naming the actual fingerprint, not a placeholder, is what makes the resumption
+    // claim true — an implementation that always printed "unknown" would still pass
+    // every assertion above.
+    expect(result.approvalFingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.message).toContain(result.approvalFingerprint as string);
+  });
+
+  // The property that keeps the application optional.
+  it("falls back to today's refusal under echo with nothing listening", async () => {
+    const { deps, err } = makeDeps({ ...warned, requestApproval: async () => ({ outcome: "no-surface" as const }) /* extra args ignored */ });
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+    expect(result.code).toBe(2);
+    expect(err.join("\n")).toContain("untracked-files");
+  });
+
+  it("sends the situation, not a summary of it", async () => {
+    let sent: ApprovalRequest | undefined;
+    const { deps } = makeDeps({
+      ...warned,
+      requestApproval: async (request: ApprovalRequest, timeoutMs: number) => {
+        sent = request;
+        expect(timeoutMs).toBe(120_000);
+        return { outcome: "denied" as const };
+      },
+    });
+
+    await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+
+    expect(sent?.head).toBe("a".repeat(40));
+    expect(sent?.base).toBe(OPTIONS.base);
+    expect(sent?.warnings.map((w) => w.check)).toContain("untracked-files");
+    expect(sent?.commitMessage).toBe(VALID_RESPONSE.commitMessage);
+    // The fingerprint must be the one the situation hashes to, not an
+    // independent value the surface would have no way to check.
+    expect(sent?.fingerprint).toBe(
+      fingerprint({
+        repo: sent!.repo,
+        branch: sent!.branch,
+        base: sent!.base,
+        head: sent!.head,
+        title: sent!.title,
+        commitMessage: sent!.commitMessage,
+        warnings: sent!.warnings,
+      }),
+    );
+  });
+
+  // preflight emits approvals-dismissed, then foreign-commits, then base-mismatch for this
+  // situation — not alphabetical. The fingerprint hashes them sorted by check id, so the
+  // wire must carry them in that same order or the displayed order and the hashed order
+  // could diverge.
+  it("sends warnings on the wire in canonical order, not preflight's emission order", async () => {
+    let sent: ApprovalRequest | undefined;
+    const { deps } = makeDeps({
+      readRepoState: () => ({
+        branch: BRANCH,
+        changedFiles: [],
+        diffstat: "",
+        commits: ["ABC-2 unrelated work"],
+      }),
+      findPullRequest: () => ({
+        number: 881,
+        url: "https://github.com/x/y/pull/881",
+        baseRefName: "main",
+        labels: [],
+        approvals: ["alice"],
+      }),
+      requestApproval: async (request: ApprovalRequest) => {
+        sent = request;
+        return { outcome: "denied" as const };
+      },
+    });
+
+    await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+
+    expect(sent?.warnings.map((w) => w.check)).toEqual([
+      "approvals-dismissed",
+      "base-mismatch",
+      "foreign-commits",
+    ]);
+  });
+
+  // Minutes can pass while a request waits. An approval that survives a
+  // situation changing underneath it is worth nothing.
+  it("re-derives the facts after approval and refuses when they changed", async () => {
+    let reads = 0;
+    const { deps, calls } = makeDeps({
+      ...warned,
+      requestApproval: async () => ({ outcome: "approved" as const }),
+      // The first read is the one hashed into the request; by the second, a
+      // blocking label has appeared on the pull request.
+      findPullRequest: () => {
+        reads += 1;
+        return reads === 1
+          ? NO_PR
+          : {
+              number: 7,
+              url: "https://github.com/x/y/pull/7",
+              baseRefName: "develop",
+              labels: ["in test"],
+              approvals: [],
+            };
+      },
+      loadConfig: () => loadConfig("tests/fixtures/blocking-labels.shipkit.yml"),
+    });
+
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+
+    expect(result.code).toBe(2);
+    expect(result.warnings.map((w) => w.check)).toContain("blocking-label");
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
+  });
+
+  it("proceeds when the facts are unchanged", async () => {
+    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => ({ outcome: "approved" as const }) });
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+    expect(result.code).toBe(0);
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
+  });
+
+  // The re-derivation exists to refresh the facts a mutating call is about to act on — not
+  // only the ones that feed the fingerprint. A pull request that opens during the wait, with
+  // no warning of its own, leaves the fingerprint unchanged and the gate opens legitimately;
+  // but the open-or-update decision at the end must still see it, or createPullRequest fires
+  // against a branch that already has one open.
+  it("updates the pull request that opened during the wait, instead of creating a second one", async () => {
+    let reads = 0;
+    const { deps, calls } = makeDeps({
+      ...warned,
+      requestApproval: async () => ({ outcome: "approved" as const }),
+      findPullRequest: () => {
+        reads += 1;
+        return reads === 1
+          ? NO_PR
+          : {
+              number: 9,
+              url: "https://github.com/x/y/pull/9",
+              baseRefName: "develop",
+              labels: [],
+              approvals: [],
+            };
+      },
+    });
+
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+
+    expect(result.code).toBe(0);
+    expect(result.updated).toBe(true);
+    expect(result.url).toBe("https://github.com/x/y/pull/9");
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
+    expect(calls.some((c) => c.fn === "pushBranch")).toBe(true);
+    expect(calls.some((c) => c.fn === "createPullRequest")).toBe(false);
+  });
+
+  it("never asks in preview mode", async () => {
+    const { deps, calls } = makeDeps(warned);
+    await runSubmit({ ...OPTIONS, mode: "preview", acknowledge: [] }, deps);
+    expect(calls.some((c) => c.fn === "requestApproval")).toBe(false);
+  });
+});
+
+describe("the human policy", () => {
+  const humanConfig = () => {
+    const config = loadConfig("tests/fixtures/valid.shipkit.yml");
+    return { ...config, pr: { ...config.pr, approval: "human" as const } };
+  };
+  const warned = { readUntrackedFiles: () => [".env.local"], loadConfig: humanConfig };
+
+  it("asks even when every id was echoed", async () => {
+    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => ({ outcome: "approved" as const }) });
+    await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
+    expect(calls.some((c) => c.fn === "requestApproval")).toBe(true);
+  });
+
+  // Otherwise the policy is decorative: an agent, or a --yes, would walk past it.
+  it("refuses an echoed acknowledgement with nothing listening", async () => {
+    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => ({ outcome: "no-surface" as const }) /* extra args ignored */ });
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
+    expect(result.code).toBe(2);
+    // Under echo the same outcome maps to "unacknowledged" (see the describe above); under
+    // human it must not, or the CLI's "Re-run with --yes" and MCP's "acknowledge: [...]"
+    // guidance would both be offered as if they could fix what --yes/acknowledge cannot.
+    expect(result.refusal).toBe("no-surface");
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
+  });
+
+  it("says the surface is not running rather than naming ids to acknowledge", async () => {
+    const { deps, err } = makeDeps({ ...warned, requestApproval: async () => ({ outcome: "no-surface" as const }) /* extra args ignored */ });
+    await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
+    expect(err.join("\n")).toMatch(/approval surface/i);
   });
 });

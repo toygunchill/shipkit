@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync } from "node:fs";
 import { Command, CommanderError } from "commander";
+import { requestApproval } from "./approval/client.js";
 import { assembleBrief } from "./brief/assemble.js";
 import {
+  cliRemedy,
   extractIssueKeysFromBody,
   isValidBase,
   resolveIssue,
@@ -15,7 +17,14 @@ import type { IssueFacts } from "./jira/types.js";
 import { loadResponse, renderBody, ResponseError } from "./submit/response.js";
 import { runSubmit, type SubmitDeps } from "./submit/run.js";
 import { validate } from "./validate/rules.js";
-import { currentBranch, readRepoRoot, readRepoState, readUntrackedFiles, VcsError } from "./vcs/git.js";
+import {
+  currentBranch,
+  readHeadSha,
+  readRepoRoot,
+  readRepoState,
+  readUntrackedFiles,
+  VcsError,
+} from "./vcs/git.js";
 import { baseCandidates, findPullRequest } from "./vcs/github.js";
 import { commitAll, createPullRequest, pushBranch } from "./vcs/mutate.js";
 
@@ -150,7 +159,9 @@ const realSubmitDeps: SubmitDeps = {
   findPullRequest: (branch) => findPullRequest(branch, cwd),
   readUntrackedFiles,
   readRepoRoot,
+  readHeadSha: () => readHeadSha(cwd),
   realpath: (path: string) => realpathSync(path),
+  requestApproval: (request, timeoutMs) => requestApproval(request, { timeoutMs }),
   commitAll: (message, exclude) => commitAll(message, exclude, cwd),
   pushBranch: (branch) => pushBranch(branch, cwd),
   createPullRequest: (input) => createPullRequest(input, cwd),
@@ -179,15 +190,13 @@ program
         },
         realSubmitDeps,
       );
-      // runSubmit's refusal message is deliberately neutral — it has no business knowing this
-      // caller has a --yes flag. When --yes was not given, a code-2 result carrying warnings
-      // can only be this gate refusal (with --yes, acknowledge is "all", so the gate never
-      // triggers; every other code-2 cause — an invalid base, a config that will not load, a
-      // git or gh failure — reports before pre-flight ever runs and so carries no warnings).
-      // Appending the remedy here, after the fact, is what keeps the interface-specific advice
-      // out of the core so an MCP caller — who has no --yes — never sees it.
-      if (!options.yes && result.code === 2 && result.warnings.length > 0) {
-        console.error("Re-run with --yes to accept these.");
+      // cliRemedy (src/cli-support.ts) is this interface's own after-the-fact remedy,
+      // kept out of the core and testable without a subprocess — the core's own message
+      // has no business knowing this caller has a --yes flag, and under the `human`
+      // approval policy --yes cannot help at all.
+      const remedy = cliRemedy(result, options.yes);
+      if (remedy !== undefined) {
+        console.error(remedy);
       }
       process.exitCode = result.code;
     } catch (error) {

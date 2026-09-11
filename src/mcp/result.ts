@@ -107,7 +107,13 @@ export function applyContent(result: SubmitResult): ToolContent {
 
   const lines = [result.message ?? "Refused.", ...findingLines(result), ...warningLines(result)];
 
-  if (result.warnings.length > 0 && result.findings.length === 0) {
+  // `result.refusal` names the exact gate reason, so this is appended only when
+  // acknowledging the ids is actually the remedy. Guessing from `warnings.length` and
+  // `findings.length` alone (as this once did) also matches "denied", "timed-out",
+  // "no-surface" and "human-required" — none of which acknowledge: [...] can fix — and
+  // would send an agent calling `shipkit_apply` again with the same ids into an
+  // identical refusal.
+  if (result.refusal === "unacknowledged") {
     lines.push(
       `Call again with acknowledge: [${warningIds(result).map((id) => `"${id}"`).join(", ")}] to proceed.`,
     );

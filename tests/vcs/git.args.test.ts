@@ -9,7 +9,7 @@ vi.mock("node:child_process", () => ({
   execFileSync: execFileSyncMock,
 }));
 
-const { readRepoRoot, readRepoState, readUntrackedFiles } = await import("../../src/vcs/git.js");
+const { readRepoRoot, readRepoState, readUntrackedFiles, readHeadSha } = await import("../../src/vcs/git.js");
 
 beforeEach(() => {
   execFileSyncMock.mockReset();
@@ -91,5 +91,23 @@ describe("readRepoRoot", () => {
     execFileSyncMock.mockImplementation(() => "/some/repo\n");
     expect(readRepoRoot("/some/repo/sub")).toBe("/some/repo");
     expect(calls()).toEqual([["rev-parse", "--show-toplevel"]]);
+  });
+});
+
+describe("readHeadSha", () => {
+  it("asks git for the full commit id of HEAD", () => {
+    execFileSyncMock.mockImplementation(() => "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd\n");
+    expect(readHeadSha("/some/repo")).toBe("a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd");
+    expect(calls()).toEqual([["rev-parse", "HEAD"]]);
+  });
+
+  // `--short` or `--abbrev-ref` here would put an abbreviation into the
+  // fingerprint, and two abbreviations of the same commit can differ in length
+  // as a repository grows.
+  it("does not abbreviate", () => {
+    execFileSyncMock.mockImplementation(() => "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd\n");
+    readHeadSha("/some/repo");
+    expect(calls()[0]).not.toContain("--short");
+    expect(calls()[0]).not.toContain("--abbrev-ref");
   });
 });

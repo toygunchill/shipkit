@@ -51,6 +51,14 @@ describe("jiraToken", () => {
     expect(jiraToken(() => "from-keychain")).toBe("from-keychain");
   });
 
+  // SHIPKIT_JIRA_TOKEN=" " is not a token either. Reaching Jira with it would fail the
+  // fetch and, upstream in runSubmit, turn into a JiraError that aborts the whole submit —
+  // instead of degrading to issue-unverified the way a genuinely unset variable does.
+  it("treats a whitespace-only environment variable as absent", () => {
+    process.env.SHIPKIT_JIRA_TOKEN = "   ";
+    expect(jiraToken(() => "from-keychain")).toBe("from-keychain");
+  });
+
   it("is undefined when neither has it", () => {
     expect(
       jiraToken(() => {

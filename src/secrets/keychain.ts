@@ -37,6 +37,8 @@ export function readKeychainSecret(
  */
 export function jiraToken(run: SecurityRunner = defaultRunner): string | undefined {
   const fromEnv = process.env.SHIPKIT_JIRA_TOKEN;
-  if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv;
+  // Whitespace is not a token. `SHIPKIT_JIRA_TOKEN=" "` must fall through to the keychain
+  // like an unset variable would, not reach Jira as a credential that can only fail.
+  if (fromEnv !== undefined && fromEnv.trim().length > 0) return fromEnv;
   return readKeychainSecret("jira", run);
 }

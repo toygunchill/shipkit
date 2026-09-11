@@ -9,6 +9,8 @@ import ShipkitKit
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var pending: PendingRequest?
+    @Published private(set) var queuedBehind: Int = 0
+    @Published private(set) var actionsEnabled: Bool = true
     @Published var tokenDraft: String = ""
     @Published private(set) var tokenSaved: Bool = false
     @Published private(set) var tokenError: String?
@@ -18,6 +20,17 @@ final class AppModel: ObservableObject {
     private let journal = Journal()
     private let queue = ApprovalQueue()
     private var listener: Listener?
+    private var reArmTask: Task<Void, Never>?
+
+    /// How long the approve/deny buttons stay disabled right after a
+    /// promotion swaps a new request into the panel. Defends against a
+    /// doubled click, a trackpad tap that registers twice, or the pointer
+    /// simply still resting on "Approve push" when the next request lands in
+    /// the same panel at the same coordinates — any of which would otherwise
+    /// approve a repository the person was never shown. Short enough that a
+    /// deliberate, separate click after actually reading the new request is
+    /// never held up by it.
+    private static let promotionGuardDuration: Duration = .milliseconds(500)
 
     init() {
         start()
@@ -53,11 +66,34 @@ final class AppModel: ObservableObject {
     private func show(_ request: PendingRequest) async -> Decision {
         await queue.wait(for: request) { [weak self] head in
             self?.pending = head
+            self?.queuedBehind = self?.queue.waitingCount ?? 0
         }
     }
 
+    /// Applies `decision` to the head (and, per `ApprovalQueue.decide`, to
+    /// every other queued entry asking the same question) and puts whatever
+    /// is now at the head on screen.
+    ///
+    /// When that promotes a *different* request into the same panel, the
+    /// buttons are briefly disabled: `ApprovalQueue`'s own guarantee is that
+    /// a decision can only ever resolve the request actually at the head, so
+    /// the risk here is not the queue misrouting a decision — it is a second
+    /// physical click landing on the newly promoted panel before the person
+    /// has read it.
     func decide(_ decision: Decision) {
-        pending = queue.decide(decision)
+        let previous = pending?.id
+        let next = queue.decide(decision)
+        pending = next
+        queuedBehind = queue.waitingCount
+
+        guard let next, next.id != previous else { return }
+        actionsEnabled = false
+        reArmTask?.cancel()
+        reArmTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.promotionGuardDuration)
+            guard Task.isCancelled == false else { return }
+            self?.actionsEnabled = true
+        }
     }
 
     func saveToken() {

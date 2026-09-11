@@ -8,7 +8,11 @@ struct ShipkitMenuBarApp: App {
     var body: some Scene {
         MenuBarExtra {
             if let pending = model.pending {
-                ApprovalPanel(request: pending.request) { model.decide($0) }
+                ApprovalPanel(
+                    request: pending.request,
+                    queuedBehind: model.queuedBehind,
+                    actionsEnabled: model.actionsEnabled
+                ) { model.decide($0) }
             } else {
                 SettingsPane(model: model)
             }

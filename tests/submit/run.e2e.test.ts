@@ -85,7 +85,7 @@ function realDeps(repo: string, opened: { input?: unknown }): SubmitDeps {
     // acknowledge: [] with no warnings, so shouldRequestApproval never actually fires this,
     // but a future test that adds a warning must fail loud rather than reach for a real
     // approval surface.
-    requestApproval: async () => "no-surface" as const,
+    requestApproval: async () => ({ outcome: "no-surface" as const }),
     commitAll: (message, exclude) => commitAll(message, exclude, repo),
     pushBranch: (branch) => pushBranch(branch, repo),
     createPullRequest: (input) => {

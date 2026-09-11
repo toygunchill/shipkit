@@ -72,9 +72,9 @@ function response(decision: string, fingerprint = FP): string {
 
 describe("requestApproval", () => {
   it("returns no-surface when nothing is listening", async () => {
-    await expect(requestApproval(REQUEST, { socketPath: socketPath() })).resolves.toBe(
-      "no-surface",
-    );
+    await expect(requestApproval(REQUEST, { socketPath: socketPath() })).resolves.toEqual({
+      outcome: "no-surface",
+    });
   });
 
   it("sends the request and returns the decision", async () => {
@@ -85,22 +85,26 @@ describe("requestApproval", () => {
       return response("approved");
     });
 
-    await expect(requestApproval(REQUEST, { socketPath: path })).resolves.toBe("approved");
+    await expect(requestApproval(REQUEST, { socketPath: path })).resolves.toEqual({
+      outcome: "approved",
+    });
     expect(JSON.parse(seen)).toEqual(REQUEST);
   });
 
   it("returns denied when a person denied", async () => {
     const path = socketPath();
     await listen(path, () => response("denied"));
-    await expect(requestApproval(REQUEST, { socketPath: path })).resolves.toBe("denied");
+    await expect(requestApproval(REQUEST, { socketPath: path })).resolves.toEqual({
+      outcome: "denied",
+    });
   });
 
   it("returns timed-out when the listener never answers", async () => {
     const path = socketPath();
     await listen(path, () => null);
-    await expect(requestApproval(REQUEST, { socketPath: path, timeoutMs: 120 })).resolves.toBe(
-      "timed-out",
-    );
+    await expect(
+      requestApproval(REQUEST, { socketPath: path, timeoutMs: 120 }),
+    ).resolves.toEqual({ outcome: "timed-out" });
   });
 
   // `pending` means the person has not decided yet. From the caller's side that
@@ -109,29 +113,43 @@ describe("requestApproval", () => {
   it("treats a pending response as timed-out", async () => {
     const path = socketPath();
     await listen(path, () => response("pending"));
-    await expect(requestApproval(REQUEST, { socketPath: path })).resolves.toBe("timed-out");
+    await expect(requestApproval(REQUEST, { socketPath: path })).resolves.toEqual({
+      outcome: "timed-out",
+    });
   });
 
-  // Anything it cannot understand fails closed. An approval is permission to
-  // push, and a garbled line is not permission.
-  it("returns denied for a malformed response", async () => {
+  // Anything it cannot understand fails closed. An approval is permission to push, and a
+  // garbled line is not permission — but `detail` still carries `decodeResponse`'s own
+  // message, so a decode failure is not reported identically to an actual denial.
+  it("returns denied for a malformed response, with the parse failure as detail", async () => {
     const path = socketPath();
     await listen(path, () => "{\n");
-    await expect(requestApproval(REQUEST, { socketPath: path })).resolves.toBe("denied");
+    const result = await requestApproval(REQUEST, { socketPath: path });
+    expect(result.outcome).toBe("denied");
+    expect(result.detail).toContain("Cannot parse");
   });
 
-  it("returns denied for a response about a different request", async () => {
+  it("returns denied for a response about a different request, naming the mismatch", async () => {
     const path = socketPath();
     await listen(path, () => response("approved", "b".repeat(64)));
-    await expect(requestApproval(REQUEST, { socketPath: path })).resolves.toBe("denied");
+    const result = await requestApproval(REQUEST, { socketPath: path });
+    expect(result.outcome).toBe("denied");
+    expect(result.detail).toBe("The approval response is for a different request");
   });
 
-  it("returns denied when the listener speaks another protocol version", async () => {
+  // The one case this finding exists for: a version disagreement must not collapse into an
+  // indistinguishable "denied" — the detail has to name both protocol numbers so the reader
+  // learns a version is stale rather than believing a person refused.
+  it("returns denied with a detail naming both protocol versions when the listener speaks a different one", async () => {
     const path = socketPath();
     await listen(path, () =>
       `${JSON.stringify({ protocol: 99, fingerprint: FP, decision: "approved" })}\n`,
     );
-    await expect(requestApproval(REQUEST, { socketPath: path })).resolves.toBe("denied");
+    const result = await requestApproval(REQUEST, { socketPath: path });
+    expect(result.outcome).toBe("denied");
+    expect(result.detail).toBe(
+      `The approval surface speaks protocol 99; this shipkit speaks ${PROTOCOL_VERSION}`,
+    );
   });
 
   it("never throws, whatever the listener does", async () => {
@@ -139,9 +157,9 @@ describe("requestApproval", () => {
     await listen(path, () => {
       throw new Error("listener exploded");
     });
-    await expect(requestApproval(REQUEST, { socketPath: path, timeoutMs: 120 })).resolves.toBeTypeOf(
-      "string",
-    );
+    await expect(
+      requestApproval(REQUEST, { socketPath: path, timeoutMs: 120 }),
+    ).resolves.toEqual(expect.objectContaining({ outcome: expect.any(String) }));
   });
 
   // A listener that accepted the connection and then hung up without ever
@@ -164,7 +182,9 @@ describe("requestApproval", () => {
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(path, () => resolve()));
 
-    await expect(requestApproval(REQUEST, { socketPath: path })).resolves.toBe("denied");
+    await expect(requestApproval(REQUEST, { socketPath: path })).resolves.toEqual({
+      outcome: "denied",
+    });
   });
 
   // `timeoutMs` is a promise made to the caller, not just an upper bound
@@ -176,9 +196,9 @@ describe("requestApproval", () => {
     await listen(path, () => null);
 
     const start = Date.now();
-    await expect(requestApproval(REQUEST, { socketPath: path, timeoutMs: 120 })).resolves.toBe(
-      "timed-out",
-    );
+    await expect(
+      requestApproval(REQUEST, { socketPath: path, timeoutMs: 120 }),
+    ).resolves.toEqual({ outcome: "timed-out" });
     const elapsed = Date.now() - start;
 
     // Comfortably over 120ms to absorb scheduler jitter, comfortably under a

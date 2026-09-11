@@ -106,7 +106,7 @@ function makeDeps(
         readRepoRoot: () => "/repo",
         realpath: (path: string) => path,
         readHeadSha: () => "a".repeat(40),
-        requestApproval: async () => "no-surface" as const /* extra args ignored */,
+        requestApproval: async () => ({ outcome: "no-surface" as const }) /* extra args ignored */,
         commitAll: () => undefined,
         pushBranch: () => undefined,
         createPullRequest: () => "https://github.com/x/y/pull/1",
@@ -855,7 +855,7 @@ describe("the approval surface", () => {
   });
 
   it("asks under echo when they do not, and proceeds when approved", async () => {
-    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => "approved" as const });
+    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => ({ outcome: "approved" as const }) });
     const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
     expect(result.code).toBe(0);
     expect(result.approval).toBe("approved");
@@ -866,15 +866,34 @@ describe("the approval surface", () => {
   });
 
   it("refuses and mutates nothing when denied", async () => {
-    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => "denied" as const });
+    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => ({ outcome: "denied" as const }) });
     const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
     expect(result.code).toBe(2);
     expect(result.refusal).toBe("denied");
     expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
   });
 
+  // A listener answering the wrong protocol version produces a `ProtocolError` whose message
+  // already names both numbers; `requestApproval` maps that to a plain "denied" outcome but
+  // carries the message through as `detail`. Losing it here would tell the reader a person
+  // refused their push when nobody was ever asked.
+  it("names both protocol versions in the refusal when the surface disagrees on protocol", async () => {
+    const { deps } = makeDeps({
+      ...warned,
+      requestApproval: async () => ({
+        outcome: "denied" as const,
+        detail: "The approval surface speaks protocol 99; this shipkit speaks 1",
+      }),
+    });
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+    expect(result.code).toBe(2);
+    expect(result.refusal).toBe("denied");
+    expect(result.message).toContain("protocol 99");
+    expect(result.message).toContain("speaks 1");
+  });
+
   it("refuses and mutates nothing when the wait runs out, naming the fingerprint to resume", async () => {
-    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => "timed-out" as const });
+    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => ({ outcome: "timed-out" as const }) });
     const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
     expect(result.code).toBe(2);
     expect(result.refusal).toBe("timed-out");
@@ -888,7 +907,7 @@ describe("the approval surface", () => {
 
   // The property that keeps the application optional.
   it("falls back to today's refusal under echo with nothing listening", async () => {
-    const { deps, err } = makeDeps({ ...warned, requestApproval: async () => "no-surface" as const /* extra args ignored */ });
+    const { deps, err } = makeDeps({ ...warned, requestApproval: async () => ({ outcome: "no-surface" as const }) /* extra args ignored */ });
     const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
     expect(result.code).toBe(2);
     expect(err.join("\n")).toContain("untracked-files");
@@ -901,7 +920,7 @@ describe("the approval surface", () => {
       requestApproval: async (request: ApprovalRequest, timeoutMs: number) => {
         sent = request;
         expect(timeoutMs).toBe(120_000);
-        return "denied" as const;
+        return { outcome: "denied" as const };
       },
     });
 
@@ -948,7 +967,7 @@ describe("the approval surface", () => {
       }),
       requestApproval: async (request: ApprovalRequest) => {
         sent = request;
-        return "denied" as const;
+        return { outcome: "denied" as const };
       },
     });
 
@@ -967,7 +986,7 @@ describe("the approval surface", () => {
     let reads = 0;
     const { deps, calls } = makeDeps({
       ...warned,
-      requestApproval: async () => "approved" as const,
+      requestApproval: async () => ({ outcome: "approved" as const }),
       // The first read is the one hashed into the request; by the second, a
       // blocking label has appeared on the pull request.
       findPullRequest: () => {
@@ -993,7 +1012,7 @@ describe("the approval surface", () => {
   });
 
   it("proceeds when the facts are unchanged", async () => {
-    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => "approved" as const });
+    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => ({ outcome: "approved" as const }) });
     const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
     expect(result.code).toBe(0);
     expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
@@ -1008,7 +1027,7 @@ describe("the approval surface", () => {
     let reads = 0;
     const { deps, calls } = makeDeps({
       ...warned,
-      requestApproval: async () => "approved" as const,
+      requestApproval: async () => ({ outcome: "approved" as const }),
       findPullRequest: () => {
         reads += 1;
         return reads === 1
@@ -1048,14 +1067,14 @@ describe("the human policy", () => {
   const warned = { readUntrackedFiles: () => [".env.local"], loadConfig: humanConfig };
 
   it("asks even when every id was echoed", async () => {
-    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => "approved" as const });
+    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => ({ outcome: "approved" as const }) });
     await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
     expect(calls.some((c) => c.fn === "requestApproval")).toBe(true);
   });
 
   // Otherwise the policy is decorative: an agent, or a --yes, would walk past it.
   it("refuses an echoed acknowledgement with nothing listening", async () => {
-    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => "no-surface" as const /* extra args ignored */ });
+    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => ({ outcome: "no-surface" as const }) /* extra args ignored */ });
     const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
     expect(result.code).toBe(2);
     // Under echo the same outcome maps to "unacknowledged" (see the describe above); under
@@ -1066,7 +1085,7 @@ describe("the human policy", () => {
   });
 
   it("says the surface is not running rather than naming ids to acknowledge", async () => {
-    const { deps, err } = makeDeps({ ...warned, requestApproval: async () => "no-surface" as const /* extra args ignored */ });
+    const { deps, err } = makeDeps({ ...warned, requestApproval: async () => ({ outcome: "no-surface" as const }) /* extra args ignored */ });
     await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
     expect(err.join("\n")).toMatch(/approval surface/i);
   });

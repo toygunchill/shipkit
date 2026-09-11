@@ -3,6 +3,7 @@ import { fingerprint, sortWarnings, type Situation } from "../approval/fingerpri
 import {
   gate,
   shouldRequestApproval,
+  type ApprovalAnswer,
   type ApprovalOutcome,
   type GateReason,
   type GateResult,
@@ -89,7 +90,7 @@ export type SubmitDeps = {
   readRepoRoot: () => string;
   readHeadSha: () => string;
   realpath: (path: string) => string;
-  requestApproval: (request: ApprovalRequest, timeoutMs: number) => Promise<ApprovalOutcome>;
+  requestApproval: (request: ApprovalRequest, timeoutMs: number) => Promise<ApprovalAnswer>;
   commitAll: (message: string, exclude: string[]) => void;
   pushBranch: (branch: string) => void;
   createPullRequest: (input: { title: string; body: string; base: string; head: string }) => string;
@@ -279,6 +280,10 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
 
     let approval: ApprovalOutcome | undefined;
     let approvalFingerprint: string | undefined;
+    // Set only when the surface's answer could not be taken at face value — chiefly a
+    // protocol version disagreement, which `requestApproval` maps to a plain "denied"
+    // outcome but carries the real reason in `detail` so it is not lost entirely.
+    let approvalDetail: string | undefined;
 
     if (shouldRequestApproval({ policy: config.pr.approval, warnings, acknowledge: options.acknowledge })) {
       // repoRoot is not in scope here — it is only read above inside the
@@ -302,7 +307,7 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       const head = deps.readHeadSha();
       const situation = situationOf({ head, warnings });
       approvalFingerprint = fingerprint(situation);
-      approval = await deps.requestApproval(
+      const answer = await deps.requestApproval(
         {
           protocol: PROTOCOL_VERSION,
           fingerprint: approvalFingerprint,
@@ -319,6 +324,8 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
         },
         config.pr.approvalTimeoutSeconds * 1000,
       );
+      approval = answer.outcome;
+      approvalDetail = answer.detail;
 
       // Minutes can pass while a person decides. An approval that survives the
       // situation changing underneath it is worth nothing, so the facts are read
@@ -384,7 +391,11 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       // Neutral on purpose: the remedy differs per interface, and now per policy too.
       // src/cli.ts appends "Re-run with --yes" when that would help, and
       // src/mcp/result.ts appends its own acknowledge guidance.
-      const message = refusalMessage(decision, approvalFingerprint);
+      const base = refusalMessage(decision, approvalFingerprint);
+      // `approvalDetail` is what turns "the push was denied" into a named version
+      // disagreement — without it, a stale protocol version is indistinguishable from a
+      // person having said no.
+      const message = approvalDetail !== undefined ? `${base} (${approvalDetail})` : base;
       deps.err(message);
       return {
         code: 2,

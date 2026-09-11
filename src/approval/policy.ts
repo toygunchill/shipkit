@@ -6,6 +6,15 @@ export type ApprovalPolicy = "echo" | "human";
 /** What came back from asking a person, including not being able to ask. */
 export type ApprovalOutcome = "approved" | "denied" | "timed-out" | "no-surface";
 
+/**
+ * What `requestApproval` resolves with. `detail` carries the reason behind an outcome the
+ * bare enum cannot explain on its own — chiefly a protocol version disagreement, which
+ * `decodeResponse` reports precisely but which collapses to a plain "denied" outcome. Without
+ * a place to carry it, the one thing the caller most needs to know — that a version is stale,
+ * not that a person refused — is lost.
+ */
+export type ApprovalAnswer = { outcome: ApprovalOutcome; detail?: string };
+
 export type GateReason =
   | "unacknowledged"
   | "denied"

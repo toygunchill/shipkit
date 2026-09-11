@@ -159,7 +159,7 @@ describe("applyContent", () => {
       readRepoRoot: () => "/repo",
       realpath: (path) => path,
       readHeadSha: () => "a".repeat(40),
-      requestApproval: async () => "no-surface" as const,
+      requestApproval: async () => ({ outcome: "no-surface" as const }),
       commitAll: () => {
         throw new Error("must not commit on a refusal");
       },

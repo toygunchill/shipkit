@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { canonical, fingerprint, type Situation } from "../../src/approval/fingerprint.js";
+import {
+  canonical,
+  fingerprint,
+  sortWarnings,
+  type Situation,
+} from "../../src/approval/fingerprint.js";
 
 const BASE: Situation = {
   repo: "/Users/x/example-app",
@@ -104,6 +109,18 @@ describe("fingerprint", () => {
     );
   });
 
+  // The one pair where the two languages can disagree about equality. Swift's
+  // `String ==` compares by canonical equivalence and calls these check ids the
+  // same; `!==` here compares code units and calls them different, so the order
+  // is decided by the check id and not by the message. The guard in front of
+  // Swift's comparator has to say the same thing, and the shared fixture pins it.
+  it("orders check ids that are canonically equal by their code units", () => {
+    const decomposed = { check: "caf\u0065\u0301", message: "b" };
+    const precomposed = { check: "caf\u00e9", message: "a" };
+    expect(sortWarnings([precomposed, decomposed])).toEqual([decomposed, precomposed]);
+    expect(sortWarnings([decomposed, precomposed])).toEqual([decomposed, precomposed]);
+  });
+
   it("is stable across calls", () => {
     expect(fingerprint(BASE)).toBe(fingerprint(structuredClone(BASE)));
   });
@@ -118,7 +135,7 @@ describe("the shared fixture", () => {
       readFileSync("tests/fixtures/fingerprint-vectors.json", "utf8"),
     ) as { name: string; situation: Situation; fingerprint: string }[];
 
-    expect(vectors.length).toBeGreaterThanOrEqual(7);
+    expect(vectors.length).toBeGreaterThanOrEqual(11);
     for (const vector of vectors) {
       expect(fingerprint(vector.situation), vector.name).toBe(vector.fingerprint);
     }

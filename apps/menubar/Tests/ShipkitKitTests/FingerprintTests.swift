@@ -24,7 +24,7 @@ private func loadVectors() throws -> [Vector] {
 
 @Test func matchesEveryVectorInTheSharedFixture() throws {
     let vectors = try loadVectors()
-    #expect(vectors.count >= 9)
+    #expect(vectors.count >= 11)
 
     for vector in vectors {
         let situation = Situation(
@@ -65,6 +65,33 @@ private func loadVectors() throws -> [Vector] {
         Warning(check: "approvals-dismissed", message: "a"),
     ]
     #expect(sortWarnings(unsorted).map(\.message) == ["a", "b", "z"])
+}
+
+/// Swift's `String ==` calls these two check ids equal — they are the same
+/// character spelled two ways — while JavaScript's `!==` calls them different.
+/// The order has to follow JavaScript's, because the fixture was generated from
+/// `src/approval/fingerprint.ts`. Code unit 0x0065 sorts before 0x00E9, so the
+/// decomposed spelling comes first however the messages compare.
+@Test func ordersCanonicallyEqualCheckIdsByTheirCodeUnits() {
+    let precomposed = Warning(check: "caf\u{e9}", message: "a")
+    let decomposed = Warning(check: "caf\u{65}\u{301}", message: "b")
+    #expect(sortWarnings([precomposed, decomposed]).map(\.message) == ["b", "a"])
+    #expect(sortWarnings([decomposed, precomposed]).map(\.message) == ["b", "a"])
+}
+
+/// The same pair with identical messages. Under the old guard both directions
+/// compared `false`, leaving the order to whatever `sorted(by:)` happened to do.
+/// This asserts on the code units rather than on `Warning ==`, which compares
+/// its Strings canonically and would call either order correct.
+@Test func ordersCanonicallyEqualCheckIdsDeterministicallyWhenMessagesMatch() {
+    let precomposed = Warning(check: "caf\u{e9}", message: "same")
+    let decomposed = Warning(check: "caf\u{65}\u{301}", message: "same")
+    func spellings(_ warnings: [Warning]) -> [[UInt16]] {
+        warnings.map { Array($0.check.utf16) }
+    }
+    let expected = [Array(decomposed.check.utf16), Array(precomposed.check.utf16)]
+    #expect(spellings(sortWarnings([precomposed, decomposed])) == expected)
+    #expect(spellings(sortWarnings([decomposed, precomposed])) == expected)
 }
 
 @Test func sortsByCodeUnitOrderSoUppercaseComesFirst() {

@@ -202,5 +202,49 @@
       ]
     },
     "fingerprint": "781c73eb37bcdb4925641ac518430bb9d329fbff07c4f5871dd884059800df17"
+    },
+  {
+    "name": "check ids canonically equal but byte-different (combining mark vs. precomposed)",
+    "situation": {
+      "repo": "/r",
+      "branch": "b",
+      "base": "d",
+      "head": "h44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "title": "t",
+      "commitMessage": "m",
+      "warnings": [
+        {
+          "check": "caf\u0065\u0301",
+          "message": "b"
+        },
+        {
+          "check": "caf\u00e9",
+          "message": "a"
+        }
+      ]
+    },
+    "fingerprint": "00acd8f4ce8eabb436a8b72781b2d02ed0868984b3aaf1d9872312bb2a4cbd8e"
+  },
+  {
+    "name": "check ids canonically equal but byte-different, messages identical",
+    "situation": {
+      "repo": "/r",
+      "branch": "b",
+      "base": "d",
+      "head": "i44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "title": "t",
+      "commitMessage": "m",
+      "warnings": [
+        {
+          "check": "caf\u00e9",
+          "message": "same"
+        },
+        {
+          "check": "caf\u0065\u0301",
+          "message": "same"
+        }
+      ]
+    },
+    "fingerprint": "f5edc9d547ea1d5bd6c0674ee9fbcbb5098e87dfcbabfd7c7b34f3ab06c88858"
   }
 ]

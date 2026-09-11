@@ -43,9 +43,29 @@ private func utf16Less(_ a: String, _ b: String) -> Bool {
     a.utf16.lexicographicallyPrecedes(b.utf16)
 }
 
+/// Code-unit equality, the guard `utf16Less` needs in front of it.
+///
+/// Swift's `String ==` compares by *canonical equivalence*: `"e\u{301}"` and
+/// `"\u{e9}"` are equal, because they are the same character spelled two ways.
+/// JavaScript's `!==` compares code units, and calls them different. So a guard
+/// written `a.check != b.check` decides the two check ids are the same, skips
+/// the check comparison and tiebreaks on the message, while
+/// `src/approval/fingerprint.ts` orders by the check's code units — a different
+/// order, a different canonical form, a different hash. The person is never
+/// asked and the caller is told "denied", which is what a refusal looks like.
+///
+/// It also makes the comparator a total order over distinct byte sequences.
+/// With `==` as the guard, two warnings whose checks are canonically equal and
+/// whose messages are byte-identical compare `false` in both directions, and
+/// `sorted(by:)` is not documented to be stable — so Swift's own output was
+/// free to vary from run to run on the same input.
+private func utf16Equal(_ a: String, _ b: String) -> Bool {
+    a.utf16.elementsEqual(b.utf16)
+}
+
 public func sortWarnings(_ warnings: [Warning]) -> [Warning] {
     warnings.sorted { a, b in
-        if a.check != b.check { return utf16Less(a.check, b.check) }
+        if !utf16Equal(a.check, b.check) { return utf16Less(a.check, b.check) }
         return utf16Less(a.message, b.message)
     }
 }

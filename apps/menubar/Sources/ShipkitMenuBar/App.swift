@@ -1,14 +1,22 @@
 import SwiftUI
+import ShipkitKit
 
-// Task 6 replaces this with the real MenuBarExtra. Until then the executable
-// exists so the package builds and the .app script has something to wrap.
 @main
 struct ShipkitMenuBarApp: App {
+    @StateObject private var model = AppModel()
+
     var body: some Scene {
         MenuBarExtra {
-            Text("shipkit")
+            if let pending = model.pending {
+                ApprovalPanel(request: pending.request) { model.decide($0) }
+            } else {
+                SettingsPane(model: model)
+            }
         } label: {
-            ShipkitMark()
+            // The silhouette carries the state: a menu-bar icon is tinted by the
+            // system and cannot signal with colour, and at 16pt a small addition
+            // is not a state anyone notices.
+            ShipkitMark(isPending: model.pending != nil)
                 .frame(width: 18, height: 18)
         }
         .menuBarExtraStyle(.window)

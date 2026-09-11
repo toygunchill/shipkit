@@ -505,3 +505,37 @@ describe("runSubmit under a symlinked checkout", () => {
     expect(calls.find((c) => c.fn === "commitAll")?.args[1]).toEqual(["scratch/response.json"]);
   });
 });
+
+describe("runSubmit path dialects and a vanished response file", () => {
+  // `relative` answers in the platform separator; `git ls-files --full-name` always answers
+  // in forward slashes. The two are compared to each other and one of them becomes a
+  // pathspec, so a backslash here means the exclusion misses and the response file is
+  // reported as untracked on every single run.
+  it("spells the excluded path the way git spells paths", async () => {
+    const { deps, calls } = makeDeps({});
+
+    const code = await runSubmit({ ...OPTIONS, input: "/repo/a/b/response.json" }, deps);
+
+    expect(code).toBe(0);
+    const excluded = calls.find((c) => c.fn === "commitAll")?.args[1] as string[];
+    expect(excluded).toEqual(["a/b/response.json"]);
+    expect(excluded[0]).not.toContain("\\");
+  });
+
+  // realpath throws on a path that no longer exists, and a raw ENOENT is none of the typed
+  // errors the catch below classifies — it would escape and crash with a stack trace
+  // instead of the exit 2 every other bad input gets.
+  it("returns 2 instead of crashing when the response file vanishes mid-run", async () => {
+    const { deps, calls, err } = makeDeps({
+      realpath: () => {
+        throw new Error("ENOENT: no such file or directory");
+      },
+    });
+
+    const code = await runSubmit(OPTIONS, deps);
+
+    expect(code).toBe(2);
+    expect(err.join("\n")).toContain(OPTIONS.input);
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
+  });
+});

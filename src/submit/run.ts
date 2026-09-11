@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { extractIssueKeysFromBody, firstIssueKey, isValidBase } from "../cli-support.js";
 import { ConfigError } from "../config/load.js";
 import type { ShipkitConfig } from "../config/schema.js";
@@ -121,8 +121,25 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
     // same directory would not match. The mismatch fails quietly in the worst direction:
     // the response file is judged to be outside the repository, the exclusion is skipped,
     // and it lands in the commit again.
-    const repoRoot = deps.realpath(deps.readRepoRoot());
-    const relativeToRoot = relative(repoRoot, deps.realpath(resolve(options.input)));
+    //
+    // The result is spelled the way git spells paths. `relative` uses the platform
+    // separator, `git ls-files --full-name` always answers with forward slashes, and the
+    // two are compared to each other and handed to a pathspec — so on Windows the
+    // exclusion would miss and the file would be reported as untracked on every run.
+    let relativeToRoot: string;
+    try {
+      const repoRoot = deps.realpath(deps.readRepoRoot());
+      relativeToRoot = relative(repoRoot, deps.realpath(resolve(options.input)))
+        .split(sep)
+        .join("/");
+    } catch {
+      // `loadResponse` read this file moments ago, so failing here means it vanished
+      // underneath us. Report it the way every other bad input is reported rather than
+      // letting an ENOENT escape the typed-error catch below and crash with a stack trace.
+      throw new ResponseError(
+        `Cannot locate the response file at ${options.input} — it was readable a moment ago`,
+      );
+    }
     const responseInRepo =
       relativeToRoot.length > 0 &&
       !relativeToRoot.startsWith("..") &&

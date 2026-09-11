@@ -21,21 +21,30 @@ const VERSION = "shipkit-approval-v1";
  * for the first message that contains one, and escaping rules are exactly the
  * kind of detail two implementations get subtly different.
  *
- * Warning order is taken as given. `preflight` pushes its checks in a fixed
- * order, so the same situation always renders the same way, and sorting would
- * need a byte-wise comparator agreed across both languages for nothing.
+ * Warnings are sorted by check id (alphabetically), then by message. This
+ * ensures a canonical form even when the same check fires multiple times,
+ * preventing cross-language disagreements.
+ *
+ * UTF-8 encoding substitutes unpaired UTF-16 surrogates with U+FFFD before
+ * counting and hashing. Both `Buffer.byteLength(value, "utf8")` and
+ * `createHash().update(value, "utf8")` apply this substitution; a Swift
+ * implementation must do the same or reject such input.
  */
 export function canonical(situation: Situation): string {
   const field = (value: string) => `${Buffer.byteLength(value, "utf8")}:${value}`;
+  const sorted = [...situation.warnings].sort((a, b) => {
+    const checkCmp = a.check.localeCompare(b.check);
+    return checkCmp !== 0 ? checkCmp : a.message.localeCompare(b.message);
+  });
   const lines = [
     VERSION,
     field(situation.repo),
     field(situation.branch),
     field(situation.base),
     field(situation.head),
-    String(situation.warnings.length),
+    String(sorted.length),
   ];
-  for (const warning of situation.warnings) {
+  for (const warning of sorted) {
     lines.push(field(warning.check), field(warning.message));
   }
   return lines.join("\n");

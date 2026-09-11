@@ -66,12 +66,13 @@ describe("fingerprint", () => {
     expect(fingerprint({ ...BASE, warnings: more })).not.toBe(fingerprint(BASE));
   });
 
-  // Order is taken as given rather than sorted. preflight pushes its checks in a
-  // fixed order, so the same situation always renders the same way; sorting
-  // would need a byte-wise comparator agreed across two languages for no gain.
-  it("distinguishes a different order, and preflight never produces one", () => {
+  // Warnings are sorted by check id, then message, so the canonical form is
+  // stable regardless of input order. This allows different check firing orders
+  // to produce the same fingerprint, which is necessary when the same check
+  // fires multiple times.
+  it("normalizes warning order by sorting", () => {
     const swapped = [BASE.warnings[1], BASE.warnings[0]];
-    expect(fingerprint({ ...BASE, warnings: swapped })).not.toBe(fingerprint(BASE));
+    expect(fingerprint({ ...BASE, warnings: swapped })).toBe(fingerprint(BASE));
   });
 
   it("is stable across calls", () => {
@@ -88,7 +89,7 @@ describe("the shared fixture", () => {
       readFileSync("tests/fixtures/fingerprint-vectors.json", "utf8"),
     ) as { name: string; situation: Situation; fingerprint: string }[];
 
-    expect(vectors.length).toBeGreaterThanOrEqual(4);
+    expect(vectors.length).toBeGreaterThanOrEqual(7);
     for (const vector of vectors) {
       expect(fingerprint(vector.situation), vector.name).toBe(vector.fingerprint);
     }

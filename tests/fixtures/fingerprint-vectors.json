@@ -61,5 +61,84 @@
       ]
     },
     "fingerprint": "342ee0cffe526ce3ee3b47f3f279987b97ce89ecbcf8b4a1fd019715cb240666"
+  },
+  {
+    "name": "astral characters (emoji)",
+    "situation": {
+      "repo": "/Users/x/example-app",
+      "branch": "bugfix/🎉-celebration/123-party",
+      "base": "develop",
+      "head": "d44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "warnings": [
+        {
+          "check": "untracked-files",
+          "message": "fix 🎉 the thing"
+        }
+      ]
+    },
+    "fingerprint": "6accc07ab3d6db4065f93a83a707c85dc2de367a9149485083b70067b9b3d9bd"
+  },
+  {
+    "name": "multi-digit warning count",
+    "situation": {
+      "repo": "/r",
+      "branch": "b",
+      "base": "d",
+      "head": "e44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "warnings": [
+        {
+          "check": "a",
+          "message": "1"
+        },
+        {
+          "check": "a",
+          "message": "2"
+        },
+        {
+          "check": "b",
+          "message": "3"
+        },
+        {
+          "check": "c",
+          "message": "4"
+        },
+        {
+          "check": "d",
+          "message": "5"
+        },
+        {
+          "check": "e",
+          "message": "6"
+        },
+        {
+          "check": "f",
+          "message": "7"
+        },
+        {
+          "check": "g",
+          "message": "8"
+        },
+        {
+          "check": "h",
+          "message": "9"
+        },
+        {
+          "check": "i",
+          "message": "10"
+        }
+      ]
+    },
+    "fingerprint": "b8c35dd14aeebd71a4b98de5c0f0962f71723e2c4a0f2bc9534acef39c7cd142"
+  },
+  {
+    "name": "empty-string field",
+    "situation": {
+      "repo": "/r",
+      "branch": "",
+      "base": "develop",
+      "head": "f44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "warnings": []
+    },
+    "fingerprint": "a66183f15ed5912c00ef1b811ee18f47a066f4fd91fb9171f1b58783bc70cd94"
   }
 ]

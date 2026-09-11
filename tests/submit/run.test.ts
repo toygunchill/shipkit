@@ -1,9 +1,9 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "../../src/config/load.js";
+import { ConfigError, loadConfig } from "../../src/config/load.js";
 import type { ShipkitConfig } from "../../src/config/schema.js";
 import type { IssueFacts } from "../../src/jira/types.js";
-import { renderBody, ResponseError, type SubmitResponse } from "../../src/submit/response.js";
+import { renderBody, type SubmitResponse } from "../../src/submit/response.js";
 import { runSubmit, type SubmitDeps, type SubmitOptions } from "../../src/submit/run.js";
 import { VcsError } from "../../src/vcs/git.js";
 import type { PullRequestState } from "../../src/vcs/types.js";
@@ -28,10 +28,12 @@ const VALID_RESPONSE: SubmitResponse = {
 };
 
 const OPTIONS: SubmitOptions = {
-  input: "irrelevant.json",
   base: "develop",
-  config: "irrelevant.yml",
-  yes: false,
+  config: "tests/fixtures/valid.shipkit.yml",
+  response: VALID_RESPONSE,
+  responsePath: "/repo/scratch/response.json",
+  mode: "apply",
+  acknowledge: "all",
 };
 
 const NO_PR: PullRequestState | null = null;
@@ -71,7 +73,6 @@ function makeDeps(
   const defaults: SubmitDeps = options.poison
     ? {
         loadConfig: poisoned("loadConfig"),
-        loadResponse: poisoned("loadResponse"),
         renderBody: poisoned("renderBody"),
         currentBranch: poisoned("currentBranch"),
         resolveIssue: poisoned("resolveIssue"),
@@ -88,7 +89,6 @@ function makeDeps(
       }
     : {
         loadConfig: () => CONFIG,
-        loadResponse: () => VALID_RESPONSE,
         renderBody: (sections: Record<string, string>, config: ShipkitConfig) => renderBody(sections, config),
         currentBranch: () => BRANCH,
         // VALID_RESPONSE's title and Issues Addressed section both cite ABC-1 — resolving it
@@ -112,7 +112,6 @@ function makeDeps(
 
   const deps: SubmitDeps = {
     loadConfig: record("loadConfig", merged.loadConfig),
-    loadResponse: record("loadResponse", merged.loadResponse),
     renderBody: record("renderBody", merged.renderBody),
     currentBranch: record("currentBranch", merged.currentBranch),
     resolveIssue: record("resolveIssue", merged.resolveIssue),
@@ -133,7 +132,6 @@ function makeDeps(
 
 const DOMAIN_DEPS = [
   "loadConfig",
-  "loadResponse",
   "renderBody",
   "currentBranch",
   "resolveIssue",
@@ -151,51 +149,40 @@ describe("runSubmit", () => {
   it("returns 2 and calls no dependency for an option-shaped --base", async () => {
     const { deps, calls, err } = makeDeps({}, { poison: true });
 
-    const code = await runSubmit({ ...OPTIONS, base: "--output=/tmp/x" }, deps);
+    const result = await runSubmit({ ...OPTIONS, base: "--output=/tmp/x" }, deps);
 
-    expect(code).toBe(2);
+    expect(result.code).toBe(2);
     expect(calls.filter((c) => DOMAIN_DEPS.includes(c.fn))).toEqual([]);
     expect(err.join("\n")).toContain("--output=/tmp/x");
-  });
-
-  it("returns 2 and mutates nothing when loadResponse throws ResponseError", async () => {
-    const { deps, calls } = makeDeps({
-      loadResponse: () => {
-        throw new ResponseError("Cannot read response at nope.json");
-      },
-    });
-
-    const code = await runSubmit(OPTIONS, deps);
-
-    expect(code).toBe(2);
-    expect(calls.some((c) => ["commitAll", "pushBranch", "createPullRequest"].includes(c.fn))).toBe(false);
   });
 
   it("returns 2 and reports the message when renderBody throws ResponseError on a level-two heading", async () => {
     // The real renderBody (task 3), not a stub — this is the exact case it exists to refuse:
     // a section whose content smuggles a "##" heading.
-    const { deps, calls, err } = makeDeps({
-      loadResponse: () => ({
-        ...VALID_RESPONSE,
-        sections: { ...VALID_RESPONSE.sections, Summary: "Some text\n\n## Nested\n\nMore text" },
-      }),
-    });
+    const { deps, calls, err } = makeDeps({});
 
-    const code = await runSubmit(OPTIONS, deps);
+    const result = await runSubmit(
+      {
+        ...OPTIONS,
+        response: {
+          ...VALID_RESPONSE,
+          sections: { ...VALID_RESPONSE.sections, Summary: "Some text\n\n## Nested\n\nMore text" },
+        },
+      },
+      deps,
+    );
 
-    expect(code).toBe(2);
+    expect(result.code).toBe(2);
     expect(err.join("\n")).toContain("level-two headings");
     expect(calls.some((c) => ["commitAll", "pushBranch", "createPullRequest"].includes(c.fn))).toBe(false);
   });
 
   it("returns 1, names the failing rule, and never touches commit/push/create when validation fails", async () => {
-    const { deps, calls, err } = makeDeps({
-      loadResponse: () => ({ ...VALID_RESPONSE, title: "nope" }),
-    });
+    const { deps, calls, err } = makeDeps({});
 
-    const code = await runSubmit(OPTIONS, deps);
+    const result = await runSubmit({ ...OPTIONS, response: { ...VALID_RESPONSE, title: "nope" } }, deps);
 
-    expect(code).toBe(1);
+    expect(result.code).toBe(1);
     expect(err.join("\n")).toContain("title-pattern");
     expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
     expect(calls.some((c) => c.fn === "pushBranch")).toBe(false);
@@ -212,9 +199,9 @@ describe("runSubmit", () => {
     };
     const { deps, calls, err } = makeDeps({ findPullRequest: () => pr });
 
-    const code = await runSubmit({ ...OPTIONS, yes: false }, deps);
+    const result = await runSubmit({ ...OPTIONS, acknowledge: [] }, deps);
 
-    expect(code).toBe(2);
+    expect(result.code).toBe(2);
     expect(err.join("\n")).toContain("approvals-dismissed");
     expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
     expect(calls.some((c) => c.fn === "pushBranch")).toBe(false);
@@ -234,9 +221,9 @@ describe("runSubmit", () => {
     };
     const { deps, calls, out, err } = makeDeps({ findPullRequest: () => pr });
 
-    const code = await runSubmit({ ...OPTIONS, yes: true }, deps);
+    const result = await runSubmit({ ...OPTIONS, acknowledge: "all" }, deps);
 
-    expect(code).toBe(0);
+    expect(result.code).toBe(0);
     expect(err.join("\n")).toContain("approvals-dismissed");
     expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
     expect(calls.some((c) => c.fn === "pushBranch")).toBe(true);
@@ -258,9 +245,9 @@ describe("runSubmit", () => {
     };
     const { deps, calls, out, err } = makeDeps({ findPullRequest: () => pr });
 
-    const code = await runSubmit({ ...OPTIONS, yes: false }, deps);
+    const result = await runSubmit({ ...OPTIONS, acknowledge: [] }, deps);
 
-    expect(code).toBe(0);
+    expect(result.code).toBe(0);
     expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
     expect(calls.some((c) => c.fn === "pushBranch")).toBe(true);
     expect(calls.some((c) => c.fn === "createPullRequest")).toBe(false);
@@ -271,9 +258,9 @@ describe("runSubmit", () => {
   it("returns 0, prints the URL, and needs no --yes on a clean run", async () => {
     const { deps, out } = makeDeps();
 
-    const code = await runSubmit({ ...OPTIONS, yes: false }, deps);
+    const result = await runSubmit({ ...OPTIONS, acknowledge: [] }, deps);
 
-    expect(code).toBe(0);
+    expect(result.code).toBe(0);
     expect(out).toEqual(["https://github.com/x/y/pull/1"]);
   });
 
@@ -295,9 +282,9 @@ describe("runSubmit", () => {
       },
     });
 
-    const code = await runSubmit(OPTIONS, deps);
+    const result = await runSubmit(OPTIONS, deps);
 
-    expect(code).toBe(2);
+    expect(result.code).toBe(2);
     // By the time push fails, commitAll has already been invoked and createPullRequest has
     // not — see the report for what this means for the real adapters (a local commit with
     // nothing pushed and no pull request opened).
@@ -318,9 +305,9 @@ describe("runSubmit", () => {
       },
     });
 
-    const code = await runSubmit(OPTIONS, deps);
+    const result = await runSubmit(OPTIONS, deps);
 
-    expect(code).toBe(2);
+    expect(result.code).toBe(2);
     const order = calls.filter((c) => ["commitAll", "pushBranch", "createPullRequest"].includes(c.fn)).map((c) => c.fn);
     expect(order).toEqual(["commitAll", "pushBranch", "createPullRequest"]);
     // By this point the commit has been pushed to the remote branch, so a claim of "has not
@@ -338,9 +325,9 @@ describe("runSubmit", () => {
       },
     });
 
-    const code = await runSubmit(OPTIONS, deps);
+    const result = await runSubmit(OPTIONS, deps);
 
-    expect(code).toBe(2);
+    expect(result.code).toBe(2);
     expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
     expect(err.join("\n")).toContain("git log --end-of-options develop..HEAD failed: unknown revision");
     expect(err.join("\n")).not.toContain("commit was created");
@@ -373,7 +360,6 @@ describe("runSubmit", () => {
     function reproDeps(overrides: Partial<SubmitDeps> = {}) {
       return makeDeps({
         loadConfig: () => REFERENCE_CONFIG,
-        loadResponse: () => REPRO_RESPONSE,
         currentBranch: () => REPRO_BRANCH,
         resolveIssue: (key: string) => Promise.resolve(key === "ABC-1" ? STORY_FACTS : undefined),
         readRepoState: () => ({
@@ -391,7 +377,7 @@ describe("runSubmit", () => {
     it("resolves the key the body cites (issue-level) and warns about the stray commit (foreign-commits), instead of running silently", async () => {
       const { deps, calls, err } = reproDeps();
 
-      const code = await runSubmit(OPTIONS, deps);
+      const result = await runSubmit({ ...OPTIONS, response: REPRO_RESPONSE, acknowledge: [] }, deps);
 
       // issue-level actually ran: resolveIssue was called with the body's cited key, ABC-1 —
       // before the fix, ticketFromBranch(REPRO_BRANCH, ...) is undefined, so this call would
@@ -400,7 +386,7 @@ describe("runSubmit", () => {
 
       // foreign-commits actually ran and caught the stray commit — before the fix, ticketKey
       // is undefined so the whole check is skipped and the run exits 0 with empty stderr.
-      expect(code).toBe(2);
+      expect(result.code).toBe(2);
       expect(err.join("\n")).toContain("foreign-commits");
       expect(err.join("\n")).toContain("ABC-27975");
     });
@@ -417,6 +403,159 @@ describe("runSubmit", () => {
   });
 });
 
+describe("runSubmit result shape", () => {
+  it("returns the findings as data, not only an exit code", async () => {
+    const { deps } = makeDeps({});
+
+    const result = await runSubmit(
+      { ...OPTIONS, response: { ...VALID_RESPONSE, title: "nope" } },
+      deps,
+    );
+
+    expect(result.code).toBe(1);
+    expect(result.findings.map((f) => f.rule)).toContain("title-pattern");
+    expect(result.warnings).toEqual([]);
+    expect(result.committed).toBe(false);
+  });
+
+  it("returns the warnings as data when it refuses for want of --yes", async () => {
+    const { deps } = makeDeps({
+      readUntrackedFiles: () => [".env.local"],
+    });
+
+    const result = await runSubmit({ ...OPTIONS, acknowledge: [] }, deps);
+
+    expect(result.code).toBe(2);
+    expect(result.warnings.map((w) => w.check)).toContain("untracked-files");
+    expect(result.committed).toBe(false);
+  });
+
+  // runSubmit serves both the CLI (which has --yes) and MCP (which has no such flag, only
+  // acknowledge: [...]). Naming --yes here would reach the MCP caller too, so the core's
+  // message stays neutral — the ids and nothing else — and each interface appends its own
+  // remedy (src/cli.ts for --yes, src/mcp/result.ts's applyContent for acknowledge).
+  it("names the unacknowledged ids in the refusal message, and does not mention --yes", async () => {
+    const { deps } = makeDeps({
+      readUntrackedFiles: () => [".env.local"],
+    });
+
+    const result = await runSubmit({ ...OPTIONS, acknowledge: [] }, deps);
+
+    expect(result.code).toBe(2);
+    expect(result.message).toContain("untracked-files");
+    expect(result.message).not.toContain("--yes");
+  });
+
+  // The body is what will actually be posted. A caller that cannot see it has to trust
+  // that its sections were assembled the way it imagined.
+  it("returns the rendered body alongside the findings", async () => {
+    const { deps } = makeDeps({});
+
+    const result = await runSubmit(
+      { ...OPTIONS, response: { ...VALID_RESPONSE, title: "nope" } },
+      deps,
+    );
+
+    expect(result.body).toContain("## Summary");
+  });
+
+  it("returns the url and marks whether the pull request already existed", async () => {
+    const { deps } = makeDeps({});
+
+    const result = await runSubmit(OPTIONS, deps);
+
+    expect(result.code).toBe(0);
+    expect(result.url).toBe("https://github.com/x/y/pull/1");
+    expect(result.updated).toBe(false);
+  });
+
+  it("marks an updated pull request as updated", async () => {
+    const { deps } = makeDeps({
+      findPullRequest: () => ({
+        number: 7,
+        url: "https://github.com/x/y/pull/7",
+        baseRefName: "develop",
+        labels: [],
+        approvals: [],
+      }),
+    });
+
+    const result = await runSubmit(OPTIONS, deps);
+
+    expect(result.code).toBe(0);
+    expect(result.url).toBe("https://github.com/x/y/pull/7");
+    expect(result.updated).toBe(true);
+  });
+
+  // With no path there is no file to keep out of the commit, and the realpath machinery
+  // must not run at all — not run and produce an empty answer, but never be reached.
+  it("excludes nothing and consults no path when the response came from no file", async () => {
+    const { deps, calls } = makeDeps({});
+
+    const result = await runSubmit({ ...OPTIONS, responsePath: undefined }, deps);
+
+    expect(result.code).toBe(0);
+    expect(calls.find((c) => c.fn === "commitAll")?.args[1]).toEqual([]);
+    expect(calls.some((c) => c.fn === "realpath")).toBe(false);
+    expect(calls.some((c) => c.fn === "readRepoRoot")).toBe(false);
+  });
+
+  // Both `body` and `warnings` are computed well before the mutating tail that can throw —
+  // a VcsError escaping pushBranch must not make the catch report either as though nothing
+  // had been computed yet. The next task's `applyContent` reads exactly these two fields.
+  it("returns the body and warnings already computed when a VcsError escapes after commitAll", async () => {
+    const { deps } = makeDeps({
+      readUntrackedFiles: () => [".env.local"],
+      pushBranch: () => {
+        throw new VcsError("git push --set-upstream origin failed: rejected");
+      },
+    });
+
+    const result = await runSubmit({ ...OPTIONS, acknowledge: "all" }, deps);
+
+    expect(result.code).toBe(2);
+    expect(result.committed).toBe(true);
+    expect(result.pushed).toBe(false);
+    expect(result.body).toContain("## Summary");
+    expect(result.warnings.map((w) => w.check)).toContain("untracked-files");
+  });
+
+  // The mirror image of the test above: a failure before renderBody ever ran must not claim
+  // a body or warnings exist, since neither was computed.
+  it("returns no body and no warnings when the failure happens before rendering", async () => {
+    const { deps } = makeDeps({
+      loadConfig: () => {
+        throw new ConfigError("Cannot read config at nope.yml");
+      },
+    });
+
+    const result = await runSubmit(OPTIONS, deps);
+
+    expect(result.code).toBe(2);
+    expect(result.body).toBeUndefined();
+    expect(result.warnings).toEqual([]);
+  });
+
+  // Same fix, a different call site — pins that the hoist isn't accidentally scoped to only
+  // the pushBranch failure above.
+  it("returns the warnings too when createPullRequest throws after a successful push", async () => {
+    const { deps } = makeDeps({
+      readUntrackedFiles: () => [".env.local"],
+      createPullRequest: () => {
+        throw new VcsError("gh pr create failed: not authenticated");
+      },
+    });
+
+    const result = await runSubmit({ ...OPTIONS, acknowledge: "all" }, deps);
+
+    expect(result.code).toBe(2);
+    expect(result.committed).toBe(true);
+    expect(result.pushed).toBe(true);
+    expect(result.body).toContain("## Summary");
+    expect(result.warnings.map((w) => w.check)).toContain("untracked-files");
+  });
+});
+
 // `git add --all` was staging shipkit's own response file into the pull request on every
 // run, alongside whatever else happened to be lying in the checkout. These pin the two
 // halves of the answer: the response file is excluded outright, everything else untracked
@@ -425,9 +564,9 @@ describe("runSubmit and the working tree", () => {
   it("excludes the response file from staging, as a root-relative path", async () => {
     const { deps, calls } = makeDeps({});
 
-    const code = await runSubmit({ ...OPTIONS, input: "/repo/scratch/response.json" }, deps);
+    const result = await runSubmit({ ...OPTIONS, responsePath: "/repo/scratch/response.json" }, deps);
 
-    expect(code).toBe(0);
+    expect(result.code).toBe(0);
     const staged = calls.find((c) => c.fn === "commitAll");
     expect(staged?.args[1]).toEqual(["scratch/response.json"]);
   });
@@ -438,9 +577,9 @@ describe("runSubmit and the working tree", () => {
   it("excludes nothing when the response file lives outside the repository", async () => {
     const { deps, calls } = makeDeps({});
 
-    const code = await runSubmit({ ...OPTIONS, input: "/tmp/elsewhere/response.json" }, deps);
+    const result = await runSubmit({ ...OPTIONS, responsePath: "/tmp/elsewhere/response.json" }, deps);
 
-    expect(code).toBe(0);
+    expect(result.code).toBe(0);
     expect(calls.find((c) => c.fn === "commitAll")?.args[1]).toEqual([]);
   });
 
@@ -449,9 +588,9 @@ describe("runSubmit and the working tree", () => {
       readUntrackedFiles: () => [".env.local", "debug-notes.md"],
     });
 
-    const code = await runSubmit({ ...OPTIONS, yes: false }, deps);
+    const result = await runSubmit({ ...OPTIONS, acknowledge: [] }, deps);
 
-    expect(code).toBe(2);
+    expect(result.code).toBe(2);
     expect(err.join("\n")).toContain("untracked-files");
     expect(err.join("\n")).toContain(".env.local");
   });
@@ -463,12 +602,12 @@ describe("runSubmit and the working tree", () => {
       readUntrackedFiles: () => ["scratch/response.json"],
     });
 
-    const code = await runSubmit(
-      { ...OPTIONS, input: "/repo/scratch/response.json", yes: false },
+    const result = await runSubmit(
+      { ...OPTIONS, responsePath: "/repo/scratch/response.json", acknowledge: [] },
       deps,
     );
 
-    expect(code).toBe(0);
+    expect(result.code).toBe(0);
     expect(err.join("\n")).not.toContain("untracked-files");
   });
 
@@ -477,12 +616,12 @@ describe("runSubmit and the working tree", () => {
       readUntrackedFiles: () => ["scratch/response.json", ".env.local"],
     });
 
-    const code = await runSubmit(
-      { ...OPTIONS, input: "/repo/scratch/response.json", yes: false },
+    const result = await runSubmit(
+      { ...OPTIONS, responsePath: "/repo/scratch/response.json", acknowledge: [] },
       deps,
     );
 
-    expect(code).toBe(2);
+    expect(result.code).toBe(2);
     expect(err.join("\n")).toContain(".env.local");
     expect(err.join("\n")).not.toContain("response.json");
   });
@@ -499,9 +638,9 @@ describe("runSubmit under a symlinked checkout", () => {
       realpath: (path: string) => path.replace(/^\/var\//, "/private/var/"),
     });
 
-    const code = await runSubmit({ ...OPTIONS, input: "/var/repo/scratch/response.json" }, deps);
+    const result = await runSubmit({ ...OPTIONS, responsePath: "/var/repo/scratch/response.json" }, deps);
 
-    expect(code).toBe(0);
+    expect(result.code).toBe(0);
     expect(calls.find((c) => c.fn === "commitAll")?.args[1]).toEqual(["scratch/response.json"]);
   });
 });
@@ -514,9 +653,9 @@ describe("runSubmit path dialects and a vanished response file", () => {
   it("spells the excluded path the way git spells paths", async () => {
     const { deps, calls } = makeDeps({});
 
-    const code = await runSubmit({ ...OPTIONS, input: "/repo/a/b/response.json" }, deps);
+    const result = await runSubmit({ ...OPTIONS, responsePath: "/repo/a/b/response.json" }, deps);
 
-    expect(code).toBe(0);
+    expect(result.code).toBe(0);
     const excluded = calls.find((c) => c.fn === "commitAll")?.args[1] as string[];
     expect(excluded).toEqual(["a/b/response.json"]);
     expect(excluded[0]).not.toContain("\\");
@@ -532,10 +671,156 @@ describe("runSubmit path dialects and a vanished response file", () => {
       },
     });
 
-    const code = await runSubmit(OPTIONS, deps);
+    const result = await runSubmit(OPTIONS, deps);
 
-    expect(code).toBe(2);
-    expect(err.join("\n")).toContain(OPTIONS.input);
+    expect(result.code).toBe(2);
+    expect(err.join("\n")).toContain(OPTIONS.responsePath as string);
     expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
+  });
+});
+
+describe("preview mode", () => {
+  it("stops after pre-flight and mutates nothing", async () => {
+    const { deps, calls } = makeDeps({});
+
+    const result = await runSubmit({ ...OPTIONS, mode: "preview" }, deps);
+
+    expect(result.code).toBe(0);
+    expect(result.body).toContain("## Summary");
+    expect(calls.some((c) => ["commitAll", "pushBranch", "createPullRequest"].includes(c.fn))).toBe(false);
+  });
+
+  it("reports warnings without refusing, because it is not deciding anything", async () => {
+    const { deps } = makeDeps({ readUntrackedFiles: () => [".env.local"] });
+
+    const result = await runSubmit({ ...OPTIONS, mode: "preview", acknowledge: [] }, deps);
+
+    expect(result.code).toBe(0);
+    expect(result.warnings.map((w) => w.check)).toContain("untracked-files");
+  });
+
+  it("still returns 1 for a validation finding", async () => {
+    const { deps } = makeDeps({});
+
+    const result = await runSubmit(
+      { ...OPTIONS, mode: "preview", response: { ...VALID_RESPONSE, title: "nope" } },
+      deps,
+    );
+
+    expect(result.code).toBe(1);
+  });
+
+  // A preview that disagrees with what apply will do is worse than no preview.
+  it("agrees with apply about findings and warnings for the same input", async () => {
+    const overrides = { readUntrackedFiles: () => [".env.local"] };
+    const previewed = await runSubmit(
+      { ...OPTIONS, mode: "preview", acknowledge: [] },
+      makeDeps(overrides).deps,
+    );
+    const applied = await runSubmit(
+      { ...OPTIONS, mode: "apply", acknowledge: [] },
+      makeDeps(overrides).deps,
+    );
+
+    expect(previewed.findings).toEqual(applied.findings);
+    expect(previewed.warnings).toEqual(applied.warnings);
+  });
+});
+
+describe("the acknowledgement gate", () => {
+  it("refuses when a warning id was not acknowledged", async () => {
+    const { deps, calls } = makeDeps({ readUntrackedFiles: () => [".env.local"] });
+
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+
+    expect(result.code).toBe(2);
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
+  });
+
+  it("proceeds when every warning id was acknowledged", async () => {
+    const { deps, calls } = makeDeps({ readUntrackedFiles: () => [".env.local"] });
+
+    const result = await runSubmit(
+      { ...OPTIONS, mode: "apply", acknowledge: ["untracked-files"] },
+      deps,
+    );
+
+    expect(result.code).toBe(0);
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
+  });
+
+  // The gate is the whole point of the split: acknowledging one warning must not carry a
+  // caller past a different one it never saw.
+  it("refuses when one of two warnings was acknowledged", async () => {
+    const { deps, calls } = makeDeps({
+      readUntrackedFiles: () => [".env.local"],
+      findPullRequest: () => ({
+        number: 7,
+        url: "https://github.com/x/y/pull/7",
+        baseRefName: "release/3.76.0",
+        labels: [],
+        approvals: [],
+      }),
+    });
+
+    const result = await runSubmit(
+      { ...OPTIONS, mode: "apply", acknowledge: ["untracked-files"] },
+      deps,
+    );
+
+    expect(result.code).toBe(2);
+    expect(result.warnings.map((w) => w.check)).toContain("base-mismatch");
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
+  });
+
+  // Acknowledging an id that is not among the current warnings must not count for anything.
+  it("ignores an acknowledgement that names a warning that is not present", async () => {
+    const { deps, calls } = makeDeps({ readUntrackedFiles: () => [".env.local"] });
+
+    const result = await runSubmit(
+      { ...OPTIONS, mode: "apply", acknowledge: ["approvals-dismissed"] },
+      deps,
+    );
+
+    expect(result.code).toBe(2);
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
+  });
+
+  // The property a boolean cannot have. Acknowledging what was true a moment ago must not
+  // carry a caller past a situation that has changed since — a review landing or a label
+  // being added between the two calls has to close the gate again.
+  it("refuses when the situation changed after the ids were acknowledged", async () => {
+    const first = makeDeps({ readUntrackedFiles: () => [".env.local"] });
+    const previewed = await runSubmit({ ...OPTIONS, mode: "preview", acknowledge: [] }, first.deps);
+    const acknowledge = previewed.warnings.map((w) => w.check);
+    expect(acknowledge).toEqual(["untracked-files"]);
+
+    // Between the two calls a blocking label appears on the open pull request.
+    const second = makeDeps({
+      readUntrackedFiles: () => [".env.local"],
+      findPullRequest: () => ({
+        number: 7,
+        url: "https://github.com/x/y/pull/7",
+        baseRefName: "develop",
+        labels: ["in test"],
+        approvals: [],
+      }),
+      loadConfig: () => loadConfig("tests/fixtures/blocking-labels.shipkit.yml"),
+    });
+
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge }, second.deps);
+
+    expect(result.code).toBe(2);
+    expect(result.warnings.map((w) => w.check)).toContain("blocking-label");
+    expect(second.calls.some((c) => c.fn === "commitAll")).toBe(false);
+  });
+
+  it("accepts \"all\" as the command line's --yes", async () => {
+    const { deps, calls } = makeDeps({ readUntrackedFiles: () => [".env.local"] });
+
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
+
+    expect(result.code).toBe(0);
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
   });
 });

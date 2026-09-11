@@ -3,8 +3,6 @@ import { VcsError, type PullRequestState } from "./types.js";
 
 export type GhRunner = (args: string[]) => string;
 
-const defaultRunner: GhRunner = execRunner("gh");
-
 function call<T>(run: GhRunner, args: string[]): T {
   // The runner is wrapped too, not just the parse. An injected runner is free to throw a
   // plain Error, and every caller above expects VcsError — it is what runSubmit's catch
@@ -13,7 +11,10 @@ function call<T>(run: GhRunner, args: string[]): T {
   return asVcsError("gh", args, () => JSON.parse(raw) as T);
 }
 
-export function defaultBranch(run: GhRunner = defaultRunner): string {
+export function defaultBranch(
+  cwd: string = process.cwd(),
+  run: GhRunner = execRunner("gh", cwd),
+): string {
   const data = call<{ defaultBranchRef: { name: string } }>(
     run,
     ["repo", "view", "--json", "defaultBranchRef"],
@@ -33,8 +34,11 @@ export function defaultBranch(run: GhRunner = defaultRunner): string {
   return data.defaultBranchRef.name;
 }
 
-export function baseCandidates(run: GhRunner = defaultRunner): string[] {
-  const fallback = defaultBranch(run);
+export function baseCandidates(
+  cwd: string = process.cwd(),
+  run: GhRunner = execRunner("gh", cwd),
+): string[] {
+  const fallback = defaultBranch(cwd, run);
   const branches = call<{ name: string }[]>(
     run,
     ["api", "repos/{owner}/{repo}/branches", "--paginate", "--jq", "[.[] | {name}]"],
@@ -79,7 +83,8 @@ function compareReleaseBranches(a: string, b: string): number {
 
 export function findPullRequest(
   branch: string,
-  run: GhRunner = defaultRunner,
+  cwd: string = process.cwd(),
+  run: GhRunner = execRunner("gh", cwd),
 ): PullRequestState | null {
   const list = call<unknown>(run, [
     "pr", "list", "--head", branch, "--state", "open", "--json", "number,url,baseRefName",

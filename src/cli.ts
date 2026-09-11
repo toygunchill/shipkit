@@ -12,7 +12,7 @@ import {
 import { ConfigError, loadConfig } from "./config/load.js";
 import { fetchIssue, JiraError } from "./jira/client.js";
 import type { IssueFacts } from "./jira/types.js";
-import { loadResponse, renderBody } from "./submit/response.js";
+import { loadResponse, renderBody, ResponseError } from "./submit/response.js";
 import { runSubmit, type SubmitDeps } from "./submit/run.js";
 import { validate } from "./validate/rules.js";
 import { currentBranch, readRepoRoot, readRepoState, readUntrackedFiles, VcsError } from "./vcs/git.js";
@@ -118,7 +118,8 @@ program
       let base = options.base;
       let reason = "given with --base";
       if (base === undefined) {
-        base = baseCandidates()[0];
+        const cwd = process.cwd();
+        base = baseCandidates(cwd)[0];
         reason = "repository default branch";
       }
 
@@ -138,20 +139,21 @@ program
     }
   });
 
+const cwd = process.cwd();
+
 const realSubmitDeps: SubmitDeps = {
   loadConfig,
-  loadResponse,
   renderBody,
   currentBranch,
   resolveIssue,
   readRepoState,
-  findPullRequest,
+  findPullRequest: (branch) => findPullRequest(branch, cwd),
   readUntrackedFiles,
   readRepoRoot,
   realpath: (path: string) => realpathSync(path),
-  commitAll,
-  pushBranch,
-  createPullRequest,
+  commitAll: (message, exclude) => commitAll(message, exclude, cwd),
+  pushBranch: (branch) => pushBranch(branch, cwd),
+  createPullRequest: (input) => createPullRequest(input, cwd),
   out: (line: string) => console.log(line),
   err: (line: string) => console.error(line),
 };
@@ -164,7 +166,46 @@ program
   .option("--config <path>", "path to .shipkit.yml", ".shipkit.yml")
   .option("--yes", "proceed despite pre-flight warnings", false)
   .action(async (options: { input: string; base: string; config: string; yes: boolean }) => {
-    process.exitCode = await runSubmit(options, realSubmitDeps);
+    try {
+      const response = loadResponse(options.input);
+      const result = await runSubmit(
+        {
+          base: options.base,
+          config: options.config,
+          response,
+          responsePath: options.input,
+          mode: "apply",
+          acknowledge: options.yes ? "all" : [],
+        },
+        realSubmitDeps,
+      );
+      // runSubmit's refusal message is deliberately neutral — it has no business knowing this
+      // caller has a --yes flag. When --yes was not given, a code-2 result carrying warnings
+      // can only be this gate refusal (with --yes, acknowledge is "all", so the gate never
+      // triggers; every other code-2 cause — an invalid base, a config that will not load, a
+      // git or gh failure — reports before pre-flight ever runs and so carries no warnings).
+      // Appending the remedy here, after the fact, is what keeps the interface-specific advice
+      // out of the core so an MCP caller — who has no --yes — never sees it.
+      if (!options.yes && result.code === 2 && result.warnings.length > 0) {
+        console.error("Re-run with --yes to accept these.");
+      }
+      process.exitCode = result.code;
+    } catch (error) {
+      if (error instanceof ResponseError) {
+        console.error(error.message);
+        process.exitCode = 2;
+        return;
+      }
+      throw error;
+    }
+  });
+
+program
+  .command("mcp")
+  .description("Serve the shipkit tools to an agent over stdio")
+  .action(async () => {
+    const { serveStdio } = await import("./mcp/server.js");
+    await serveStdio();
   });
 
 try {

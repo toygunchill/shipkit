@@ -1,0 +1,65 @@
+[
+  {
+    "name": "no warnings",
+    "situation": {
+      "repo": "/Users/x/example-app",
+      "branch": "bugfix/squadb/31087-invoice",
+      "base": "develop",
+      "head": "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "warnings": []
+    },
+    "fingerprint": "933e6e54c5872b25170023430d5e0e1d15631476baa7836670d6fa7798385736"
+  },
+  {
+    "name": "two warnings",
+    "situation": {
+      "repo": "/Users/x/example-app",
+      "branch": "bugfix/squadb/31087-invoice",
+      "base": "release/3.76.0",
+      "head": "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "warnings": [
+        {
+          "check": "approvals-dismissed",
+          "message": "Pushing will dismiss 4 approval(s) on #881"
+        },
+        {
+          "check": "blocking-label",
+          "message": "Label(s) in test will block the merge gate"
+        }
+      ]
+    },
+    "fingerprint": "429727e9e1256fc48b838b62ab81f6e5e2eb73045b6f90a55d8db5d314e1c117"
+  },
+  {
+    "name": "non-ascii in every field",
+    "situation": {
+      "repo": "/Users/toygun/Belgeler/example-app",
+      "branch": "bugfix/ödeme/31087-fatura",
+      "base": "release/3.76.0",
+      "head": "b44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "warnings": [
+        {
+          "check": "foreign-commits",
+          "message": "Şube ABC-27975 taşıyor — ABC-31087 değil"
+        }
+      ]
+    },
+    "fingerprint": "6b6d50ff464828a633e866e11be7df4e6c20f45f5b87e5a399c3238729348088"
+  },
+  {
+    "name": "a message that looks like the encoding",
+    "situation": {
+      "repo": "/r",
+      "branch": "b",
+      "base": "d",
+      "head": "c44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "warnings": [
+        {
+          "check": "x",
+          "message": "a:1\n5:fake"
+        }
+      ]
+    },
+    "fingerprint": "342ee0cffe526ce3ee3b47f3f279987b97ce89ecbcf8b4a1fd019715cb240666"
+  }
+]

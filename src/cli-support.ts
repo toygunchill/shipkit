@@ -37,10 +37,10 @@ export async function resolveIssue(
       }
       return response.json();
     }),
-  readToken: (() => string | undefined) = jiraToken,
+  readToken: () => string | undefined | Promise<string | undefined> = jiraToken,
 ): Promise<IssueFacts | undefined> {
   if (key === undefined) return undefined;
-  const token = readToken();
+  const token = await readToken();
   if (token === undefined || token.length === 0) return undefined;
   return fetchIssue(config.jira.baseUrl, key, token, fetcher);
 }

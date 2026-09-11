@@ -2,7 +2,10 @@
 # below were recovered from merged pull-request bodies, because the template
 # itself lives outside the repository and is not reachable from a checkout.
 pr:
-  titlePattern: '^\[DCP-\d+\] (feat|fix|chore|ref|refactor|docs|test)(\([a-z0-9-]+\))?: .+'
+  # The ticket tag is not written by hand: the repository's "PR Open Workflow" action
+  # derives it from the branch name and prepends it once the pull request opens. Requiring
+  # it here made authors write a second one, and the title came out carrying both.
+  titlePattern: '^(feat|fix|chore|ref|refactor|docs|test)(\([a-z0-9-]+\))?: .+'
   # Instruction lines the template injects. Left in place, they mean the author
   # answered nothing — so they are treated as unfilled placeholders.
   forbidden:

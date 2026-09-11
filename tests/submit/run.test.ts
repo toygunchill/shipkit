@@ -334,17 +334,21 @@ describe("runSubmit", () => {
   });
 
   describe("Finding 1: the Jira gate must not depend on the branch carrying a key", () => {
-    // The exact reproduction from the review: under the reference config, branch.pattern
-    // admits only lowercase branches and jira.keyPattern is `DCP-\d+` — the two are mutually
-    // exclusive, so a branch that satisfies branch.pattern never carries a key. Deriving the
-    // ticket identity from the branch therefore always produced `undefined` on every run that
-    // survived validation, silently switching off issue-level, foreign-commits and
-    // issue-unverified together. This is not a synthetic fixture — it is the real reference
-    // config the review used, loaded exactly as the CLI would.
+    // The exact reproduction from the review, and it has since sharpened. Under the
+    // reference config, branch.pattern admits only lowercase while jira.keyPattern is
+    // `DCP-\d+`, so a branch that satisfies branch.pattern never carries a key. The title
+    // no longer carries one either: that repository's workflow derives the ticket tag from
+    // the branch and prepends it when the pull request opens, so titlePattern dropped it.
+    //
+    // Two of the three possible sources are therefore empty by construction, and only the
+    // body cites a key. If the identity is taken from either of the other two, issue-level,
+    // foreign-commits and issue-unverified all fall silent together and the run exits 0 with
+    // an empty stderr. This is not a synthetic fixture — it is the real reference config,
+    // loaded exactly as the CLI would.
     const REFERENCE_CONFIG = loadConfig("docs/examples/example-app.shipkit.yml");
     const REPRO_BRANCH = "bugfix/squadb/31087-invoice"; // passes branch.pattern; carries no DCP-key at all
     const REPRO_RESPONSE: SubmitResponse = {
-      title: "[ABC-1] fix(x): y",
+      title: "fix(x): y", // passes titlePattern; carries no DCP-key either
       commitMessage: "fix(x): y",
       sections: {
         Summary: "It was broken; now it is not.",

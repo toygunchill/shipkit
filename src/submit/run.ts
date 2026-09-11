@@ -1,5 +1,5 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { fingerprint, type Situation } from "../approval/fingerprint.js";
+import { fingerprint, sortWarnings, type Situation } from "../approval/fingerprint.js";
 import {
   gate,
   shouldRequestApproval,
@@ -313,7 +313,9 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
           title: response.title,
           commitMessage: response.commitMessage,
           diffstat: repo.diffstat,
-          warnings,
+          // In canonical order, so what a person is shown can never diverge from what
+          // was hashed — preflight emits these in check-order, not alphabetical.
+          warnings: sortWarnings(warnings),
         },
         config.pr.approvalTimeoutSeconds * 1000,
       );

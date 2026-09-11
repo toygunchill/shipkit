@@ -926,6 +926,41 @@ describe("the approval surface", () => {
     );
   });
 
+  // preflight emits approvals-dismissed, then foreign-commits, then base-mismatch for this
+  // situation — not alphabetical. The fingerprint hashes them sorted by check id, so the
+  // wire must carry them in that same order or the displayed order and the hashed order
+  // could diverge.
+  it("sends warnings on the wire in canonical order, not preflight's emission order", async () => {
+    let sent: ApprovalRequest | undefined;
+    const { deps } = makeDeps({
+      readRepoState: () => ({
+        branch: BRANCH,
+        changedFiles: [],
+        diffstat: "",
+        commits: ["ABC-2 unrelated work"],
+      }),
+      findPullRequest: () => ({
+        number: 881,
+        url: "https://github.com/x/y/pull/881",
+        baseRefName: "main",
+        labels: [],
+        approvals: ["alice"],
+      }),
+      requestApproval: async (request: ApprovalRequest) => {
+        sent = request;
+        return "denied" as const;
+      },
+    });
+
+    await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+
+    expect(sent?.warnings.map((w) => w.check)).toEqual([
+      "approvals-dismissed",
+      "base-mismatch",
+      "foreign-commits",
+    ]);
+  });
+
   // Minutes can pass while a request waits. An approval that survives a
   // situation changing underneath it is worth nothing.
   it("re-derives the facts after approval and refuses when they changed", async () => {

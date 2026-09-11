@@ -35,6 +35,32 @@
     "fingerprint": "13099b9d05e2f39848d02eafb73514b44438357a6b9b2190a963076d0f09b05f"
   },
   {
+    "name": "warnings out of order",
+    "situation": {
+      "repo": "/Users/x/example-app",
+      "branch": "bugfix/squadb/31087-invoice",
+      "base": "release/3.76.0",
+      "head": "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "title": "fix(invoice): default citizenship",
+      "commitMessage": "fix(invoice): default citizenship",
+      "warnings": [
+        {
+          "check": "blocking-label",
+          "message": "Label(s) in test will block the merge gate"
+        },
+        {
+          "check": "base-mismatch",
+          "message": "Pull request #881 targets develop, but this run targets release/3.76.0"
+        },
+        {
+          "check": "approvals-dismissed",
+          "message": "Pushing will dismiss 4 approval(s) on #881"
+        }
+      ]
+    },
+    "fingerprint": "1f43a20c95e8bcd581d390d40e587503e3b61f719fa1e9e38ebf47f05d180cce"
+  },
+  {
     "name": "non-ascii in every field",
     "situation": {
       "repo": "/Users/toygun/Belgeler/example-app",

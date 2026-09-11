@@ -17,6 +17,20 @@ export type Situation = {
 const VERSION = "shipkit-approval-v1";
 
 /**
+ * Warnings ordered by check id, then message, using code-unit order — the same order
+ * `canonical` hashes them in. `run.ts` sends the request's warnings through this before
+ * putting them on the wire, so the order a person is shown can never diverge from the order
+ * that was hashed.
+ */
+export function sortWarnings(warnings: Warning[]): Warning[] {
+  return [...warnings].sort((a, b) => {
+    if (a.check !== b.check) return a.check < b.check ? -1 : 1;
+    if (a.message !== b.message) return a.message < b.message ? -1 : 1;
+    return 0;
+  });
+}
+
+/**
  * Renders a situation so that two implementations in two languages produce
  * identical bytes.
  *
@@ -39,11 +53,7 @@ const VERSION = "shipkit-approval-v1";
  */
 export function canonical(situation: Situation): string {
   const field = (value: string) => `${Buffer.byteLength(value, "utf8")}:${value}`;
-  const sorted = [...situation.warnings].sort((a, b) => {
-    if (a.check !== b.check) return a.check < b.check ? -1 : 1;
-    if (a.message !== b.message) return a.message < b.message ? -1 : 1;
-    return 0;
-  });
+  const sorted = sortWarnings(situation.warnings);
   const lines = [
     VERSION,
     field(situation.repo),

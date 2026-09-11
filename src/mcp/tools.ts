@@ -1,5 +1,6 @@
 import { isAbsolute, join } from "node:path";
 import { assembleBrief } from "../brief/assemble.js";
+import { isValidBase } from "../cli-support.js";
 import type { ShipkitConfig } from "../config/schema.js";
 import { briefContent, failureContent, applyContent, previewContent } from "./result.js";
 import type { ToolContent } from "./result.js";
@@ -49,6 +50,14 @@ function acknowledged(value: unknown): string[] {
 }
 
 export async function handleBrief(args: BriefArgs, deps: ToolDeps): Promise<ToolContent> {
+  // shipkit_preview and shipkit_apply both refuse an invalid base via runSubmit; handleBrief
+  // never called runSubmit, so it skipped this check even though the CLI's own `brief` action
+  // performs it. Not exploitable on its own -- readRepoState passes --end-of-options and git
+  // refuses -- but without this a caller can get a brief for a target shipkit_apply will
+  // always refuse. Check it here so the three tools agree on what counts as a base at all.
+  if (!isValidBase(args.base)) {
+    return failureContent(`Refusing to use ${JSON.stringify(args.base)} as a base branch`);
+  }
   try {
     const config = deps.loadConfig(configPath(args));
     const repo = deps.readRepoState(args.base, args.repo);

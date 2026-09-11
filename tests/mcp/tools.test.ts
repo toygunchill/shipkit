@@ -87,6 +87,23 @@ describe("handleBrief", () => {
       isError: true,
     });
   });
+
+  // shipkit_preview and shipkit_apply both refuse an option-shaped base before touching the
+  // repository (runSubmit checks it); handleBrief skipped the check entirely, so a caller
+  // could get a brief for a target the other two tools will always refuse.
+  it("refuses an option-shaped base without reading repo state", async () => {
+    const { deps } = makeDeps();
+    let readRepoStateCalled = false;
+    deps.readRepoState = () => {
+      readRepoStateCalled = true;
+      return { branch: "bugfix/x/1-y", changedFiles: [], diffstat: "", commits: [] };
+    };
+
+    const shaped = await handleBrief({ repo: "/repo", base: "--upload-pack=evil" }, deps);
+
+    expect(shaped.isError).toBe(true);
+    expect(readRepoStateCalled).toBe(false);
+  });
 });
 
 describe("handlePreview", () => {

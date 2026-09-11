@@ -1,0 +1,23 @@
+<!-- macOS app icon. The corner is a circular-radius rounded rectangle at Apple's
+     proportion (185/824 ≈ 22.4%), not a true continuous squircle: fitting the
+     superellipse to cubics overshot the flat sides badly enough to be worse than
+     the approximation, and drawing Apple's exact construction is its own job.
+     At icon sizes the difference is subtle; if it ever matters, replace this one
+     path and nothing else changes. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3C4450"/>
+      <stop offset="1" stop-color="#252B33"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <g transform="translate(232,232) scale(35)">
+    <g fill="none" stroke="#E8E4DC" stroke-width="1.7" stroke-linecap="round">
+      <path d="M3 2.8 V13.2"/>
+      <path d="M3 10.4 C4.4 10.4 7.4 5.6 9.4 5.6"/>
+    </g>
+    <circle cx="9.5" cy="5.6" r="1.45" fill="#E8E4DC"/>
+    <rect x="12.1" y="2.3" width="2.2" height="11.4" rx="1.1" fill="#E2A23B"/>
+  </g>
+</svg>

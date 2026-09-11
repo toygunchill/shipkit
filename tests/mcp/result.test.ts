@@ -80,12 +80,27 @@ describe("applyContent", () => {
     const shaped = applyContent({
       code: 2, findings: [],
       warnings: [{ check: "untracked-files", message: "m" }],
-      body: "b", message: "Refusing to proceed. Unacknowledged: untracked-files",
+      body: "b", message: "Refusing to proceed",
       committed: false, pushed: false,
     });
     expect(shaped.isError).toBe(true);
     expect(shaped.structuredContent.warnings).toEqual(["untracked-files"]);
-    expect(shaped.content[0].text).toContain("acknowledge");
+    expect(shaped.content[0].text).toContain(`Call again with acknowledge: ["untracked-files"] to proceed.`);
+  });
+
+  it("builds acknowledge guidance from all refused ids, not just the first", () => {
+    const shaped = applyContent({
+      code: 2, findings: [],
+      warnings: [
+        { check: "untracked-files", message: "m1" },
+        { check: "base-mismatch", message: "m2" },
+      ],
+      body: "b", message: "Refusing to proceed",
+      committed: false, pushed: false,
+    });
+    expect(shaped.isError).toBe(true);
+    expect(shaped.structuredContent.warnings).toEqual(["untracked-files", "base-mismatch"]);
+    expect(shaped.content[0].text).toContain(`acknowledge: ["untracked-files", "base-mismatch"]`);
   });
 
   // Half-done is the state a caller most needs told, and the one it is least likely to guess.

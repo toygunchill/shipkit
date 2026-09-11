@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync } from "node:fs";
 import { Command, CommanderError } from "commander";
+import { requestApproval } from "./approval/client.js";
 import { assembleBrief } from "./brief/assemble.js";
 import {
   extractIssueKeysFromBody,
@@ -15,7 +16,14 @@ import type { IssueFacts } from "./jira/types.js";
 import { loadResponse, renderBody, ResponseError } from "./submit/response.js";
 import { runSubmit, type SubmitDeps } from "./submit/run.js";
 import { validate } from "./validate/rules.js";
-import { currentBranch, readRepoRoot, readRepoState, readUntrackedFiles, VcsError } from "./vcs/git.js";
+import {
+  currentBranch,
+  readHeadSha,
+  readRepoRoot,
+  readRepoState,
+  readUntrackedFiles,
+  VcsError,
+} from "./vcs/git.js";
 import { baseCandidates, findPullRequest } from "./vcs/github.js";
 import { commitAll, createPullRequest, pushBranch } from "./vcs/mutate.js";
 
@@ -150,7 +158,9 @@ const realSubmitDeps: SubmitDeps = {
   findPullRequest: (branch) => findPullRequest(branch, cwd),
   readUntrackedFiles,
   readRepoRoot,
+  readHeadSha: () => readHeadSha(cwd),
   realpath: (path: string) => realpathSync(path),
+  requestApproval: (request, timeoutMs) => requestApproval(request, { timeoutMs }),
   commitAll: (message, exclude) => commitAll(message, exclude, cwd),
   pushBranch: (branch) => pushBranch(branch, cwd),
   createPullRequest: (input) => createPullRequest(input, cwd),

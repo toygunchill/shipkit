@@ -1,5 +1,7 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { fingerprint } from "../../src/approval/fingerprint.js";
+import type { ApprovalRequest } from "../../src/approval/protocol.js";
 import { ConfigError, loadConfig } from "../../src/config/load.js";
 import type { ShipkitConfig } from "../../src/config/schema.js";
 import type { IssueFacts } from "../../src/jira/types.js";
@@ -81,6 +83,8 @@ function makeDeps(
         readUntrackedFiles: poisoned("readUntrackedFiles"),
         readRepoRoot: poisoned("readRepoRoot"),
         realpath: poisoned("realpath"),
+        readHeadSha: poisoned("readHeadSha"),
+        requestApproval: poisoned("requestApproval"),
         commitAll: poisoned("commitAll"),
         pushBranch: poisoned("pushBranch"),
         createPullRequest: poisoned("createPullRequest"),
@@ -101,6 +105,8 @@ function makeDeps(
         readUntrackedFiles: () => [],
         readRepoRoot: () => "/repo",
         realpath: (path: string) => path,
+        readHeadSha: () => "a".repeat(40),
+        requestApproval: async () => "no-surface" as const /* extra args ignored */,
         commitAll: () => undefined,
         pushBranch: () => undefined,
         createPullRequest: () => "https://github.com/x/y/pull/1",
@@ -120,6 +126,8 @@ function makeDeps(
     readUntrackedFiles: record("readUntrackedFiles", merged.readUntrackedFiles),
     readRepoRoot: record("readRepoRoot", merged.readRepoRoot),
     realpath: record("realpath", merged.realpath),
+    readHeadSha: record("readHeadSha", merged.readHeadSha),
+    requestApproval: record("requestApproval", merged.requestApproval),
     commitAll: record("commitAll", merged.commitAll),
     pushBranch: record("pushBranch", merged.pushBranch),
     createPullRequest: record("createPullRequest", merged.createPullRequest),
@@ -140,6 +148,8 @@ const DOMAIN_DEPS = [
   "readUntrackedFiles",
   "readRepoRoot",
   "realpath",
+  "readHeadSha",
+  "requestApproval",
   "commitAll",
   "pushBranch",
   "createPullRequest",
@@ -826,5 +836,153 @@ describe("the acknowledgement gate", () => {
 
     expect(result.code).toBe(0);
     expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
+  });
+});
+
+describe("the approval surface", () => {
+  const warned = { readUntrackedFiles: () => [".env.local"] };
+
+  it("does not ask when there is nothing to warn about", async () => {
+    const { deps, calls } = makeDeps({});
+    await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
+    expect(calls.some((c) => c.fn === "requestApproval")).toBe(false);
+  });
+
+  it("does not ask under echo when the ids cover the warnings", async () => {
+    const { deps, calls } = makeDeps(warned);
+    await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
+    expect(calls.some((c) => c.fn === "requestApproval")).toBe(false);
+  });
+
+  it("asks under echo when they do not, and proceeds when approved", async () => {
+    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => "approved" as const });
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+    expect(result.code).toBe(0);
+    expect(result.approval).toBe("approved");
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
+  });
+
+  it("refuses and mutates nothing when denied", async () => {
+    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => "denied" as const });
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+    expect(result.code).toBe(2);
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
+  });
+
+  it("refuses and mutates nothing when the wait runs out", async () => {
+    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => "timed-out" as const });
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+    expect(result.code).toBe(2);
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
+  });
+
+  // The property that keeps the application optional.
+  it("falls back to today's refusal under echo with nothing listening", async () => {
+    const { deps, err } = makeDeps({ ...warned, requestApproval: async () => "no-surface" as const /* extra args ignored */ });
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+    expect(result.code).toBe(2);
+    expect(err.join("\n")).toContain("untracked-files");
+  });
+
+  it("sends the situation, not a summary of it", async () => {
+    let sent: ApprovalRequest | undefined;
+    const { deps } = makeDeps({
+      ...warned,
+      requestApproval: async (request: ApprovalRequest, timeoutMs: number) => {
+        sent = request;
+        expect(timeoutMs).toBe(120_000);
+        return "denied" as const;
+      },
+    });
+
+    await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+
+    expect(sent?.head).toBe("a".repeat(40));
+    expect(sent?.base).toBe(OPTIONS.base);
+    expect(sent?.warnings.map((w) => w.check)).toContain("untracked-files");
+    expect(sent?.commitMessage).toBe(VALID_RESPONSE.commitMessage);
+    // The fingerprint must be the one the situation hashes to, not an
+    // independent value the surface would have no way to check.
+    expect(sent?.fingerprint).toBe(
+      fingerprint({
+        repo: sent!.repo,
+        branch: sent!.branch,
+        base: sent!.base,
+        head: sent!.head,
+        warnings: sent!.warnings,
+      }),
+    );
+  });
+
+  // Minutes can pass while a request waits. An approval that survives a
+  // situation changing underneath it is worth nothing.
+  it("re-derives the facts after approval and refuses when they changed", async () => {
+    let reads = 0;
+    const { deps, calls } = makeDeps({
+      ...warned,
+      requestApproval: async () => "approved" as const,
+      // The first read is the one hashed into the request; by the second, a
+      // blocking label has appeared on the pull request.
+      findPullRequest: () => {
+        reads += 1;
+        return reads === 1
+          ? NO_PR
+          : {
+              number: 7,
+              url: "https://github.com/x/y/pull/7",
+              baseRefName: "develop",
+              labels: ["in test"],
+              approvals: [],
+            };
+      },
+      loadConfig: () => loadConfig("tests/fixtures/blocking-labels.shipkit.yml"),
+    });
+
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+
+    expect(result.code).toBe(2);
+    expect(result.warnings.map((w) => w.check)).toContain("blocking-label");
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
+  });
+
+  it("proceeds when the facts are unchanged", async () => {
+    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => "approved" as const });
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+    expect(result.code).toBe(0);
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
+  });
+
+  it("never asks in preview mode", async () => {
+    const { deps, calls } = makeDeps(warned);
+    await runSubmit({ ...OPTIONS, mode: "preview", acknowledge: [] }, deps);
+    expect(calls.some((c) => c.fn === "requestApproval")).toBe(false);
+  });
+});
+
+describe("the human policy", () => {
+  const humanConfig = () => {
+    const config = loadConfig("tests/fixtures/valid.shipkit.yml");
+    return { ...config, pr: { ...config.pr, approval: "human" as const } };
+  };
+  const warned = { readUntrackedFiles: () => [".env.local"], loadConfig: humanConfig };
+
+  it("asks even when every id was echoed", async () => {
+    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => "approved" as const });
+    await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
+    expect(calls.some((c) => c.fn === "requestApproval")).toBe(true);
+  });
+
+  // Otherwise the policy is decorative: an agent, or a --yes, would walk past it.
+  it("refuses an echoed acknowledgement with nothing listening", async () => {
+    const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => "no-surface" as const /* extra args ignored */ });
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
+    expect(result.code).toBe(2);
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
+  });
+
+  it("says the surface is not running rather than naming ids to acknowledge", async () => {
+    const { deps, err } = makeDeps({ ...warned, requestApproval: async () => "no-surface" as const /* extra args ignored */ });
+    await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
+    expect(err.join("\n")).toMatch(/approval surface/i);
   });
 });

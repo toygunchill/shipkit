@@ -3,6 +3,7 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { assembleBrief } from "../../src/brief/assemble.js";
 import { loadConfig } from "../../src/config/load.js";
 import { resolveIssue } from "../../src/cli-support.js";
 import { renderBody } from "../../src/submit/response.js";
@@ -105,6 +106,27 @@ describe("runSubmit end to end", () => {
   afterEach(() => {
     if (originalToken === undefined) delete process.env.SHIPKIT_JIRA_TOKEN;
     else process.env.SHIPKIT_JIRA_TOKEN = originalToken;
+  });
+
+  // The spec's Testing section names brief -> preview -> apply as the sequence this suite
+  // covers end to end. The two tests below drive preview and apply against real adapters;
+  // this one drives the leg that comes before either — the same real readRepoState the other
+  // two use, feeding the same real assembleBrief the CLI's `brief` action and shipkit_brief
+  // both call, against the same kind of scratch repository.
+  it("assembles a brief that reports the branch and the sections the config declares", () => {
+    const { repo } = scratch();
+    const config = loadConfig(CONFIG);
+
+    const brief = assembleBrief({
+      repo: readRepoState("develop", repo),
+      target: { branch: "develop", reason: "given" },
+      config,
+    });
+
+    expect(brief.change.branch).toBe("bugfix/squadb/1-invoice");
+    expect(brief.template.sections.map((s) => s.name)).toEqual(
+      config.pr.sections.map((s) => s.name),
+    );
   });
 
   it("commits the work, keeps the response file out, and really pushes", async () => {

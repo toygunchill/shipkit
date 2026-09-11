@@ -66,13 +66,24 @@ describe("fingerprint", () => {
     expect(fingerprint({ ...BASE, warnings: more })).not.toBe(fingerprint(BASE));
   });
 
-  // Warnings are sorted by check id, then message, so the canonical form is
-  // stable regardless of input order. This allows different check firing orders
-  // to produce the same fingerprint, which is necessary when the same check
-  // fires multiple times.
-  it("normalizes warning order by sorting", () => {
+  // Warnings are sorted by check id, then message, using code-unit order (the
+  // order that < and > produce). Two warnings with the same id sort by message
+  // using code-unit order, so uppercase comes before lowercase.
+  it("normalizes warning order by sorting with code-unit order", () => {
     const swapped = [BASE.warnings[1], BASE.warnings[0]];
     expect(fingerprint({ ...BASE, warnings: swapped })).toBe(fingerprint(BASE));
+  });
+
+  // Code-unit order means uppercase sorts before lowercase (e.g. "Alpha" < "alpha").
+  // This is the order that < produces in JavaScript and Swift, ensuring both
+  // implementations agree without locale-dependent collation.
+  it("sorts by code-unit order, with uppercase before lowercase", () => {
+    const uppercase = { check: "x", message: "Alpha" };
+    const lowercase = { check: "x", message: "alpha" };
+    const swapped = [lowercase, uppercase];
+    expect(fingerprint({ ...BASE, warnings: swapped })).toBe(
+      fingerprint({ ...BASE, warnings: [uppercase, lowercase] }),
+    );
   });
 
   it("is stable across calls", () => {

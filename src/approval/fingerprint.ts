@@ -21,9 +21,12 @@ const VERSION = "shipkit-approval-v1";
  * for the first message that contains one, and escaping rules are exactly the
  * kind of detail two implementations get subtly different.
  *
- * Warnings are sorted by check id (alphabetically), then by message. This
- * ensures a canonical form even when the same check fires multiple times,
- * preventing cross-language disagreements.
+ * Warnings are sorted by check id, then message, using code-unit order (the
+ * order that `<` and `>` produce in JavaScript and Swift). This avoids
+ * locale-sensitive collation which would produce different results on machines
+ * with different default locales, making the fixture non-portable. For these
+ * strings (ASCII check ids and UTF-8 messages), code-unit order equals byte
+ * order, ensuring both implementations agree.
  *
  * UTF-8 encoding substitutes unpaired UTF-16 surrogates with U+FFFD before
  * counting and hashing. Both `Buffer.byteLength(value, "utf8")` and
@@ -33,8 +36,9 @@ const VERSION = "shipkit-approval-v1";
 export function canonical(situation: Situation): string {
   const field = (value: string) => `${Buffer.byteLength(value, "utf8")}:${value}`;
   const sorted = [...situation.warnings].sort((a, b) => {
-    const checkCmp = a.check.localeCompare(b.check);
-    return checkCmp !== 0 ? checkCmp : a.message.localeCompare(b.message);
+    if (a.check !== b.check) return a.check < b.check ? -1 : 1;
+    if (a.message !== b.message) return a.message < b.message ? -1 : 1;
+    return 0;
   });
   const lines = [
     VERSION,

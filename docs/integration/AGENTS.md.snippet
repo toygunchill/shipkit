@@ -1,0 +1,41 @@
+## Opening a pull request
+
+Do not run `gh pr create` directly, and do not write the pull-request body by hand.
+This repository's conventions are machine-checked by shipkit.
+
+**Ask which branch to target before you start.** The choice depends on release timing
+and is not derivable from the code — guessing wrong costs a round of dismissed
+approvals.
+
+1. Read the rules and the facts:
+
+   `npx shipkit brief --base <target>`
+
+2. Write `response.json` in the repository root:
+
+   ```json
+   {
+     "title": "<matches the titlePattern in the brief>",
+     "commitMessage": "<conventional-commit subject, optional body after a blank line>",
+     "sections": { "<each section name from the brief>": "<your prose>" }
+   }
+   ```
+
+   Fill every required section. Write in English. Keep Summary to five or six lines,
+   aimed at someone who has not opened the diff — not a restatement of it. Keep
+   What to Test to the checks a QA engineer needs plus the obvious regressions, in
+   their language, not an exhaustive list of edge cases. Use `###` for sub-headings;
+   a `##` line would split the body into a new section.
+
+3. Submit:
+
+   `npx shipkit submit --input response.json --base <target>`
+
+If it exits 1, it names the rule you broke — fix the response and run it again.
+Nothing has been committed at that point.
+
+If it exits 2 after printing warnings, read them. They describe something that is
+expensive to undo: approvals that a push will dismiss, commits from another ticket,
+a base that disagrees with the open pull request, a label that blocks the merge
+gate, or untracked files that staging would sweep into the commit. Ask before
+re-running with `--yes`.

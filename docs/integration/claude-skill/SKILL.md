@@ -1,0 +1,54 @@
+---
+name: open-pr
+description: Use when opening a pull request, or when a development task is finished and the work needs to land - writes the commit message and the PR body to this repository's conventions and opens the PR against the agreed target branch.
+---
+
+# Opening a pull request
+
+This repository's pull-request conventions are machine-checked. Do not run
+`gh pr create` directly and do not compose the body by hand; shipkit will refuse
+output that does not comply, and refusing is the point.
+
+## First, ask
+
+Ask which branch to target. Release timing decides it and the repository does not
+record it, so it is not yours to infer. Guessing wrong costs a round of dismissed
+approvals.
+
+## Then
+
+Run `npx shipkit brief --base <target>`. It returns the change, the target, the
+sections to fill with a hint for each, and the rules the output must satisfy.
+
+Write `response.json` in the repository root:
+
+```json
+{
+  "title": "<matches the brief's titlePattern>",
+  "commitMessage": "<conventional-commit subject, optional body after a blank line>",
+  "sections": { "<each section name from the brief>": "<your prose>" }
+}
+```
+
+Every key under `sections` must be a section name the brief lists, spelled exactly.
+Use `###` for sub-headings — a `##` line reads as a new section.
+
+Write in English. Summary is five or six lines for someone who has not opened the
+diff: what was wrong, what changed, and anything a reviewer would otherwise ask —
+not a walk through the implementation. What to Test is the handful of checks a QA
+engineer needs plus the obvious regressions, in their language.
+
+Then run `npx shipkit submit --input response.json --base <target>`.
+
+## Reading the outcome
+
+**Exit 1** — the answer broke a rule, and the rule is named. Nothing was committed.
+Fix the response and run it again.
+
+**Exit 2 after warnings** — something expensive to undo is about to happen:
+approvals a push will dismiss, commits belonging to another ticket, a base that
+disagrees with the open pull request, a blocking label, or untracked files staging
+would sweep into the commit. Report the warnings and ask before re-running with
+`--yes`. Do not pass `--yes` on your own judgement.
+
+**Exit 0** — the pull request URL is on stdout. Report it.

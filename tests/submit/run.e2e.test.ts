@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../../src/config/load.js";
 import { resolveIssue } from "../../src/cli-support.js";
 import { renderBody } from "../../src/submit/response.js";
@@ -13,7 +13,7 @@ import {
   readRepoState,
   readUntrackedFiles,
 } from "../../src/vcs/git.js";
-import { commitAll, createPullRequest, pushBranch } from "../../src/vcs/mutate.js";
+import { commitAll, pushBranch } from "../../src/vcs/mutate.js";
 
 const CONFIG = resolve("tests/fixtures/valid.shipkit.yml");
 
@@ -32,10 +32,19 @@ function git(args: string[], cwd: string): void {
   execFileSync("git", args, { cwd, stdio: "pipe" });
 }
 
+// Every scratch root created by `scratch()` below, so it can be swept up once the suite is
+// done — matching the cleanup pattern tests/cli.submit.test.ts and friends already use for
+// their own mkdtempSync directories.
+const tempDirs: string[] = [];
+afterAll(() => {
+  for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+});
+
 /** A scratch repository on a branch the fixture's branch.pattern accepts, with a local
  *  bare remote so `git push` is a real push rather than a mock. */
 function scratch(): { repo: string; remote: string } {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "shipkit-e2e-")));
+  tempDirs.push(root);
   const remote = join(root, "remote.git");
   const repo = join(root, "work");
 
@@ -81,6 +90,23 @@ function realDeps(repo: string, opened: { input?: unknown }): SubmitDeps {
 }
 
 describe("runSubmit end to end", () => {
+  // resolveIssue is the real one here, and it reads SHIPKIT_JIRA_TOKEN from the environment.
+  // Whoever runs this suite with a real token exported must not get a broken test or a live
+  // call to a corporate Jira host — so the token is force-unset for the duration of every
+  // test in this file and restored afterward, exactly like tests/cli-support.test.ts does for
+  // resolveIssue's own unit tests. The intent (issueVerified: false, issue-unverified firing)
+  // is unchanged; it is guaranteed now, not merely inherited from an empty environment.
+  const originalToken = process.env.SHIPKIT_JIRA_TOKEN;
+
+  beforeEach(() => {
+    delete process.env.SHIPKIT_JIRA_TOKEN;
+  });
+
+  afterEach(() => {
+    if (originalToken === undefined) delete process.env.SHIPKIT_JIRA_TOKEN;
+    else process.env.SHIPKIT_JIRA_TOKEN = originalToken;
+  });
+
   it("commits the work, keeps the response file out, and really pushes", async () => {
     const { repo } = scratch();
     // The response file sits in the repository, as it does in a real run.
@@ -106,6 +132,13 @@ describe("runSubmit end to end", () => {
     expect(result.committed).toBe(true);
     expect(result.pushed).toBe(true);
 
+    // The real readUntrackedFiles adapter ran and its answer reached pre-flight: proof the
+    // adapters agree, not just that the sequence didn't throw. An adapter regressed to `[]`
+    // or to the wrong paths would pass every assertion below without this one.
+    const untrackedWarning = result.warnings.find((w) => w.check === "untracked-files");
+    expect(untrackedWarning).toBeDefined();
+    expect(untrackedWarning?.message).toContain(".env.local");
+
     const committed = execFileSync(
       "git",
       ["show", "--name-only", "--format=", "HEAD"],
@@ -125,13 +158,23 @@ describe("runSubmit end to end", () => {
     );
     expect(remoteBranches).toContain("bugfix/squadb/1-invoice");
 
-    // And the body that reached the forge is the one the config describes.
-    expect((opened.input as { body: string }).body).toContain("## What to Test");
+    // And what reached the forge is the pull request this run actually means to open —
+    // right title, right body, right base, and — the one that matters most, since targeting
+    // the wrong branch is exactly the failure this product exists to prevent — right head.
+    const openedInput = opened.input as { title: string; body: string; base: string; head: string };
+    expect(openedInput.title).toBe(RESPONSE.title);
+    expect(openedInput.base).toBe("develop");
+    expect(openedInput.head).toBe("bugfix/squadb/1-invoice");
+    expect(openedInput.body).toContain("## What to Test");
   });
 
   it("previews the same repository without leaving a trace", async () => {
     const { repo } = scratch();
-    const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" });
+    const beforeHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" });
+    const beforeStatus = execFileSync("git", ["status", "--porcelain"], {
+      cwd: repo,
+      encoding: "utf8",
+    });
 
     const opened: { input?: unknown } = {};
     const result = await runSubmit(
@@ -141,7 +184,15 @@ describe("runSubmit end to end", () => {
 
     expect(result.code).toBe(0);
     expect(result.body).toContain("## Summary");
-    expect(execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" })).toBe(before);
+    expect(execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" })).toBe(
+      beforeHead,
+    );
+    // HEAD alone would miss a stray `git add`: it moves the index, not the branch tip. This
+    // covers the index and working tree too, so "without leaving a trace" is actually checked
+    // rather than merely the part of it that a bad `git add` wouldn't touch anyway.
+    expect(
+      execFileSync("git", ["status", "--porcelain"], { cwd: repo, encoding: "utf8" }),
+    ).toBe(beforeStatus);
     expect(opened.input).toBeUndefined();
   });
 });

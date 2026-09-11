@@ -82,4 +82,18 @@ describe("decodeResponse", () => {
     expect(() => decodeResponse(line, FP)).toThrow(/99/);
     expect(() => decodeResponse(line, FP)).toThrow(new RegExp(String(PROTOCOL_VERSION)));
   });
+
+  // When both version and fingerprint are wrong, version error is reported because
+  // version disagreement explains fingerprint mismatch. Swapping the check order
+  // would report fingerprint instead, sending the reader after a symptom.
+  it("reports version disagreement over fingerprint mismatch when both are wrong", () => {
+    const line = JSON.stringify({
+      protocol: 99,
+      fingerprint: "b".repeat(64),
+      decision: "approved",
+    });
+    expect(() => decodeResponse(line, FP)).toThrow(/99/);
+    expect(() => decodeResponse(line, FP)).toThrow(new RegExp(String(PROTOCOL_VERSION)));
+    expect(() => decodeResponse(line, FP)).not.toThrow(/different request/);
+  });
 });

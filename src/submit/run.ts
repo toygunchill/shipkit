@@ -1,5 +1,5 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { fingerprint, sortWarnings, type Situation } from "../approval/fingerprint.js";
+import { changedFields, fingerprint, sortWarnings, type Situation } from "../approval/fingerprint.js";
 import {
   gate,
   shouldRequestApproval,
@@ -380,21 +380,26 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
           config,
         }).warnings;
 
-        if (
-          fingerprint(
-            situationOf({
-              head: freshHead,
-              // Read again, like everything else here. A file written into the
-              // working tree while the person was deciding is a file the push will
-              // now carry, and the whole point of re-hashing is that a situation
-              // which changed underneath an approval no longer satisfies it.
-              diffstat: deps.readPushDiffstat(options.base, exclude),
-              warnings: freshWarnings,
-            }),
-          ) !== approvalFingerprint
-        ) {
+        const freshSituation = situationOf({
+          head: freshHead,
+          // Read again, like everything else here. A file written into the
+          // working tree while the person was deciding is a file the push will
+          // now carry, and the whole point of re-hashing is that a situation
+          // which changed underneath an approval no longer satisfies it.
+          diffstat: deps.readPushDiffstat(options.base, exclude),
+          warnings: freshWarnings,
+        });
+
+        if (fingerprint(freshSituation) !== approvalFingerprint) {
+          // Named, not just flagged: "the situation changed" gives a person on a
+          // repository that churns nothing to act on, and the retry it invites fails
+          // the same way forever. `changedFields` points at what actually moved —
+          // usually `diffstat`, which is the one a stray autosave or watcher output
+          // touches — without dumping both situations into the message.
+          const fields = changedFields(situation, freshSituation);
           const message =
-            "The situation changed while the approval was pending; asking again from the start.";
+            `The situation changed while the approval was pending (${fields.join(", ")} changed); ` +
+            "asking again from the start.";
           deps.err(message);
           for (const warning of freshWarnings) {
             deps.err(`${warning.check}: ${warning.message}`);

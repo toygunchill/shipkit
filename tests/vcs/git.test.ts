@@ -226,4 +226,22 @@ describe("readPushDiffstat", () => {
 
     expect(readdirSync(tmpdir()).filter((name) => name.startsWith(marker))).toEqual([]);
   });
+
+  // Measured against real git: `diff.relative` makes git print paths, and count "N files
+  // changed", relative to `cwd` — and it does this even with an explicit `:/` pathspec, so
+  // the defense `readUntrackedFiles` uses above does not carry over here for free. A repo
+  // with the config set, a new file below `cwd` and a new file outside it, run from that
+  // subdirectory: without `--no-relative` this reports "1 file changed" and silently drops
+  // the file outside `sub/` from the stat a person approves.
+  it("counts a file outside cwd even when diff.relative is set, run from a subdirectory", () => {
+    git(["config", "diff.relative", "true"], scratch);
+    mkdirSync(join(scratch, "sub"), { recursive: true });
+    writeFileSync(join(scratch, "sub", "a.txt"), "new\n");
+    writeFileSync(join(scratch, "top.txt"), "new\n");
+
+    const stat = readPushDiffstat("develop", [], join(scratch, "sub"));
+    expect(stat).toContain("sub/a.txt");
+    expect(stat).toContain("top.txt");
+    expect(stat).toContain("2 files changed");
+  });
 });

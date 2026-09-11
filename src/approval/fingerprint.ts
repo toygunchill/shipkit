@@ -86,3 +86,37 @@ export function canonical(situation: Situation): string {
 export function fingerprint(situation: Situation): string {
   return createHash("sha256").update(canonical(situation), "utf8").digest("hex");
 }
+
+/**
+ * The field names that differ between two situations, in a fixed order. Built for the
+ * refusal after a fingerprint mismatch: "the situation changed" tells a person nothing
+ * they can act on, but "diffstat changed" points straight at the watcher or autosave that
+ * touched the tree during the wait. `warnings` counts as one field — naming which warning
+ * changed would mean explaining preflight's check ids to someone who approved a push, not
+ * a preflight run.
+ */
+export function changedFields(before: Situation, after: Situation): string[] {
+  const changed: string[] = [];
+  if (before.repo !== after.repo) changed.push("repo");
+  if (before.branch !== after.branch) changed.push("branch");
+  if (before.base !== after.base) changed.push("base");
+  if (before.head !== after.head) changed.push("head");
+  if (before.title !== after.title) changed.push("title");
+  if (before.commitMessage !== after.commitMessage) changed.push("commitMessage");
+  if (before.diffstat !== after.diffstat) changed.push("diffstat");
+  if (canonicalWarnings(before.warnings) !== canonicalWarnings(after.warnings)) {
+    changed.push("warnings");
+  }
+  return changed;
+}
+
+// Same length-prefixing `canonical` uses, for the same reason: a plain `\n` join could
+// call two genuinely different warning lists equal if a check id or message happens to
+// contain the delimiter. This only feeds a diagnostic message, never the hash itself, but
+// there is no reason to give it a weaker equality check than the one that matters.
+function canonicalWarnings(warnings: Warning[]): string {
+  const field = (value: string) => `${Buffer.byteLength(value, "utf8")}:${value}`;
+  return sortWarnings(warnings)
+    .map((warning) => `${field(warning.check)}\n${field(warning.message)}`)
+    .join("\n");
+}

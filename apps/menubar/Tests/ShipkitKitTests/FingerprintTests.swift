@@ -89,9 +89,15 @@ private func loadVectors() throws -> [Vector] {
 @Test func aRequestExposesTheSituationItClaims() throws {
     let line = Data("""
     {"protocol":1,"fingerprint":"f","repo":"/r","branch":"b","base":"d",\
-    "head":"c","title":"t","commitMessage":"m","diffstat":"x","warnings":[]}
+    "head":"c","title":"t","commitMessage":"m","diffstat":"x",\
+    "warnings":[{"check":"x","message":"w"}]}
     """.utf8)
     let request = try decodeRequest(line)
+    #expect(request.situation.repo == "/r")
+    #expect(request.situation.branch == "b")
+    #expect(request.situation.base == "d")
+    #expect(request.situation.head == "c")
     #expect(request.situation.title == "t")
     #expect(request.situation.commitMessage == "m")
+    #expect(request.situation.warnings == [Warning(check: "x", message: "w")])
 }

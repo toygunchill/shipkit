@@ -132,6 +132,7 @@ So an approval is bound to a SHA-256 over a canonical rendering of:
 - the repository path,
 - the branch, the base, and the current `HEAD` commit,
 - the pull-request title and the commit message,
+- the diffstat,
 - every warning, its check id **and its message**, ordered by id.
 
 The title and the commit message are in the hash because they are on the
@@ -347,3 +348,35 @@ consults `policy`. The existing acknowledgement path is untouched under `echo`.
 - **The application quitting mid-wait.** The client's timeout covers it, and the
   caller retries. Whether that should be distinguished from a timeout in the
   message is unknown until it is seen.
+
+## Amendment: the diffstat is bound, and it describes the push
+
+The list of bound fields above originally omitted `diffstat`, while the panel
+displayed it. That is exactly the failure the paragraph beneath the list argues
+against, applied to the one field the argument forgot.
+
+Two things were wrong and both are fixed.
+
+**It was not bound.** `diffstat` now joins the canonical form immediately after
+the commit message, length-prefixed like every other scalar. The form's header
+moves from `shipkit-approval-v1` to `shipkit-approval-v2`, since what is hashed
+changed. `PROTOCOL_VERSION` stays `1`: the wire shape did not change — the field
+was always transmitted — only what is bound did.
+
+**It described the wrong commit.** The value came from `git diff --stat
+base...HEAD`, a three-dot range covering committed work only, while `commitAll`
+runs `git add --all` *after* the gate and sweeps the whole working tree into the
+commit that is pushed. An agent with four hundred uncommitted files on a fresh
+branch therefore produced an empty diffstat: the panel rendered a blank line
+where the size of the change belongs, and approving it pushed all four hundred.
+
+The diffstat is now measured against the tree the commit will actually produce —
+a scratch index outside the repository, `read-tree` from the merge base, then
+`add --all` using the very pathspec `commitAll` passes. The staging rules are
+therefore git's own rather than a second implementation of them, so `.gitignore`
+and the response-file exclusion apply by construction.
+
+Two things here were measured rather than assumed: `git add --all -N` drops the
+index entry for a file deleted in the working tree, which would under-report in
+the one direction that matters; and a scratch index written beside `.git` is
+itself untracked, so `add --all` swept the index into the stat it was computing.

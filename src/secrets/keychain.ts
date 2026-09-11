@@ -7,6 +7,11 @@ const defaultRunner: SecurityRunner = (args) =>
   execFileSync("/usr/bin/security", args, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
+    // If the keychain item's ACL doesn't trust /usr/bin/security — the default when
+    // another application created it — macOS raises a GUI prompt and the call blocks
+    // until someone answers it. In an MCP child launched from the Dock that is a hung
+    // tool call with no ceiling; a timeout turns it into an ordinary failure instead.
+    timeout: 5000,
   });
 
 /**

@@ -221,14 +221,14 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
         : warnings.filter((warning) => !options.acknowledge.includes(warning.check));
 
     if (unacknowledged.length > 0) {
-      // Reached only when `options.acknowledge` is an array, never "all" — the branch above
-      // sends `unacknowledged` empty otherwise. That array is the CLI's shape (--yes maps to
-      // "all"; anything else, including no flag at all, is []), and the CLI's only remedy is
-      // --yes — there is no --acknowledge flag to name ids to. Naming the ids too helps the
-      // MCP side, which already turns them into its own `acknowledge: [...]` guidance.
+      // Neutral on purpose: this message reaches every caller, and the remedy for getting
+      // past the gate differs per interface — the CLI has --yes, MCP has acknowledge: [...].
+      // Naming a flag that does not exist in the reader's interface is worse than naming
+      // none, so each caller supplies its own remedy after the fact instead of this function
+      // deciding it: src/cli.ts appends "Re-run with --yes" on a warnings refusal, and
+      // src/mcp/result.ts's applyContent already appends its own acknowledge guidance.
       const message =
-        `Refusing to proceed. Unacknowledged: ${unacknowledged.map((w) => w.check).join(", ")}. ` +
-        "Re-run with --yes to accept these.";
+        `Refusing to proceed. Unacknowledged: ${unacknowledged.map((w) => w.check).join(", ")}`;
       deps.err(message);
       return { code: 2, findings: [], warnings, body, message, committed: false, pushed: false };
     }

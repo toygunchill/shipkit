@@ -430,11 +430,11 @@ describe("runSubmit result shape", () => {
     expect(result.committed).toBe(false);
   });
 
-  // The CLI's only remedy is --yes: there is no --acknowledge flag on a command line, so a
-  // refusal that names only check ids gives a human nothing to actually do. Naming the ids
-  // too is fine (and is what tests/mcp/result.test.ts relies on for its own guidance), but
-  // --yes must survive in the message text regardless.
-  it("names --yes in the refusal message, not only the unacknowledged ids", async () => {
+  // runSubmit serves both the CLI (which has --yes) and MCP (which has no such flag, only
+  // acknowledge: [...]). Naming --yes here would reach the MCP caller too, so the core's
+  // message stays neutral — the ids and nothing else — and each interface appends its own
+  // remedy (src/cli.ts for --yes, src/mcp/result.ts's applyContent for acknowledge).
+  it("names the unacknowledged ids in the refusal message, and does not mention --yes", async () => {
     const { deps } = makeDeps({
       readUntrackedFiles: () => [".env.local"],
     });
@@ -442,8 +442,8 @@ describe("runSubmit result shape", () => {
     const result = await runSubmit({ ...OPTIONS, acknowledge: [] }, deps);
 
     expect(result.code).toBe(2);
-    expect(result.message).toContain("--yes");
     expect(result.message).toContain("untracked-files");
+    expect(result.message).not.toContain("--yes");
   });
 
   // The body is what will actually be posted. A caller that cannot see it has to trust

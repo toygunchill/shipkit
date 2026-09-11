@@ -1,7 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { applyContent, briefContent, failureContent, previewContent } from "../../src/mcp/result.js";
+import { loadConfig } from "../../src/config/load.js";
+import { renderBody, type SubmitResponse } from "../../src/submit/response.js";
+import { runSubmit, type SubmitDeps } from "../../src/submit/run.js";
 import type { SubmitResult } from "../../src/submit/run.js";
 import type { Brief } from "../../src/brief/types.js";
+
+const CONFIG = loadConfig("tests/fixtures/valid.shipkit.yml");
+
+// A branch that satisfies config.branch.pattern, matching tests/submit/run.test.ts's own
+// fixture, so this response reaches pre-flight rather than failing validate() first.
+const VALID_RESPONSE: SubmitResponse = {
+  title: "[ABC-1] fix(x): y",
+  commitMessage: "fix(x): y",
+  sections: {
+    Summary: "It was broken; now it is not.",
+    "Screenshots / Screen Recordings": "Nothing to show — logic only.",
+    "What to Test": "- one\n- two\n- three",
+    "Issues Addressed": "- [ABC-1](https://jira.example.com/browse/ABC-1)",
+  },
+};
 
 const BRIEF: Brief = {
   change: { branch: "bugfix/x/1-y", files: ["a.ts"], diffstat: "1 file", commits: ["fix: y"] },
@@ -117,6 +135,58 @@ describe("applyContent", () => {
       { check: "untracked-files", message: "m" },
     ]);
     expect(shaped.content[0].text).toContain(`Call again with acknowledge: ["untracked-files"] to proceed.`);
+  });
+
+  // Drives the real runSubmit (fake deps, no git/gh) rather than a hand-built SubmitResult,
+  // so this test actually depends on what runSubmit's refusal message says. runSubmit serves
+  // both the CLI (which has --yes) and MCP (which has no such flag, only acknowledge: [...]);
+  // its message must stay neutral, and applyContent must supply MCP's own guidance without
+  // ever surfacing a flag this interface does not have. Regressing the core's message back to
+  // naming --yes (as run.ts briefly did) makes this fail — see the discrimination check in
+  // the report.
+  it("gives acknowledge guidance, never --yes, on a real refused result", async () => {
+    const deps: SubmitDeps = {
+      loadConfig: () => CONFIG,
+      renderBody,
+      currentBranch: () => "bugfix/squadb/31087-invoice",
+      resolveIssue: async () => undefined,
+      readRepoState: () => ({
+        branch: "bugfix/squadb/31087-invoice", changedFiles: [], diffstat: "", commits: [],
+      }),
+      findPullRequest: () => null,
+      readUntrackedFiles: () => [".env.local"],
+      readRepoRoot: () => "/repo",
+      realpath: (path) => path,
+      commitAll: () => {
+        throw new Error("must not commit on a refusal");
+      },
+      pushBranch: () => {
+        throw new Error("must not push on a refusal");
+      },
+      createPullRequest: () => {
+        throw new Error("must not open a pull request on a refusal");
+      },
+      out: () => undefined,
+      err: () => undefined,
+    };
+
+    const result = await runSubmit(
+      {
+        base: "develop",
+        config: "tests/fixtures/valid.shipkit.yml",
+        response: VALID_RESPONSE,
+        mode: "apply",
+        acknowledge: [],
+      },
+      deps,
+    );
+
+    expect(result.code).toBe(2);
+    const shaped = applyContent(result);
+    expect(shaped.isError).toBe(true);
+    expect(shaped.content[0].text).toContain("acknowledge:");
+    expect(shaped.content[0].text).toContain("to proceed.");
+    expect(shaped.content[0].text).not.toContain("--yes");
   });
 
   it("builds acknowledge guidance from all refused ids, not just the first", () => {

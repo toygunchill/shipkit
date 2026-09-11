@@ -83,8 +83,13 @@ Returns the brief: the change, the resolved target, the sections to fill with a 
 for each, and the rules the answer must satisfy. Reads only.
 
 Unlike the CLI's `brief`, this never prompts for a missing base. A tool call is not a
-terminal; `base` is required and a missing one is an error naming the plausible
-targets, which is the same contract the CLI already applies when stdin is not a tty.
+terminal, so `base` is a required field and a missing one is a schema error.
+
+An earlier draft had it answer with the plausible targets, mirroring what the CLI does
+when stdin is not a tty. That was dropped during implementation: handing an agent a list
+of branches invites it to pick one, and the choice depends on release timing, which is a
+human judgement the repository does not record. The tool's description carries the
+instruction instead — ask, do not infer — and a test pins that the description says so.
 
 ### `shipkit_preview`
 
@@ -100,6 +105,10 @@ Returns three things and changes nothing:
 - `findings` — validation failures, each with its rule id and message.
 - `warnings` — pre-flight warnings, each with its check id and message.
 - `body` — the rendered pull-request body, exactly as it would be posted.
+
+`warnings` carries each check's id and its message. The ids are what `shipkit_apply`
+requires back in `acknowledge`; the messages are what make them mean something to a
+human.
 
 `body` is there so the agent can see what it is about to publish rather than trusting
 that its sections were assembled the way it imagined.

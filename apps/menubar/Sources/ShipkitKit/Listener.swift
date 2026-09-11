@@ -65,6 +65,31 @@ private func hasKind(_ line: Data) -> Bool {
     return object["kind"] != nil
 }
 
+/// Runs a blocking call on a GCD queue that overcommits threads, rather
+/// than on Swift's cooperative pool. That pool is sized to the core count
+/// and never overcommitted: a `Task` that makes a blocking `recv` or `send`
+/// call directly ties up one of only a handful of threads for as long as
+/// the call takes -- up to the receive timeout, for a silent client -- and
+/// enough of them stop every `await` in the process, not just their own
+/// connection's handling. `withCheckedContinuation` suspends the awaiting
+/// task, releasing its cooperative thread, while the blocking work runs on
+/// a disposable GCD thread instead.
+private func runBlocking<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.global().async {
+            continuation.resume(returning: work())
+        }
+    }
+}
+
+/// `send` is the other blocking call `serve` makes; routed through the same
+/// queue as `recv`; for the same reason.
+private func sendAll(_ client: Int32, _ data: Data) async {
+    await runBlocking {
+        _ = data.withUnsafeBytes { send(client, $0.baseAddress, data.count, 0) }
+    }
+}
+
 public actor Listener {
     private let socketPath: String
     private let journal: Journal
@@ -91,10 +116,14 @@ public actor Listener {
         return base.appendingPathComponent("approvals.sock").path
     }
 
-    /// Seconds a client is given to send its one line. GCD's global queue
-    /// runs `accept` and `serve` alike; a client that connects and sends
-    /// nothing would otherwise tie up a thread forever, and enough of them
-    /// would stall accepts for everyone behind them.
+    /// Seconds a client is given to send its one line. `accept` runs on a
+    /// DispatchSource's own GCD queue, which overcommits threads freely --
+    /// but `serve`'s `recv` runs inside a `Task`, on Swift's cooperative
+    /// pool, which is sized to the core count and never overcommitted. This
+    /// timeout bounds how long a silent client can be waited on at all;
+    /// `runBlocking` (below) is what keeps that wait off the cooperative
+    /// pool, so a silent client ties up a disposable GCD thread rather than
+    /// one of the few threads every other `await` in the process depends on.
     private static let receiveTimeoutSeconds: Int = 5
 
     public func start() throws {
@@ -200,12 +229,16 @@ public actor Listener {
     private static func serve(client: Int32, on listener: Listener) async {
         defer { close(client) }
 
-        var buffer = [UInt8](repeating: 0, count: 65536)
         var collected = Data()
         while true {
-            let read = recv(client, &buffer, buffer.count, 0)
+            // Off the cooperative pool: see `runBlocking`.
+            let (read, chunk): (Int, [UInt8]) = await runBlocking {
+                var localBuffer = [UInt8](repeating: 0, count: 65536)
+                let n = recv(client, &localBuffer, localBuffer.count, 0)
+                return (n, localBuffer)
+            }
             if read <= 0 { break }
-            collected.append(contentsOf: buffer[0..<read])
+            collected.append(contentsOf: chunk[0..<read])
             if collected.contains(0x0A) { break }
             if collected.count > 1_048_576 { return }
         }
@@ -214,7 +247,7 @@ public actor Listener {
 
         if hasKind(line) {
             guard let data = await listener.tokenResponseData(line: line) else { return }
-            _ = data.withUnsafeBytes { send(client, $0.baseAddress, data.count, 0) }
+            await sendAll(client, data)
             return
         }
 
@@ -226,7 +259,7 @@ public actor Listener {
             decision: decision
         )
         if let data = try? encodeResponse(response) {
-            _ = data.withUnsafeBytes { send(client, $0.baseAddress, data.count, 0) }
+            await sendAll(client, data)
         }
     }
 

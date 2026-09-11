@@ -399,3 +399,153 @@ private func openFileDescriptorCount() -> Int {
     let reply = try ask(path, requestLine() + "\n")
     #expect(reply.contains("\"decision\":\"approved\""))
 }
+
+/// Bridges `DispatchSemaphore.wait(timeout:)` -- unavailable to call
+/// directly from an `async` context, since doing so would block whatever
+/// thread is running this function -- onto a GCD thread via a continuation,
+/// the same technique `Listener`'s own `runBlocking` uses. The `async` test
+/// function suspends, releasing its cooperative thread, while the actual
+/// wait happens elsewhere.
+private func waitBlocking(_ semaphore: DispatchSemaphore, timeout: DispatchTime) async -> DispatchTimeoutResult {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.global().async {
+            continuation.resume(returning: semaphore.wait(timeout: timeout))
+        }
+    }
+}
+
+/// Opens a connection and sends nothing, returning its descriptor (or `-1`
+/// on failure). No `#expect` calls in here: this must be safe to call from a
+/// raw thread that Swift Testing's task-local context never reaches, which
+/// is exactly where the test below calls it from.
+private func openSilentConnection(_ path: String) -> Int32 {
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0 else { return fd }
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    let capacity = MemoryLayout.size(ofValue: address.sun_path)
+    withUnsafeMutablePointer(to: &address.sun_path) { pointer in
+        path.withCString { source in
+            _ = strncpy(UnsafeMutableRawPointer(pointer).assumingMemoryBound(to: CChar.self),
+                        source, capacity - 1)
+        }
+    }
+    let size = socklen_t(MemoryLayout<sockaddr_un>.size)
+    let connected = withUnsafePointer(to: &address) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, size) }
+    }
+    guard connected == 0 else {
+        close(fd)
+        return -1
+    }
+    return fd
+}
+
+/// The same connect/send/receive as `ask`, but returning `nil` on any
+/// failure instead of calling `#expect` -- because, like `openSilentConnection`,
+/// this is meant to run on a raw thread with no Swift Testing task-local
+/// context to record an issue against.
+private func askRaw(_ path: String, _ line: String) -> String? {
+    // Retries for the same reason the silent connections do: this is
+    // deliberately raced against a burst of other connects, and a full
+    // AF_UNIX listen backlog fails `connect` immediately rather than
+    // waiting for room.
+    var fd: Int32 = -1
+    for _ in 0..<50 where fd < 0 {
+        fd = openSilentConnection(path)
+        if fd < 0 { usleep(10_000) }
+    }
+    guard fd >= 0 else { return nil }
+    defer { close(fd) }
+
+    _ = line.withCString { send(fd, $0, strlen($0), 0) }
+
+    var buffer = [UInt8](repeating: 0, count: 4096)
+    let read = recv(fd, &buffer, buffer.count, 0)
+    guard read > 0 else { return nil }
+    return String(decoding: buffer[0..<read], as: UTF8.self)
+}
+
+// The finding: `serve`'s `recv`/`send` were plain blocking calls made
+// directly inside the `async` function that `Task { await Listener.serve(...) }`
+// runs, and that `Task` runs on Swift's cooperative pool -- sized to the core
+// count, and never overcommitted. Enough simultaneously silent clients tied
+// up every thread in that pool, not just their own connections' handling:
+// since `serve` is where the fingerprint check, the journal, and eventually
+// `present` are all reached via `await`, a saturated pool stalls every
+// `await` in the process, including a perfectly well-formed request's.
+//
+// Measured, and worth saying plainly rather than implying a determinism this
+// test does not have: with the blocking `recv`/`send` restored (the bug
+// reintroduced), this test catches the starvation on roughly a quarter to a
+// third of runs, not every run -- GCD grows an overcommitted queue's thread
+// count once it notices blocked work, and whether it notices in time to
+// rescue the valid request is itself a race no retry count or backoff here
+// makes deterministic. With the fix in place, every run passes, in about
+// 16ms, because the fixed code never touches the cooperative pool for the
+// blocking work at all -- there is no race to win. So this is a regression
+// guard that will eventually catch a reintroduction across many CI runs, not
+// a proof on any single one; the argument for the fix itself does not depend
+// on this test ever failing (see the report for why the fix is correct on
+// its own terms).
+@Test func answersAValidRequestPromptlyDespiteManySilentConnections() async throws {
+    let path = scratchSocket()
+    defer { removeScratchDirectory(for: path) }
+    let listener = noSecret(socketPath: path) { _ in .approved }
+    try await listener.start()
+    defer { Task { await listener.stop() } }
+
+    // Enough silent connections to exceed the cooperative pool's thread
+    // count, so a version of `serve` that blocks that pool would starve on
+    // its own accumulated load rather than on some other test's.
+    let silentCount = ProcessInfo.processInfo.activeProcessorCount + 4
+
+    // Every bit of socket work below runs on real, GCD-scheduled threads,
+    // never as `async` code: this test exists to prove the cooperative pool
+    // is not what a client waits behind, so doing its own work on that same
+    // pool would defeat the point -- an unfixed `serve` would then starve
+    // the test harness itself instead of just failing this test cleanly.
+    //
+    // The silent connections and the valid request are all fired through
+    // the same `concurrentPerform` call, as sibling iterations, rather than
+    // two separate dispatches: two independently-submitted blocks give GCD
+    // room to schedule them slightly apart, and a version of `serve` that
+    // blocks the cooperative pool only needs that much of a head start to
+    // recover (GCD grows an overcommitted queue's thread count once it
+    // notices blocked work, just not instantly) before the valid request
+    // ever has to compete for a thread.
+    let finished = DispatchSemaphore(value: 0)
+    let silentDescriptorsBox = SyncBox<[Int32]>([])
+    let result = SyncBox<String?>(nil)
+
+    DispatchQueue.global().async {
+        let silentBoxes = (0..<silentCount).map { _ in SyncBox<Int32>(-1) }
+        // Index 0 is the valid request; the rest are silent connections.
+        // Together, one `concurrentPerform` call.
+        DispatchQueue.concurrentPerform(iterations: silentCount + 1) { index in
+            if index == 0 {
+                result.set(askRaw(path, requestLine() + "\n"))
+                return
+            }
+            let slot = index - 1
+            var fd: Int32 = -1
+            for _ in 0..<50 where fd < 0 {
+                fd = openSilentConnection(path)
+                if fd < 0 { usleep(10_000) }
+            }
+            silentBoxes[slot].set(fd)
+        }
+        silentDescriptorsBox.set(silentBoxes.map { $0.value })
+        finished.signal()
+    }
+
+    // A couple of seconds is generous next to the 5-second receive timeout:
+    // a listener whose cooperative pool is not blocked answers in well
+    // under a second, silent connections notwithstanding.
+    let arrived = await waitBlocking(finished, timeout: .now() + 2)
+    let silentDescriptors = silentDescriptorsBox.value
+    defer { for fd in silentDescriptors { close(fd) } }
+
+    #expect(arrived == .success)
+    #expect(result.value?.contains("\"decision\":\"approved\"") == true)
+}

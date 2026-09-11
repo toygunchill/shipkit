@@ -4,7 +4,7 @@ import Testing
 
 private struct Vector: Decodable {
     struct Sit: Decodable {
-        let repo, branch, base, head, title, commitMessage: String
+        let repo, branch, base, head, title, commitMessage, diffstat: String
         let warnings: [Warning]
     }
     let name: String
@@ -24,7 +24,7 @@ private func loadVectors() throws -> [Vector] {
 
 @Test func matchesEveryVectorInTheSharedFixture() throws {
     let vectors = try loadVectors()
-    #expect(vectors.count >= 9)
+    #expect(vectors.count >= 11)
 
     for vector in vectors {
         let situation = Situation(
@@ -34,6 +34,7 @@ private func loadVectors() throws -> [Vector] {
             head: vector.situation.head,
             title: vector.situation.title,
             commitMessage: vector.situation.commitMessage,
+            diffstat: vector.situation.diffstat,
             warnings: vector.situation.warnings
         )
         #expect(fingerprint(situation) == vector.fingerprint, "vector: \(vector.name)")
@@ -43,7 +44,7 @@ private func loadVectors() throws -> [Vector] {
 @Test func countsBytesNotCharacters() {
     let situation = Situation(
         repo: "/r", branch: "fix 🎉", base: "d", head: "c",
-        title: "t", commitMessage: "m", warnings: []
+        title: "t", commitMessage: "m", diffstat: "1 file changed", warnings: []
     )
     // "fix 🎉" is 6 UTF-16 code units (what `.count` would give in JS) but only
     // 5 Swift Characters — and 8 UTF-8 bytes, which is the value that must appear.
@@ -53,7 +54,7 @@ private func loadVectors() throws -> [Vector] {
 @Test func endsWithoutATrailingNewline() {
     let situation = Situation(
         repo: "/r", branch: "b", base: "d", head: "c",
-        title: "t", commitMessage: "m", warnings: []
+        title: "t", commitMessage: "m", diffstat: "1 file changed", warnings: []
     )
     #expect(canonical(situation).hasSuffix("\n") == false)
 }
@@ -67,6 +68,33 @@ private func loadVectors() throws -> [Vector] {
     #expect(sortWarnings(unsorted).map(\.message) == ["a", "b", "z"])
 }
 
+/// Swift's `String ==` calls these two check ids equal — they are the same
+/// character spelled two ways — while JavaScript's `!==` calls them different.
+/// The order has to follow JavaScript's, because the fixture was generated from
+/// `src/approval/fingerprint.ts`. Code unit 0x0065 sorts before 0x00E9, so the
+/// decomposed spelling comes first however the messages compare.
+@Test func ordersCanonicallyEqualCheckIdsByTheirCodeUnits() {
+    let precomposed = Warning(check: "caf\u{e9}", message: "a")
+    let decomposed = Warning(check: "caf\u{65}\u{301}", message: "b")
+    #expect(sortWarnings([precomposed, decomposed]).map(\.message) == ["b", "a"])
+    #expect(sortWarnings([decomposed, precomposed]).map(\.message) == ["b", "a"])
+}
+
+/// The same pair with identical messages. Under the old guard both directions
+/// compared `false`, leaving the order to whatever `sorted(by:)` happened to do.
+/// This asserts on the code units rather than on `Warning ==`, which compares
+/// its Strings canonically and would call either order correct.
+@Test func ordersCanonicallyEqualCheckIdsDeterministicallyWhenMessagesMatch() {
+    let precomposed = Warning(check: "caf\u{e9}", message: "same")
+    let decomposed = Warning(check: "caf\u{65}\u{301}", message: "same")
+    func spellings(_ warnings: [Warning]) -> [[UInt16]] {
+        warnings.map { Array($0.check.utf16) }
+    }
+    let expected = [Array(decomposed.check.utf16), Array(precomposed.check.utf16)]
+    #expect(spellings(sortWarnings([precomposed, decomposed])) == expected)
+    #expect(spellings(sortWarnings([decomposed, precomposed])) == expected)
+}
+
 @Test func sortsByCodeUnitOrderSoUppercaseComesFirst() {
     let mixed = [Warning(check: "x", message: "alpha"), Warning(check: "x", message: "Alpha")]
     #expect(sortWarnings(mixed).map(\.message) == ["Alpha", "alpha"])
@@ -74,12 +102,12 @@ private func loadVectors() throws -> [Vector] {
 
 @Test func theOrderOfTheInputDoesNotChangeTheHash() {
     let a = Situation(
-        repo: "/r", branch: "b", base: "d", head: "c", title: "t", commitMessage: "m",
+        repo: "/r", branch: "b", base: "d", head: "c", title: "t", commitMessage: "m", diffstat: "1 file changed",
         warnings: [Warning(check: "untracked-files", message: "u"),
                    Warning(check: "base-mismatch", message: "b")]
     )
     let b = Situation(
-        repo: "/r", branch: "b", base: "d", head: "c", title: "t", commitMessage: "m",
+        repo: "/r", branch: "b", base: "d", head: "c", title: "t", commitMessage: "m", diffstat: "1 file changed",
         warnings: [Warning(check: "base-mismatch", message: "b"),
                    Warning(check: "untracked-files", message: "u")]
     )
@@ -99,5 +127,38 @@ private func loadVectors() throws -> [Vector] {
     #expect(request.situation.head == "c")
     #expect(request.situation.title == "t")
     #expect(request.situation.commitMessage == "m")
+    #expect(request.situation.diffstat == "x")
     #expect(request.situation.warnings == [Warning(check: "x", message: "w")])
+}
+
+/// `ApprovalPanel` renders the diffstat directly under the title, because the
+/// size of the change is half of what the reader is judging. A field that is
+/// displayed and not bound is a field the reader can be shown one version of
+/// while another is committed.
+@Test func theDiffstatChangesTheHash() {
+    func situation(_ diffstat: String) -> Situation {
+        Situation(
+            repo: "/r", branch: "b", base: "d", head: "c", title: "t",
+            commitMessage: "m", diffstat: diffstat, warnings: []
+        )
+    }
+    #expect(fingerprint(situation("3 files changed")) != fingerprint(situation("400 files changed")))
+    // An empty diffstat is a real value, not a missing one: a branch whose work
+    // is all uncommitted used to produce exactly that.
+    #expect(fingerprint(situation("")) != fingerprint(situation("3 files changed")))
+}
+
+/// Its position in the canonical form is part of the contract, not an
+/// implementation detail: immediately after the commit message and before the
+/// warning count, length-prefixed like every other field.
+@Test func theDiffstatSitsBetweenTheCommitMessageAndTheWarningCount() {
+    let situation = Situation(
+        repo: "/r", branch: "b", base: "d", head: "c", title: "t",
+        commitMessage: "m", diffstat: "2\n7:spoofed", warnings: []
+    )
+    let lines = canonical(situation).components(separatedBy: "\n")
+    #expect(lines[6] == "1:m")
+    #expect(lines[7] == "11:2")
+    #expect(lines[8] == "7:spoofed")
+    #expect(lines[9] == "0")
 }

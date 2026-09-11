@@ -63,7 +63,7 @@ private func ask(_ path: String, _ line: String) throws -> String {
 private func requestLine(fingerprintOverride: String? = nil) -> String {
     let situation = Situation(
         repo: "/r", branch: "b", base: "d", head: "c",
-        title: "t", commitMessage: "m",
+        title: "t", commitMessage: "m", diffstat: "1 file",
         warnings: [Warning(check: "blocking-label", message: "in test")]
     )
     let fp = fingerprintOverride ?? fingerprint(situation)
@@ -150,7 +150,7 @@ private final class SyncBox<Value: Sendable>: Sendable {
     defer { removeScratchDirectory(for: path) }
     let journal = Journal()
     let situation = Situation(
-        repo: "/r", branch: "b", base: "d", head: "c", title: "t", commitMessage: "m",
+        repo: "/r", branch: "b", base: "d", head: "c", title: "t", commitMessage: "m", diffstat: "1 file",
         warnings: [Warning(check: "blocking-label", message: "in test")]
     )
     await journal.record(.approved, for: fingerprint(situation))
@@ -179,7 +179,7 @@ private final class SyncBox<Value: Sendable>: Sendable {
     _ = try ask(path, requestLine() + "\n")
 
     let situation = Situation(
-        repo: "/r", branch: "b", base: "d", head: "c", title: "t", commitMessage: "m",
+        repo: "/r", branch: "b", base: "d", head: "c", title: "t", commitMessage: "m", diffstat: "1 file",
         warnings: [Warning(check: "blocking-label", message: "in test")]
     )
     #expect(await journal.decision(for: fingerprint(situation)) == .denied)

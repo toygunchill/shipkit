@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { canonical, fingerprint, type Situation } from "../../src/approval/fingerprint.js";
+import {
+  canonical,
+  fingerprint,
+  sortWarnings,
+  type Situation,
+} from "../../src/approval/fingerprint.js";
 
 const BASE: Situation = {
   repo: "/Users/x/example-app",
@@ -9,6 +14,7 @@ const BASE: Situation = {
   head: "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
   title: "fix(invoice): default citizenship",
   commitMessage: "fix(invoice): default citizenship",
+  diffstat: "12 files changed, 148 insertions(+), 37 deletions(-)",
   warnings: [
     { check: "approvals-dismissed", message: "Pushing will dismiss 4 approval(s) on #881" },
     { check: "blocking-label", message: 'Label(s) in test will block the merge gate' },
@@ -21,7 +27,7 @@ describe("canonical", () => {
   // waiting for the first warning that contains one.
   it("prefixes every field with its UTF-8 byte length", () => {
     const form = canonical({ ...BASE, warnings: [] });
-    expect(form.split("\n")[0]).toBe("shipkit-approval-v1");
+    expect(form.split("\n")[0]).toBe("shipkit-approval-v2");
     expect(form).toContain(`${Buffer.byteLength(BASE.repo, "utf8")}:${BASE.repo}`);
   });
 
@@ -67,6 +73,36 @@ describe("fingerprint", () => {
     );
   });
 
+  // The panel renders the diffstat directly under the title, because the size of
+  // the change is half of what the reader is judging. A field that is displayed
+  // and not bound is a field the reader can be shown one version of while another
+  // is committed — "3 files changed" on screen, four hundred in the push.
+  it("changes when the diffstat changes", () => {
+    expect(
+      fingerprint({ ...BASE, diffstat: "400 files changed, 90000 insertions(+)" }),
+    ).not.toBe(fingerprint(BASE));
+  });
+
+  // An empty diffstat is a real value, not a missing one: a branch whose work is
+  // all uncommitted used to produce exactly that. It must not hash like any other.
+  it("distinguishes an empty diffstat from a non-empty one", () => {
+    expect(fingerprint({ ...BASE, diffstat: "" })).not.toBe(fingerprint(BASE));
+  });
+
+  // The diffstat sits between the commit message and the warning count, and it is
+  // length-prefixed like every other field, so a diffstat that looks like the
+  // encoding cannot be mistaken for the fields that follow it.
+  it("keeps a diffstat that looks like the encoding in its own field", () => {
+    const diffstat = "2\n7:spoofed";
+    const lines = canonical({ ...BASE, diffstat, warnings: [] }).split("\n");
+    // Line 7, after the version, repo, branch, base, head, title and commit
+    // message — and its own newline makes it span two lines of the form.
+    expect(lines[7]).toBe(`${Buffer.byteLength(diffstat, "utf8")}:2`);
+    expect(lines[8]).toBe("7:spoofed");
+    // The warning count follows it, and is the count, not the "7" above.
+    expect(lines[9]).toBe("0");
+  });
+
   // The reason messages are hashed and not only ids: a fifth approval landing
   // while the request waits leaves the id set identical and the situation
   // different.
@@ -104,6 +140,18 @@ describe("fingerprint", () => {
     );
   });
 
+  // The one pair where the two languages can disagree about equality. Swift's
+  // `String ==` compares by canonical equivalence and calls these check ids the
+  // same; `!==` here compares code units and calls them different, so the order
+  // is decided by the check id and not by the message. The guard in front of
+  // Swift's comparator has to say the same thing, and the shared fixture pins it.
+  it("orders check ids that are canonically equal by their code units", () => {
+    const decomposed = { check: "caf\u0065\u0301", message: "b" };
+    const precomposed = { check: "caf\u00e9", message: "a" };
+    expect(sortWarnings([precomposed, decomposed])).toEqual([decomposed, precomposed]);
+    expect(sortWarnings([decomposed, precomposed])).toEqual([decomposed, precomposed]);
+  });
+
   it("is stable across calls", () => {
     expect(fingerprint(BASE)).toBe(fingerprint(structuredClone(BASE)));
   });
@@ -118,7 +166,7 @@ describe("the shared fixture", () => {
       readFileSync("tests/fixtures/fingerprint-vectors.json", "utf8"),
     ) as { name: string; situation: Situation; fingerprint: string }[];
 
-    expect(vectors.length).toBeGreaterThanOrEqual(7);
+    expect(vectors.length).toBeGreaterThanOrEqual(11);
     for (const vector of vectors) {
       expect(fingerprint(vector.situation), vector.name).toBe(vector.fingerprint);
     }

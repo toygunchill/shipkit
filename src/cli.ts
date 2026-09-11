@@ -20,6 +20,7 @@ import { validate } from "./validate/rules.js";
 import {
   currentBranch,
   readHeadSha,
+  readPushDiffstat,
   readRepoRoot,
   readRepoState,
   readUntrackedFiles,
@@ -156,6 +157,7 @@ const realSubmitDeps: SubmitDeps = {
   currentBranch,
   resolveIssue,
   readRepoState,
+  readPushDiffstat: (base, exclude) => readPushDiffstat(base, exclude, cwd),
   findPullRequest: (branch) => findPullRequest(branch, cwd),
   readUntrackedFiles,
   readRepoRoot,

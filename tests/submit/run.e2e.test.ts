@@ -11,6 +11,7 @@ import { runSubmit, type SubmitDeps } from "../../src/submit/run.js";
 import {
   currentBranch,
   readHeadSha,
+  readPushDiffstat,
   readRepoRoot,
   readRepoState,
   readUntrackedFiles,
@@ -74,6 +75,7 @@ function realDeps(repo: string, opened: { input?: unknown }): SubmitDeps {
     currentBranch: () => currentBranch(repo),
     resolveIssue,
     readRepoState: (base) => readRepoState(base, repo),
+    readPushDiffstat: (base, exclude) => readPushDiffstat(base, exclude, repo),
     // gh cannot be pointed at a local bare repository, so the two adapters that reach it
     // are the only fakes here. Everything else is the real thing.
     findPullRequest: () => null,
@@ -195,6 +197,59 @@ describe("runSubmit end to end", () => {
     expect(openedInput.base).toBe("develop");
     expect(openedInput.head).toBe("bugfix/squadb/1-invoice");
     expect(openedInput.body).toContain("## What to Test");
+  });
+
+  // The failure this change exists for, driven through the whole sequence against a real
+  // repository: a branch cut from develop whose entire change is still in the working
+  // tree. `git diff --stat develop...HEAD` is empty for it, so the panel used to render a
+  // blank line where the size of the change belongs — and then `commitAll` swept every one
+  // of those files into the push.
+  it("asks about the size of the uncommitted work, not the empty committed range", async () => {
+    const { repo } = scratch();
+    const responsePath = join(repo, "response.json");
+    writeFileSync(responsePath, JSON.stringify(RESPONSE), "utf8");
+    for (let i = 0; i < 12; i += 1) {
+      writeFileSync(join(repo, `swept-${i}.ts`), `export const n = ${i};\n`, "utf8");
+    }
+
+    // The range the panel used to be given.
+    expect(readRepoState("develop", repo).diffstat).toBe("");
+
+    let sent: { diffstat: string } | undefined;
+    const opened: { input?: unknown } = {};
+    const result = await runSubmit(
+      {
+        base: "develop",
+        config: CONFIG,
+        response: RESPONSE,
+        responsePath,
+        mode: "apply",
+        acknowledge: [],
+      },
+      {
+        ...realDeps(repo, opened),
+        // Denied, so nothing is committed or pushed — the request is the subject here.
+        requestApproval: async (request) => {
+          sent = request;
+          return { outcome: "denied" as const };
+        },
+      },
+    );
+
+    expect(result.code).toBe(2);
+    expect(result.committed).toBe(false);
+    // app.ts is the tracked file the scratch repository leaves modified; the twelve
+    // swept-*.ts are untracked, and `git add --all` would carry all thirteen.
+    expect(sent?.diffstat).toContain("13 files changed");
+    expect(sent?.diffstat).toContain("swept-0.ts");
+    expect(sent?.diffstat).toContain("app.ts");
+    // The response file is excluded from staging, so a stat naming it would contradict
+    // the commit it describes.
+    expect(sent?.diffstat).not.toContain("response.json");
+    // And reading it staged nothing.
+    expect(
+      execFileSync("git", ["status", "--porcelain"], { cwd: repo, encoding: "utf8" }),
+    ).toContain("?? swept-0.ts");
   });
 
   it("previews the same repository without leaving a trace", async () => {

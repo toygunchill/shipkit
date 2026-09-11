@@ -12,6 +12,7 @@ import type { SubmitDeps } from "../submit/run.js";
 import {
   currentBranch,
   readHeadSha,
+  readPushDiffstat,
   readRepoRoot,
   readRepoState,
   readUntrackedFiles,
@@ -54,6 +55,7 @@ export function realToolDeps(): ToolDeps {
       currentBranch: () => currentBranch(repo),
       resolveIssue,
       readRepoState: (base) => readRepoState(base, repo),
+      readPushDiffstat: (base, exclude) => readPushDiffstat(base, exclude, repo),
       findPullRequest: (branch) => findPullRequest(branch, repo),
       readUntrackedFiles: () => readUntrackedFiles(repo),
       readRepoRoot: () => readRepoRoot(repo),

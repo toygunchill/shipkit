@@ -10,11 +10,12 @@ public struct Situation: Sendable, Equatable {
     public let head: String
     public let title: String
     public let commitMessage: String
+    public let diffstat: String
     public let warnings: [Warning]
 
     public init(
         repo: String, branch: String, base: String, head: String,
-        title: String, commitMessage: String, warnings: [Warning]
+        title: String, commitMessage: String, diffstat: String, warnings: [Warning]
     ) {
         self.repo = repo
         self.branch = branch
@@ -22,11 +23,20 @@ public struct Situation: Sendable, Equatable {
         self.head = head
         self.title = title
         self.commitMessage = commitMessage
+        self.diffstat = diffstat
         self.warnings = warnings
     }
 }
 
-private let version = "shipkit-approval-v1"
+/// The marker for *this* canonical form, bumped to v2 when `diffstat` joined
+/// the hash. Deliberately not `protocolVersion`, which stays at 1: the wire
+/// shape did not change — `diffstat` was always transmitted and `ApprovalPanel`
+/// always displayed it — only what is bound did. Resyncing the two would
+/// announce a version disagreement to every shipkit that is in fact perfectly
+/// compatible, and a shipkit and an application that disagree about the hash
+/// already refuse each other by fingerprint mismatch, which is the check that
+/// matters.
+private let version = "shipkit-approval-v2"
 
 /// Code-unit order, matching the TypeScript. Not `localeCompare`, which is
 /// locale-sensitive, and not a collation that would put "alpha" before "Alpha".
@@ -43,9 +53,29 @@ private func utf16Less(_ a: String, _ b: String) -> Bool {
     a.utf16.lexicographicallyPrecedes(b.utf16)
 }
 
+/// Code-unit equality, the guard `utf16Less` needs in front of it.
+///
+/// Swift's `String ==` compares by *canonical equivalence*: `"e\u{301}"` and
+/// `"\u{e9}"` are equal, because they are the same character spelled two ways.
+/// JavaScript's `!==` compares code units, and calls them different. So a guard
+/// written `a.check != b.check` decides the two check ids are the same, skips
+/// the check comparison and tiebreaks on the message, while
+/// `src/approval/fingerprint.ts` orders by the check's code units — a different
+/// order, a different canonical form, a different hash. The person is never
+/// asked and the caller is told "denied", which is what a refusal looks like.
+///
+/// It also makes the comparator a total order over distinct byte sequences.
+/// With `==` as the guard, two warnings whose checks are canonically equal and
+/// whose messages are byte-identical compare `false` in both directions, and
+/// `sorted(by:)` is not documented to be stable — so Swift's own output was
+/// free to vary from run to run on the same input.
+private func utf16Equal(_ a: String, _ b: String) -> Bool {
+    a.utf16.elementsEqual(b.utf16)
+}
+
 public func sortWarnings(_ warnings: [Warning]) -> [Warning] {
     warnings.sorted { a, b in
-        if a.check != b.check { return utf16Less(a.check, b.check) }
+        if !utf16Equal(a.check, b.check) { return utf16Less(a.check, b.check) }
         return utf16Less(a.message, b.message)
     }
 }
@@ -64,6 +94,7 @@ public func canonical(_ situation: Situation) -> String {
         field(situation.head),
         field(situation.title),
         field(situation.commitMessage),
+        field(situation.diffstat),
         String(sorted.count),
     ]
     for warning in sorted {
@@ -85,7 +116,8 @@ public extension ApprovalRequest {
     var situation: Situation {
         Situation(
             repo: repo, branch: branch, base: base, head: head,
-            title: title, commitMessage: commitMessage, warnings: warnings
+            title: title, commitMessage: commitMessage, diffstat: diffstat,
+            warnings: warnings
         )
     }
 }

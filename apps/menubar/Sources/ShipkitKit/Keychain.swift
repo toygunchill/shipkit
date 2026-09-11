@@ -5,10 +5,14 @@ public enum KeychainError: Error, Equatable {
     case status(OSStatus)
 }
 
-/// The generic-password item `src/secrets/keychain.ts` reads with
-/// `/usr/bin/security find-generic-password -s shipkit -a jira -w`. The service
-/// and account must match that command exactly or the token is written where
-/// nothing looks for it.
+/// The generic-password item that holds the Jira token. Measured, not
+/// assumed: an item this struct writes through `SecItemAdd` cannot be read
+/// back by `/usr/bin/security` -- the command blocks on a SecurityAgent
+/// prompt, and adding `security` as a trusted application does not fix it.
+/// So `shipkit` never reads this item through `security`. Instead the
+/// application reads its own item -- through this struct, which prompts for
+/// nothing -- and answers with it over the socket, as a second kind of
+/// request alongside the approval protocol.
 public struct Keychain: Sendable {
     private let service: String
 
@@ -49,8 +53,9 @@ public struct Keychain: Sendable {
 
         var insert = query(account: account)
         insert[kSecValueData as String] = data
-        // After first unlock rather than when-unlocked: the agent that reads this
-        // may be running while the screen is locked.
+        // After first unlock rather than when-unlocked: this menu-bar app may
+        // be running, and asked for the token over the socket, while the
+        // screen is locked.
         insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
 
         let added = SecItemAdd(insert as CFDictionary, nil)

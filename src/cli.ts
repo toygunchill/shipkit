@@ -12,7 +12,7 @@ import {
 import { ConfigError, loadConfig } from "./config/load.js";
 import { fetchIssue, JiraError } from "./jira/client.js";
 import type { IssueFacts } from "./jira/types.js";
-import { loadResponse, renderBody } from "./submit/response.js";
+import { loadResponse, renderBody, ResponseError } from "./submit/response.js";
 import { runSubmit, type SubmitDeps } from "./submit/run.js";
 import { validate } from "./validate/rules.js";
 import { currentBranch, readRepoRoot, readRepoState, readUntrackedFiles, VcsError } from "./vcs/git.js";
@@ -143,7 +143,6 @@ const cwd = process.cwd();
 
 const realSubmitDeps: SubmitDeps = {
   loadConfig,
-  loadResponse,
   renderBody,
   currentBranch,
   resolveIssue,
@@ -167,7 +166,27 @@ program
   .option("--config <path>", "path to .shipkit.yml", ".shipkit.yml")
   .option("--yes", "proceed despite pre-flight warnings", false)
   .action(async (options: { input: string; base: string; config: string; yes: boolean }) => {
-    process.exitCode = await runSubmit(options, realSubmitDeps);
+    try {
+      const response = loadResponse(options.input);
+      const result = await runSubmit(
+        {
+          base: options.base,
+          config: options.config,
+          response,
+          responsePath: options.input,
+          yes: options.yes,
+        },
+        realSubmitDeps,
+      );
+      process.exitCode = result.code;
+    } catch (error) {
+      if (error instanceof ResponseError) {
+        console.error(error.message);
+        process.exitCode = 2;
+        return;
+      }
+      throw error;
+    }
   });
 
 try {

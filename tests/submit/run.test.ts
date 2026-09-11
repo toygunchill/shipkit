@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../../src/config/load.js";
 import type { ShipkitConfig } from "../../src/config/schema.js";
 import type { IssueFacts } from "../../src/jira/types.js";
-import { renderBody, ResponseError, type SubmitResponse } from "../../src/submit/response.js";
+import { renderBody, type SubmitResponse } from "../../src/submit/response.js";
 import { runSubmit, type SubmitDeps, type SubmitOptions } from "../../src/submit/run.js";
 import { VcsError } from "../../src/vcs/git.js";
 import type { PullRequestState } from "../../src/vcs/types.js";
@@ -28,10 +28,11 @@ const VALID_RESPONSE: SubmitResponse = {
 };
 
 const OPTIONS: SubmitOptions = {
-  input: "irrelevant.json",
   base: "develop",
-  config: "irrelevant.yml",
-  yes: false,
+  config: "tests/fixtures/valid.shipkit.yml",
+  response: VALID_RESPONSE,
+  responsePath: "/repo/scratch/response.json",
+  yes: true,
 };
 
 const NO_PR: PullRequestState | null = null;
@@ -71,7 +72,6 @@ function makeDeps(
   const defaults: SubmitDeps = options.poison
     ? {
         loadConfig: poisoned("loadConfig"),
-        loadResponse: poisoned("loadResponse"),
         renderBody: poisoned("renderBody"),
         currentBranch: poisoned("currentBranch"),
         resolveIssue: poisoned("resolveIssue"),
@@ -88,7 +88,6 @@ function makeDeps(
       }
     : {
         loadConfig: () => CONFIG,
-        loadResponse: () => VALID_RESPONSE,
         renderBody: (sections: Record<string, string>, config: ShipkitConfig) => renderBody(sections, config),
         currentBranch: () => BRANCH,
         // VALID_RESPONSE's title and Issues Addressed section both cite ABC-1 — resolving it
@@ -112,7 +111,6 @@ function makeDeps(
 
   const deps: SubmitDeps = {
     loadConfig: record("loadConfig", merged.loadConfig),
-    loadResponse: record("loadResponse", merged.loadResponse),
     renderBody: record("renderBody", merged.renderBody),
     currentBranch: record("currentBranch", merged.currentBranch),
     resolveIssue: record("resolveIssue", merged.resolveIssue),
@@ -133,7 +131,6 @@ function makeDeps(
 
 const DOMAIN_DEPS = [
   "loadConfig",
-  "loadResponse",
   "renderBody",
   "currentBranch",
   "resolveIssue",
@@ -151,51 +148,40 @@ describe("runSubmit", () => {
   it("returns 2 and calls no dependency for an option-shaped --base", async () => {
     const { deps, calls, err } = makeDeps({}, { poison: true });
 
-    const code = await runSubmit({ ...OPTIONS, base: "--output=/tmp/x" }, deps);
+    const result = await runSubmit({ ...OPTIONS, base: "--output=/tmp/x" }, deps);
 
-    expect(code).toBe(2);
+    expect(result.code).toBe(2);
     expect(calls.filter((c) => DOMAIN_DEPS.includes(c.fn))).toEqual([]);
     expect(err.join("\n")).toContain("--output=/tmp/x");
-  });
-
-  it("returns 2 and mutates nothing when loadResponse throws ResponseError", async () => {
-    const { deps, calls } = makeDeps({
-      loadResponse: () => {
-        throw new ResponseError("Cannot read response at nope.json");
-      },
-    });
-
-    const code = await runSubmit(OPTIONS, deps);
-
-    expect(code).toBe(2);
-    expect(calls.some((c) => ["commitAll", "pushBranch", "createPullRequest"].includes(c.fn))).toBe(false);
   });
 
   it("returns 2 and reports the message when renderBody throws ResponseError on a level-two heading", async () => {
     // The real renderBody (task 3), not a stub — this is the exact case it exists to refuse:
     // a section whose content smuggles a "##" heading.
-    const { deps, calls, err } = makeDeps({
-      loadResponse: () => ({
-        ...VALID_RESPONSE,
-        sections: { ...VALID_RESPONSE.sections, Summary: "Some text\n\n## Nested\n\nMore text" },
-      }),
-    });
+    const { deps, calls, err } = makeDeps({});
 
-    const code = await runSubmit(OPTIONS, deps);
+    const result = await runSubmit(
+      {
+        ...OPTIONS,
+        response: {
+          ...VALID_RESPONSE,
+          sections: { ...VALID_RESPONSE.sections, Summary: "Some text\n\n## Nested\n\nMore text" },
+        },
+      },
+      deps,
+    );
 
-    expect(code).toBe(2);
+    expect(result.code).toBe(2);
     expect(err.join("\n")).toContain("level-two headings");
     expect(calls.some((c) => ["commitAll", "pushBranch", "createPullRequest"].includes(c.fn))).toBe(false);
   });
 
   it("returns 1, names the failing rule, and never touches commit/push/create when validation fails", async () => {
-    const { deps, calls, err } = makeDeps({
-      loadResponse: () => ({ ...VALID_RESPONSE, title: "nope" }),
-    });
+    const { deps, calls, err } = makeDeps({});
 
-    const code = await runSubmit(OPTIONS, deps);
+    const result = await runSubmit({ ...OPTIONS, response: { ...VALID_RESPONSE, title: "nope" } }, deps);
 
-    expect(code).toBe(1);
+    expect(result.code).toBe(1);
     expect(err.join("\n")).toContain("title-pattern");
     expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
     expect(calls.some((c) => c.fn === "pushBranch")).toBe(false);
@@ -212,9 +198,9 @@ describe("runSubmit", () => {
     };
     const { deps, calls, err } = makeDeps({ findPullRequest: () => pr });
 
-    const code = await runSubmit({ ...OPTIONS, yes: false }, deps);
+    const result = await runSubmit({ ...OPTIONS, yes: false }, deps);
 
-    expect(code).toBe(2);
+    expect(result.code).toBe(2);
     expect(err.join("\n")).toContain("approvals-dismissed");
     expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
     expect(calls.some((c) => c.fn === "pushBranch")).toBe(false);
@@ -234,9 +220,9 @@ describe("runSubmit", () => {
     };
     const { deps, calls, out, err } = makeDeps({ findPullRequest: () => pr });
 
-    const code = await runSubmit({ ...OPTIONS, yes: true }, deps);
+    const result = await runSubmit({ ...OPTIONS, yes: true }, deps);
 
-    expect(code).toBe(0);
+    expect(result.code).toBe(0);
     expect(err.join("\n")).toContain("approvals-dismissed");
     expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
     expect(calls.some((c) => c.fn === "pushBranch")).toBe(true);
@@ -258,9 +244,9 @@ describe("runSubmit", () => {
     };
     const { deps, calls, out, err } = makeDeps({ findPullRequest: () => pr });
 
-    const code = await runSubmit({ ...OPTIONS, yes: false }, deps);
+    const result = await runSubmit({ ...OPTIONS, yes: false }, deps);
 
-    expect(code).toBe(0);
+    expect(result.code).toBe(0);
     expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
     expect(calls.some((c) => c.fn === "pushBranch")).toBe(true);
     expect(calls.some((c) => c.fn === "createPullRequest")).toBe(false);
@@ -271,9 +257,9 @@ describe("runSubmit", () => {
   it("returns 0, prints the URL, and needs no --yes on a clean run", async () => {
     const { deps, out } = makeDeps();
 
-    const code = await runSubmit({ ...OPTIONS, yes: false }, deps);
+    const result = await runSubmit({ ...OPTIONS, yes: false }, deps);
 
-    expect(code).toBe(0);
+    expect(result.code).toBe(0);
     expect(out).toEqual(["https://github.com/x/y/pull/1"]);
   });
 
@@ -295,9 +281,9 @@ describe("runSubmit", () => {
       },
     });
 
-    const code = await runSubmit(OPTIONS, deps);
+    const result = await runSubmit(OPTIONS, deps);
 
-    expect(code).toBe(2);
+    expect(result.code).toBe(2);
     // By the time push fails, commitAll has already been invoked and createPullRequest has
     // not — see the report for what this means for the real adapters (a local commit with
     // nothing pushed and no pull request opened).
@@ -318,9 +304,9 @@ describe("runSubmit", () => {
       },
     });
 
-    const code = await runSubmit(OPTIONS, deps);
+    const result = await runSubmit(OPTIONS, deps);
 
-    expect(code).toBe(2);
+    expect(result.code).toBe(2);
     const order = calls.filter((c) => ["commitAll", "pushBranch", "createPullRequest"].includes(c.fn)).map((c) => c.fn);
     expect(order).toEqual(["commitAll", "pushBranch", "createPullRequest"]);
     // By this point the commit has been pushed to the remote branch, so a claim of "has not
@@ -338,9 +324,9 @@ describe("runSubmit", () => {
       },
     });
 
-    const code = await runSubmit(OPTIONS, deps);
+    const result = await runSubmit(OPTIONS, deps);
 
-    expect(code).toBe(2);
+    expect(result.code).toBe(2);
     expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
     expect(err.join("\n")).toContain("git log --end-of-options develop..HEAD failed: unknown revision");
     expect(err.join("\n")).not.toContain("commit was created");
@@ -373,7 +359,6 @@ describe("runSubmit", () => {
     function reproDeps(overrides: Partial<SubmitDeps> = {}) {
       return makeDeps({
         loadConfig: () => REFERENCE_CONFIG,
-        loadResponse: () => REPRO_RESPONSE,
         currentBranch: () => REPRO_BRANCH,
         resolveIssue: (key: string) => Promise.resolve(key === "ABC-1" ? STORY_FACTS : undefined),
         readRepoState: () => ({
@@ -391,7 +376,7 @@ describe("runSubmit", () => {
     it("resolves the key the body cites (issue-level) and warns about the stray commit (foreign-commits), instead of running silently", async () => {
       const { deps, calls, err } = reproDeps();
 
-      const code = await runSubmit(OPTIONS, deps);
+      const result = await runSubmit({ ...OPTIONS, response: REPRO_RESPONSE, yes: false }, deps);
 
       // issue-level actually ran: resolveIssue was called with the body's cited key, ABC-1 —
       // before the fix, ticketFromBranch(REPRO_BRANCH, ...) is undefined, so this call would
@@ -400,7 +385,7 @@ describe("runSubmit", () => {
 
       // foreign-commits actually ran and caught the stray commit — before the fix, ticketKey
       // is undefined so the whole check is skipped and the run exits 0 with empty stderr.
-      expect(code).toBe(2);
+      expect(result.code).toBe(2);
       expect(err.join("\n")).toContain("foreign-commits");
       expect(err.join("\n")).toContain("ABC-27975");
     });
@@ -417,6 +402,88 @@ describe("runSubmit", () => {
   });
 });
 
+describe("runSubmit result shape", () => {
+  it("returns the findings as data, not only an exit code", async () => {
+    const { deps } = makeDeps({});
+
+    const result = await runSubmit(
+      { ...OPTIONS, response: { ...VALID_RESPONSE, title: "nope" } },
+      deps,
+    );
+
+    expect(result.code).toBe(1);
+    expect(result.findings.map((f) => f.rule)).toContain("title-pattern");
+    expect(result.warnings).toEqual([]);
+    expect(result.committed).toBe(false);
+  });
+
+  it("returns the warnings as data when it refuses for want of --yes", async () => {
+    const { deps } = makeDeps({
+      readUntrackedFiles: () => [".env.local"],
+    });
+
+    const result = await runSubmit({ ...OPTIONS, yes: false }, deps);
+
+    expect(result.code).toBe(2);
+    expect(result.warnings.map((w) => w.check)).toContain("untracked-files");
+    expect(result.committed).toBe(false);
+  });
+
+  // The body is what will actually be posted. A caller that cannot see it has to trust
+  // that its sections were assembled the way it imagined.
+  it("returns the rendered body alongside the findings", async () => {
+    const { deps } = makeDeps({});
+
+    const result = await runSubmit(
+      { ...OPTIONS, response: { ...VALID_RESPONSE, title: "nope" } },
+      deps,
+    );
+
+    expect(result.body).toContain("## Summary");
+  });
+
+  it("returns the url and marks whether the pull request already existed", async () => {
+    const { deps } = makeDeps({});
+
+    const result = await runSubmit(OPTIONS, deps);
+
+    expect(result.code).toBe(0);
+    expect(result.url).toBe("https://github.com/x/y/pull/1");
+    expect(result.updated).toBe(false);
+  });
+
+  it("marks an updated pull request as updated", async () => {
+    const { deps } = makeDeps({
+      findPullRequest: () => ({
+        number: 7,
+        url: "https://github.com/x/y/pull/7",
+        baseRefName: "develop",
+        labels: [],
+        approvals: [],
+      }),
+    });
+
+    const result = await runSubmit(OPTIONS, deps);
+
+    expect(result.code).toBe(0);
+    expect(result.url).toBe("https://github.com/x/y/pull/7");
+    expect(result.updated).toBe(true);
+  });
+
+  // With no path there is no file to keep out of the commit, and the realpath machinery
+  // must not run at all — not run and produce an empty answer, but never be reached.
+  it("excludes nothing and consults no path when the response came from no file", async () => {
+    const { deps, calls } = makeDeps({});
+
+    const result = await runSubmit({ ...OPTIONS, responsePath: undefined }, deps);
+
+    expect(result.code).toBe(0);
+    expect(calls.find((c) => c.fn === "commitAll")?.args[1]).toEqual([]);
+    expect(calls.some((c) => c.fn === "realpath")).toBe(false);
+    expect(calls.some((c) => c.fn === "readRepoRoot")).toBe(false);
+  });
+});
+
 // `git add --all` was staging shipkit's own response file into the pull request on every
 // run, alongside whatever else happened to be lying in the checkout. These pin the two
 // halves of the answer: the response file is excluded outright, everything else untracked
@@ -425,9 +492,9 @@ describe("runSubmit and the working tree", () => {
   it("excludes the response file from staging, as a root-relative path", async () => {
     const { deps, calls } = makeDeps({});
 
-    const code = await runSubmit({ ...OPTIONS, input: "/repo/scratch/response.json" }, deps);
+    const result = await runSubmit({ ...OPTIONS, responsePath: "/repo/scratch/response.json" }, deps);
 
-    expect(code).toBe(0);
+    expect(result.code).toBe(0);
     const staged = calls.find((c) => c.fn === "commitAll");
     expect(staged?.args[1]).toEqual(["scratch/response.json"]);
   });
@@ -438,9 +505,9 @@ describe("runSubmit and the working tree", () => {
   it("excludes nothing when the response file lives outside the repository", async () => {
     const { deps, calls } = makeDeps({});
 
-    const code = await runSubmit({ ...OPTIONS, input: "/tmp/elsewhere/response.json" }, deps);
+    const result = await runSubmit({ ...OPTIONS, responsePath: "/tmp/elsewhere/response.json" }, deps);
 
-    expect(code).toBe(0);
+    expect(result.code).toBe(0);
     expect(calls.find((c) => c.fn === "commitAll")?.args[1]).toEqual([]);
   });
 
@@ -449,9 +516,9 @@ describe("runSubmit and the working tree", () => {
       readUntrackedFiles: () => [".env.local", "debug-notes.md"],
     });
 
-    const code = await runSubmit({ ...OPTIONS, yes: false }, deps);
+    const result = await runSubmit({ ...OPTIONS, yes: false }, deps);
 
-    expect(code).toBe(2);
+    expect(result.code).toBe(2);
     expect(err.join("\n")).toContain("untracked-files");
     expect(err.join("\n")).toContain(".env.local");
   });
@@ -463,12 +530,12 @@ describe("runSubmit and the working tree", () => {
       readUntrackedFiles: () => ["scratch/response.json"],
     });
 
-    const code = await runSubmit(
-      { ...OPTIONS, input: "/repo/scratch/response.json", yes: false },
+    const result = await runSubmit(
+      { ...OPTIONS, responsePath: "/repo/scratch/response.json", yes: false },
       deps,
     );
 
-    expect(code).toBe(0);
+    expect(result.code).toBe(0);
     expect(err.join("\n")).not.toContain("untracked-files");
   });
 
@@ -477,12 +544,12 @@ describe("runSubmit and the working tree", () => {
       readUntrackedFiles: () => ["scratch/response.json", ".env.local"],
     });
 
-    const code = await runSubmit(
-      { ...OPTIONS, input: "/repo/scratch/response.json", yes: false },
+    const result = await runSubmit(
+      { ...OPTIONS, responsePath: "/repo/scratch/response.json", yes: false },
       deps,
     );
 
-    expect(code).toBe(2);
+    expect(result.code).toBe(2);
     expect(err.join("\n")).toContain(".env.local");
     expect(err.join("\n")).not.toContain("response.json");
   });
@@ -499,9 +566,9 @@ describe("runSubmit under a symlinked checkout", () => {
       realpath: (path: string) => path.replace(/^\/var\//, "/private/var/"),
     });
 
-    const code = await runSubmit({ ...OPTIONS, input: "/var/repo/scratch/response.json" }, deps);
+    const result = await runSubmit({ ...OPTIONS, responsePath: "/var/repo/scratch/response.json" }, deps);
 
-    expect(code).toBe(0);
+    expect(result.code).toBe(0);
     expect(calls.find((c) => c.fn === "commitAll")?.args[1]).toEqual(["scratch/response.json"]);
   });
 });
@@ -514,9 +581,9 @@ describe("runSubmit path dialects and a vanished response file", () => {
   it("spells the excluded path the way git spells paths", async () => {
     const { deps, calls } = makeDeps({});
 
-    const code = await runSubmit({ ...OPTIONS, input: "/repo/a/b/response.json" }, deps);
+    const result = await runSubmit({ ...OPTIONS, responsePath: "/repo/a/b/response.json" }, deps);
 
-    expect(code).toBe(0);
+    expect(result.code).toBe(0);
     const excluded = calls.find((c) => c.fn === "commitAll")?.args[1] as string[];
     expect(excluded).toEqual(["a/b/response.json"]);
     expect(excluded[0]).not.toContain("\\");
@@ -532,10 +599,10 @@ describe("runSubmit path dialects and a vanished response file", () => {
       },
     });
 
-    const code = await runSubmit(OPTIONS, deps);
+    const result = await runSubmit(OPTIONS, deps);
 
-    expect(code).toBe(2);
-    expect(err.join("\n")).toContain(OPTIONS.input);
+    expect(result.code).toBe(2);
+    expect(err.join("\n")).toContain(OPTIONS.responsePath as string);
     expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
   });
 });

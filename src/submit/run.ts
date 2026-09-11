@@ -5,16 +5,36 @@ import type { ShipkitConfig } from "../config/schema.js";
 import { JiraError } from "../jira/client.js";
 import type { IssueFacts } from "../jira/types.js";
 import { preflight } from "../preflight/checks.js";
+import type { Warning } from "../preflight/types.js";
 import { validate } from "../validate/rules.js";
+import type { Finding } from "../validate/types.js";
 import { VcsError, type RepoState } from "../vcs/git.js";
 import type { PullRequestState } from "../vcs/types.js";
 import { ResponseError, type SubmitResponse } from "./response.js";
 
 export type SubmitOptions = {
-  input: string;
   base: string;
   config: string;
+  response: SubmitResponse;
+  /** Where the response was read from. Omitted when it never came from a file. */
+  responsePath?: string;
   yes: boolean;
+};
+
+export type SubmitResult = {
+  code: 0 | 1 | 2;
+  findings: Finding[];
+  warnings: Warning[];
+  /** The rendered body, once there is one. Absent when the run failed before rendering. */
+  body?: string;
+  /** Set when a pull request was opened or updated. */
+  url?: string;
+  /** True when `url` names a pull request that already existed. */
+  updated?: boolean;
+  /** A refusal or failure explained in one line. Absent on success. */
+  message?: string;
+  committed: boolean;
+  pushed: boolean;
 };
 
 /**
@@ -30,7 +50,6 @@ export type SubmitOptions = {
  */
 export type SubmitDeps = {
   loadConfig: (path: string) => ShipkitConfig;
-  loadResponse: (path: string) => SubmitResponse;
   renderBody: (sections: Record<string, string>, config: ShipkitConfig) => string;
   currentBranch: () => string;
   resolveIssue: (key: string, config: ShipkitConfig) => Promise<IssueFacts | undefined>;
@@ -48,15 +67,17 @@ export type SubmitDeps = {
 
 /**
  * Validate the agent's answer, warn about what pushing will disturb, then commit, push and
- * open the pull request — in that order. Returns the process exit code rather than setting
- * `process.exitCode` and writes through `deps.out`/`deps.err` rather than `console` so the
- * whole sequence, including the parts that mutate the repository, can be driven by fakes in
- * tests instead of a real git checkout.
+ * open the pull request — in that order. Returns a structured result — including the exit
+ * code the CLI sets `process.exitCode` to — rather than setting `process.exitCode` itself,
+ * and writes through `deps.out`/`deps.err` rather than `console` so the whole sequence,
+ * including the parts that mutate the repository, can be driven by fakes in tests instead of
+ * a real git checkout.
  */
-export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promise<number> {
+export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promise<SubmitResult> {
   if (!isValidBase(options.base)) {
-    deps.err(`Refusing to use ${JSON.stringify(options.base)} as a base branch`);
-    return 2;
+    const message = `Refusing to use ${JSON.stringify(options.base)} as a base branch`;
+    deps.err(message);
+    return { code: 2, findings: [], warnings: [], message, committed: false, pushed: false };
   }
 
   // Tracks how far the mutating tail got before a VcsError escaped, so the error report can
@@ -68,7 +89,7 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
 
   try {
     const config = deps.loadConfig(options.config);
-    const response = deps.loadResponse(options.input);
+    const response = options.response;
     const body = deps.renderBody(response.sections, config);
     const branch = deps.currentBranch();
 
@@ -96,7 +117,14 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       for (const finding of result.findings) {
         deps.err(`${finding.rule}: ${finding.message}`);
       }
-      return 1;
+      return {
+        code: 1,
+        findings: result.findings,
+        warnings: [],
+        body,
+        committed: false,
+        pushed: false,
+      };
     }
 
     // The response title's key, not the branch's — titlePattern guarantees the title carries
@@ -126,25 +154,29 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
     // separator, `git ls-files --full-name` always answers with forward slashes, and the
     // two are compared to each other and handed to a pathspec — so on Windows the
     // exclusion would miss and the file would be reported as untracked on every run.
-    let relativeToRoot: string;
-    try {
-      const repoRoot = deps.realpath(deps.readRepoRoot());
-      relativeToRoot = relative(repoRoot, deps.realpath(resolve(options.input)))
-        .split(sep)
-        .join("/");
-    } catch {
-      // `loadResponse` read this file moments ago, so failing here means it vanished
-      // underneath us. Report it the way every other bad input is reported rather than
-      // letting an ENOENT escape the typed-error catch below and crash with a stack trace.
-      throw new ResponseError(
-        `Cannot locate the response file at ${options.input} — it was readable a moment ago`,
-      );
+    let relativeToRoot: string | undefined;
+    if (options.responsePath !== undefined) {
+      try {
+        const repoRoot = deps.realpath(deps.readRepoRoot());
+        relativeToRoot = relative(repoRoot, deps.realpath(resolve(options.responsePath)))
+          .split(sep)
+          .join("/");
+      } catch {
+        // The file was readable a moment ago (whoever built `options.response` read it), so
+        // failing here means it vanished underneath us. Report it the way every other bad
+        // input is reported rather than letting an ENOENT escape the typed-error catch below
+        // and crash with a stack trace.
+        throw new ResponseError(
+          `Cannot locate the response file at ${options.responsePath} — it was readable a moment ago`,
+        );
+      }
     }
     const responseInRepo =
+      relativeToRoot !== undefined &&
       relativeToRoot.length > 0 &&
       !relativeToRoot.startsWith("..") &&
       !isAbsolute(relativeToRoot);
-    const exclude = responseInRepo ? [relativeToRoot] : [];
+    const exclude = responseInRepo ? [relativeToRoot as string] : [];
     const untrackedFiles = deps
       .readUntrackedFiles()
       .filter((file) => !responseInRepo || file !== relativeToRoot);
@@ -164,8 +196,9 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
         deps.err(`${warning.check}: ${warning.message}`);
       }
       if (!options.yes) {
-        deps.err("Refusing to proceed. Re-run with --yes to accept these.");
-        return 2;
+        const message = "Refusing to proceed. Re-run with --yes to accept these.";
+        deps.err(message);
+        return { code: 2, findings: [], warnings, body, message, committed: false, pushed: false };
       }
     }
 
@@ -181,7 +214,16 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
     if (existingPr !== null) {
       deps.out(existingPr.url);
       deps.err("Pushed to the existing pull request; it was updated, not opened.");
-      return 0;
+      return {
+        code: 0,
+        findings: [],
+        warnings,
+        body,
+        url: existingPr.url,
+        updated: true,
+        committed: true,
+        pushed: true,
+      };
     }
 
     const url = deps.createPullRequest({
@@ -191,7 +233,16 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       head: branch,
     });
     deps.out(url);
-    return 0;
+    return {
+      code: 0,
+      findings: [],
+      warnings,
+      body,
+      url,
+      updated: false,
+      committed: true,
+      pushed: true,
+    };
   } catch (error) {
     if (
       error instanceof ConfigError ||
@@ -212,7 +263,7 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
             : "A commit was created locally and has not been pushed. It is yours to keep, amend, or drop.",
         );
       }
-      return 2;
+      return { code: 2, findings: [], warnings: [], message: error.message, committed, pushed };
     }
     throw error;
   }

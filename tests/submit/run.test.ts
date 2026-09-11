@@ -32,7 +32,8 @@ const OPTIONS: SubmitOptions = {
   config: "tests/fixtures/valid.shipkit.yml",
   response: VALID_RESPONSE,
   responsePath: "/repo/scratch/response.json",
-  yes: true,
+  mode: "apply",
+  acknowledge: "all",
 };
 
 const NO_PR: PullRequestState | null = null;
@@ -198,7 +199,7 @@ describe("runSubmit", () => {
     };
     const { deps, calls, err } = makeDeps({ findPullRequest: () => pr });
 
-    const result = await runSubmit({ ...OPTIONS, yes: false }, deps);
+    const result = await runSubmit({ ...OPTIONS, acknowledge: [] }, deps);
 
     expect(result.code).toBe(2);
     expect(err.join("\n")).toContain("approvals-dismissed");
@@ -220,7 +221,7 @@ describe("runSubmit", () => {
     };
     const { deps, calls, out, err } = makeDeps({ findPullRequest: () => pr });
 
-    const result = await runSubmit({ ...OPTIONS, yes: true }, deps);
+    const result = await runSubmit({ ...OPTIONS, acknowledge: "all" }, deps);
 
     expect(result.code).toBe(0);
     expect(err.join("\n")).toContain("approvals-dismissed");
@@ -244,7 +245,7 @@ describe("runSubmit", () => {
     };
     const { deps, calls, out, err } = makeDeps({ findPullRequest: () => pr });
 
-    const result = await runSubmit({ ...OPTIONS, yes: false }, deps);
+    const result = await runSubmit({ ...OPTIONS, acknowledge: [] }, deps);
 
     expect(result.code).toBe(0);
     expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
@@ -257,7 +258,7 @@ describe("runSubmit", () => {
   it("returns 0, prints the URL, and needs no --yes on a clean run", async () => {
     const { deps, out } = makeDeps();
 
-    const result = await runSubmit({ ...OPTIONS, yes: false }, deps);
+    const result = await runSubmit({ ...OPTIONS, acknowledge: [] }, deps);
 
     expect(result.code).toBe(0);
     expect(out).toEqual(["https://github.com/x/y/pull/1"]);
@@ -376,7 +377,7 @@ describe("runSubmit", () => {
     it("resolves the key the body cites (issue-level) and warns about the stray commit (foreign-commits), instead of running silently", async () => {
       const { deps, calls, err } = reproDeps();
 
-      const result = await runSubmit({ ...OPTIONS, response: REPRO_RESPONSE, yes: false }, deps);
+      const result = await runSubmit({ ...OPTIONS, response: REPRO_RESPONSE, acknowledge: [] }, deps);
 
       // issue-level actually ran: resolveIssue was called with the body's cited key, ABC-1 —
       // before the fix, ticketFromBranch(REPRO_BRANCH, ...) is undefined, so this call would
@@ -422,7 +423,7 @@ describe("runSubmit result shape", () => {
       readUntrackedFiles: () => [".env.local"],
     });
 
-    const result = await runSubmit({ ...OPTIONS, yes: false }, deps);
+    const result = await runSubmit({ ...OPTIONS, acknowledge: [] }, deps);
 
     expect(result.code).toBe(2);
     expect(result.warnings.map((w) => w.check)).toContain("untracked-files");
@@ -494,7 +495,7 @@ describe("runSubmit result shape", () => {
       },
     });
 
-    const result = await runSubmit({ ...OPTIONS, yes: true }, deps);
+    const result = await runSubmit({ ...OPTIONS, acknowledge: "all" }, deps);
 
     expect(result.code).toBe(2);
     expect(result.committed).toBe(true);
@@ -529,7 +530,7 @@ describe("runSubmit result shape", () => {
       },
     });
 
-    const result = await runSubmit({ ...OPTIONS, yes: true }, deps);
+    const result = await runSubmit({ ...OPTIONS, acknowledge: "all" }, deps);
 
     expect(result.code).toBe(2);
     expect(result.committed).toBe(true);
@@ -571,7 +572,7 @@ describe("runSubmit and the working tree", () => {
       readUntrackedFiles: () => [".env.local", "debug-notes.md"],
     });
 
-    const result = await runSubmit({ ...OPTIONS, yes: false }, deps);
+    const result = await runSubmit({ ...OPTIONS, acknowledge: [] }, deps);
 
     expect(result.code).toBe(2);
     expect(err.join("\n")).toContain("untracked-files");
@@ -586,7 +587,7 @@ describe("runSubmit and the working tree", () => {
     });
 
     const result = await runSubmit(
-      { ...OPTIONS, responsePath: "/repo/scratch/response.json", yes: false },
+      { ...OPTIONS, responsePath: "/repo/scratch/response.json", acknowledge: [] },
       deps,
     );
 
@@ -600,7 +601,7 @@ describe("runSubmit and the working tree", () => {
     });
 
     const result = await runSubmit(
-      { ...OPTIONS, responsePath: "/repo/scratch/response.json", yes: false },
+      { ...OPTIONS, responsePath: "/repo/scratch/response.json", acknowledge: [] },
       deps,
     );
 
@@ -659,5 +660,151 @@ describe("runSubmit path dialects and a vanished response file", () => {
     expect(result.code).toBe(2);
     expect(err.join("\n")).toContain(OPTIONS.responsePath as string);
     expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
+  });
+});
+
+describe("preview mode", () => {
+  it("stops after pre-flight and mutates nothing", async () => {
+    const { deps, calls } = makeDeps({});
+
+    const result = await runSubmit({ ...OPTIONS, mode: "preview" }, deps);
+
+    expect(result.code).toBe(0);
+    expect(result.body).toContain("## Summary");
+    expect(calls.some((c) => ["commitAll", "pushBranch", "createPullRequest"].includes(c.fn))).toBe(false);
+  });
+
+  it("reports warnings without refusing, because it is not deciding anything", async () => {
+    const { deps } = makeDeps({ readUntrackedFiles: () => [".env.local"] });
+
+    const result = await runSubmit({ ...OPTIONS, mode: "preview", acknowledge: [] }, deps);
+
+    expect(result.code).toBe(0);
+    expect(result.warnings.map((w) => w.check)).toContain("untracked-files");
+  });
+
+  it("still returns 1 for a validation finding", async () => {
+    const { deps } = makeDeps({});
+
+    const result = await runSubmit(
+      { ...OPTIONS, mode: "preview", response: { ...VALID_RESPONSE, title: "nope" } },
+      deps,
+    );
+
+    expect(result.code).toBe(1);
+  });
+
+  // A preview that disagrees with what apply will do is worse than no preview.
+  it("agrees with apply about findings and warnings for the same input", async () => {
+    const overrides = { readUntrackedFiles: () => [".env.local"] };
+    const previewed = await runSubmit(
+      { ...OPTIONS, mode: "preview", acknowledge: [] },
+      makeDeps(overrides).deps,
+    );
+    const applied = await runSubmit(
+      { ...OPTIONS, mode: "apply", acknowledge: [] },
+      makeDeps(overrides).deps,
+    );
+
+    expect(previewed.findings).toEqual(applied.findings);
+    expect(previewed.warnings).toEqual(applied.warnings);
+  });
+});
+
+describe("the acknowledgement gate", () => {
+  it("refuses when a warning id was not acknowledged", async () => {
+    const { deps, calls } = makeDeps({ readUntrackedFiles: () => [".env.local"] });
+
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+
+    expect(result.code).toBe(2);
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
+  });
+
+  it("proceeds when every warning id was acknowledged", async () => {
+    const { deps, calls } = makeDeps({ readUntrackedFiles: () => [".env.local"] });
+
+    const result = await runSubmit(
+      { ...OPTIONS, mode: "apply", acknowledge: ["untracked-files"] },
+      deps,
+    );
+
+    expect(result.code).toBe(0);
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
+  });
+
+  // The gate is the whole point of the split: acknowledging one warning must not carry a
+  // caller past a different one it never saw.
+  it("refuses when one of two warnings was acknowledged", async () => {
+    const { deps, calls } = makeDeps({
+      readUntrackedFiles: () => [".env.local"],
+      findPullRequest: () => ({
+        number: 7,
+        url: "https://github.com/x/y/pull/7",
+        baseRefName: "release/3.76.0",
+        labels: [],
+        approvals: [],
+      }),
+    });
+
+    const result = await runSubmit(
+      { ...OPTIONS, mode: "apply", acknowledge: ["untracked-files"] },
+      deps,
+    );
+
+    expect(result.code).toBe(2);
+    expect(result.warnings.map((w) => w.check)).toContain("base-mismatch");
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
+  });
+
+  // Acknowledging an id that is not among the current warnings must not count for anything.
+  it("ignores an acknowledgement that names a warning that is not present", async () => {
+    const { deps, calls } = makeDeps({ readUntrackedFiles: () => [".env.local"] });
+
+    const result = await runSubmit(
+      { ...OPTIONS, mode: "apply", acknowledge: ["approvals-dismissed"] },
+      deps,
+    );
+
+    expect(result.code).toBe(2);
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
+  });
+
+  // The property a boolean cannot have. Acknowledging what was true a moment ago must not
+  // carry a caller past a situation that has changed since — a review landing or a label
+  // being added between the two calls has to close the gate again.
+  it("refuses when the situation changed after the ids were acknowledged", async () => {
+    const first = makeDeps({ readUntrackedFiles: () => [".env.local"] });
+    const previewed = await runSubmit({ ...OPTIONS, mode: "preview", acknowledge: [] }, first.deps);
+    const acknowledge = previewed.warnings.map((w) => w.check);
+    expect(acknowledge).toEqual(["untracked-files"]);
+
+    // Between the two calls a blocking label appears on the open pull request.
+    const second = makeDeps({
+      readUntrackedFiles: () => [".env.local"],
+      findPullRequest: () => ({
+        number: 7,
+        url: "https://github.com/x/y/pull/7",
+        baseRefName: "develop",
+        labels: ["in test"],
+        approvals: [],
+      }),
+      loadConfig: () => loadConfig("tests/fixtures/blocking-labels.shipkit.yml"),
+    });
+
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge }, second.deps);
+
+    expect(result.code).toBe(2);
+    expect(result.warnings.map((w) => w.check)).toContain("blocking-label");
+    expect(second.calls.some((c) => c.fn === "commitAll")).toBe(false);
+  });
+
+  it("accepts \"all\" as the command line's --yes", async () => {
+    const { deps, calls } = makeDeps({ readUntrackedFiles: () => [".env.local"] });
+
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
+
+    expect(result.code).toBe(0);
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
   });
 });

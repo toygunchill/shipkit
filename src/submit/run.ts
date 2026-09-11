@@ -12,13 +12,17 @@ import { VcsError, type RepoState } from "../vcs/git.js";
 import type { PullRequestState } from "../vcs/types.js";
 import { ResponseError, type SubmitResponse } from "./response.js";
 
+export type Acknowledgement = "all" | string[];
+
 export type SubmitOptions = {
   base: string;
   config: string;
   response: SubmitResponse;
   /** Where the response was read from. Omitted when it never came from a file. */
   responsePath?: string;
-  yes: boolean;
+  mode: "preview" | "apply";
+  /** "all" is the CLI's --yes. An array names the check ids the caller has seen. */
+  acknowledge: Acknowledgement;
 };
 
 export type SubmitResult = {
@@ -201,11 +205,26 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       for (const warning of warnings) {
         deps.err(`${warning.check}: ${warning.message}`);
       }
-      if (!options.yes) {
-        const message = "Refusing to proceed. Re-run with --yes to accept these.";
-        deps.err(message);
-        return { code: 2, findings: [], warnings, body, message, committed: false, pushed: false };
-      }
+    }
+
+    if (options.mode === "preview") {
+      return { code: 0, findings: [], warnings, body, committed: false, pushed: false };
+    }
+
+    // Echoing the ids, rather than setting a flag, is what makes this a gate. A caller must
+    // have received the warnings to name them, and the set is checked against what pre-flight
+    // produces now — so if a review landed or a label was added between the two calls, the
+    // ids no longer cover the situation and it closes again.
+    const unacknowledged =
+      options.acknowledge === "all"
+        ? []
+        : warnings.filter((warning) => !options.acknowledge.includes(warning.check));
+
+    if (unacknowledged.length > 0) {
+      const message =
+        `Refusing to proceed. Unacknowledged: ${unacknowledged.map((w) => w.check).join(", ")}`;
+      deps.err(message);
+      return { code: 2, findings: [], warnings, body, message, committed: false, pushed: false };
     }
 
     deps.commitAll(response.commitMessage, exclude);

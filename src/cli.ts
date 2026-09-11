@@ -174,7 +174,8 @@ program
           config: options.config,
           response,
           responsePath: options.input,
-          yes: options.yes,
+          mode: "apply",
+          acknowledge: options.yes ? "all" : [],
         },
         realSubmitDeps,
       );

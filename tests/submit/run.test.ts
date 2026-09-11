@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../../src/config/load.js";
 import type { ShipkitConfig } from "../../src/config/schema.js";
@@ -76,6 +77,7 @@ function makeDeps(
         resolveIssue: poisoned("resolveIssue"),
         readRepoState: poisoned("readRepoState"),
         findPullRequest: poisoned("findPullRequest"),
+        readUntrackedFiles: poisoned("readUntrackedFiles"),
         commitAll: poisoned("commitAll"),
         pushBranch: poisoned("pushBranch"),
         createPullRequest: poisoned("createPullRequest"),
@@ -94,6 +96,7 @@ function makeDeps(
         resolveIssue: (key: string) => Promise.resolve({ key, type: "Story", summary: "" } as IssueFacts),
         readRepoState: () => ({ branch: BRANCH, changedFiles: [], diffstat: "", commits: [] }),
         findPullRequest: () => NO_PR,
+        readUntrackedFiles: () => [],
         commitAll: () => undefined,
         pushBranch: () => undefined,
         createPullRequest: () => "https://github.com/x/y/pull/1",
@@ -111,6 +114,7 @@ function makeDeps(
     resolveIssue: record("resolveIssue", merged.resolveIssue),
     readRepoState: record("readRepoState", merged.readRepoState),
     findPullRequest: record("findPullRequest", merged.findPullRequest),
+    readUntrackedFiles: record("readUntrackedFiles", merged.readUntrackedFiles),
     commitAll: record("commitAll", merged.commitAll),
     pushBranch: record("pushBranch", merged.pushBranch),
     createPullRequest: record("createPullRequest", merged.createPullRequest),
@@ -129,6 +133,7 @@ const DOMAIN_DEPS = [
   "resolveIssue",
   "readRepoState",
   "findPullRequest",
+  "readUntrackedFiles",
   "commitAll",
   "pushBranch",
   "createPullRequest",
@@ -401,5 +406,59 @@ describe("runSubmit", () => {
       const { ticketFromBranch } = await import("../../src/cli-support.js");
       expect(ticketFromBranch(REPRO_BRANCH, REFERENCE_CONFIG.jira.keyPattern)).toBeUndefined();
     });
+  });
+});
+
+// `git add --all` was staging shipkit's own response file into the pull request on every
+// run, alongside whatever else happened to be lying in the checkout. These pin the two
+// halves of the answer: the response file is excluded outright, everything else untracked
+// is reported so the author can decide.
+describe("runSubmit and the working tree", () => {
+  it("excludes the response file from staging", async () => {
+    const { deps, calls } = makeDeps({});
+
+    const code = await runSubmit({ ...OPTIONS, input: "scratch/response.json" }, deps);
+
+    expect(code).toBe(0);
+    const staged = calls.find((c) => c.fn === "commitAll");
+    expect(staged?.args[1]).toEqual([resolve("scratch/response.json")]);
+  });
+
+  it("warns about the other untracked files staging would sweep in", async () => {
+    const { deps, err } = makeDeps({
+      readUntrackedFiles: () => [".env.local", "debug-notes.md"],
+    });
+
+    const code = await runSubmit({ ...OPTIONS, yes: false }, deps);
+
+    expect(code).toBe(2);
+    expect(err.join("\n")).toContain("untracked-files");
+    expect(err.join("\n")).toContain(".env.local");
+  });
+
+  // The response file is untracked too. Reporting it would put a warning on every single
+  // run, and a warning that always fires is one nobody reads — so it is filtered out of
+  // the listing, not merely excluded from the commit.
+  it("does not warn about the response file itself", async () => {
+    const { deps, err } = makeDeps({
+      readUntrackedFiles: () => ["scratch/response.json"],
+    });
+
+    const code = await runSubmit({ ...OPTIONS, input: "scratch/response.json", yes: false }, deps);
+
+    expect(code).toBe(0);
+    expect(err.join("\n")).not.toContain("untracked-files");
+  });
+
+  it("still warns about the others when the response file sits among them", async () => {
+    const { deps, err } = makeDeps({
+      readUntrackedFiles: () => ["scratch/response.json", ".env.local"],
+    });
+
+    const code = await runSubmit({ ...OPTIONS, input: "scratch/response.json", yes: false }, deps);
+
+    expect(code).toBe(2);
+    expect(err.join("\n")).toContain(".env.local");
+    expect(err.join("\n")).not.toContain("response.json");
   });
 });

@@ -12,8 +12,25 @@ function guard(run: (args: string[]) => string, args: string[], binary: string):
   return asVcsError(binary, args, () => run(args));
 }
 
-export function commitAll(message: string, run: GitRunner = defaultGit): void {
-  guard(run, ["add", "--all"], "git");
+/**
+ * Stages the whole tree and commits it. `exclude` drops paths that are never part of the
+ * change — shipkit's own response file above all, which sits in the repository and would
+ * otherwise be committed into the pull request on every run.
+ *
+ * The pathspec is anchored with `:/` rather than `.`: a bare `.` means "below the current
+ * directory", so invoking shipkit from a subdirectory would quietly stage only part of
+ * the work, which is not what `--all` promises.
+ */
+export function commitAll(
+  message: string,
+  exclude: string[],
+  run: GitRunner = defaultGit,
+): void {
+  const stage =
+    exclude.length === 0
+      ? ["add", "--all"]
+      : ["add", "--all", "--", ":/", ...exclude.map((path) => `:(exclude)${path}`)];
+  guard(run, stage, "git");
   guard(run, ["commit", "-m", message], "git");
 }
 

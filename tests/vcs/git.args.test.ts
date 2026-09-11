@@ -9,7 +9,7 @@ vi.mock("node:child_process", () => ({
   execFileSync: execFileSyncMock,
 }));
 
-const { readRepoState } = await import("../../src/vcs/git.js");
+const { readRepoState, readUntrackedFiles } = await import("../../src/vcs/git.js");
 
 beforeEach(() => {
   execFileSyncMock.mockReset();
@@ -53,5 +53,32 @@ describe("readRepoState git invocations", () => {
     for (const call of execFileSyncMock.mock.calls as [string, string[], { cwd?: string }][]) {
       expect(call[2]?.cwd).toBe("/some/repo");
     }
+  });
+});
+
+describe("readUntrackedFiles", () => {
+  it("asks git only for untracked files that are not ignored", () => {
+    execFileSyncMock.mockImplementation(() => "");
+    readUntrackedFiles("/some/repo");
+    expect(calls()).toEqual([["ls-files", "--others", "--exclude-standard"]]);
+  });
+
+  // `--exclude-standard` is the whole reason this is safe to surface: without it every
+  // build artefact and node_modules entry would be reported as about to be committed,
+  // and a warning that always fires is one nobody reads.
+  it("passes --exclude-standard so ignored files are not reported", () => {
+    execFileSyncMock.mockImplementation(() => "");
+    readUntrackedFiles("/some/repo");
+    expect(calls()[0]).toContain("--exclude-standard");
+  });
+
+  it("splits the output into paths and drops the trailing blank", () => {
+    execFileSyncMock.mockImplementation(() => ".env.local\nnotes.md\n");
+    expect(readUntrackedFiles("/some/repo")).toEqual([".env.local", "notes.md"]);
+  });
+
+  it("returns an empty list for a clean tree", () => {
+    execFileSyncMock.mockImplementation(() => "");
+    expect(readUntrackedFiles("/some/repo")).toEqual([]);
   });
 });

@@ -29,3 +29,14 @@ export function readRepoState(base: string, cwd: string = process.cwd()): RepoSt
       .filter(Boolean),
   };
 }
+
+/**
+ * The files `git add --all` would bring into the commit that are not tracked yet —
+ * scratch notes, local env files, and the agent's own response file. `--exclude-standard`
+ * keeps ignored paths out, so what comes back is only what would really be committed.
+ */
+export function readUntrackedFiles(cwd: string = process.cwd()): string[] {
+  return git(["ls-files", "--others", "--exclude-standard"], cwd)
+    .split("\n")
+    .filter(Boolean);
+}

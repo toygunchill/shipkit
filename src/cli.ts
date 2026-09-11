@@ -15,7 +15,7 @@ import type { IssueFacts } from "./jira/types.js";
 import { loadResponse, renderBody } from "./submit/response.js";
 import { runSubmit, type SubmitDeps } from "./submit/run.js";
 import { validate } from "./validate/rules.js";
-import { currentBranch, readRepoState, VcsError } from "./vcs/git.js";
+import { currentBranch, readRepoState, readUntrackedFiles, VcsError } from "./vcs/git.js";
 import { baseCandidates, findPullRequest } from "./vcs/github.js";
 import { commitAll, createPullRequest, pushBranch } from "./vcs/mutate.js";
 
@@ -146,6 +146,7 @@ const realSubmitDeps: SubmitDeps = {
   resolveIssue,
   readRepoState,
   findPullRequest,
+  readUntrackedFiles,
   commitAll,
   pushBranch,
   createPullRequest,

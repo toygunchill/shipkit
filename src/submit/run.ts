@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { extractIssueKeysFromBody, firstIssueKey, isValidBase } from "../cli-support.js";
 import { ConfigError } from "../config/load.js";
 import type { ShipkitConfig } from "../config/schema.js";
@@ -35,7 +36,8 @@ export type SubmitDeps = {
   resolveIssue: (key: string, config: ShipkitConfig) => Promise<IssueFacts | undefined>;
   readRepoState: (base: string) => RepoState;
   findPullRequest: (branch: string) => PullRequestState | null;
-  commitAll: (message: string) => void;
+  readUntrackedFiles: () => string[];
+  commitAll: (message: string, exclude: string[]) => void;
   pushBranch: (branch: string) => void;
   createPullRequest: (input: { title: string; body: string; base: string; head: string }) => string;
   out: (line: string) => void;
@@ -102,6 +104,13 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
 
     const repo = deps.readRepoState(options.base);
     const existingPr = deps.findPullRequest(branch);
+    // The response file lives in the repository and is shipkit's own input, never part of
+    // the change, so it is excluded from staging rather than merely reported. Everything
+    // else untracked is the author's to judge, which is what the warning is for.
+    const responsePath = resolve(options.input);
+    const untrackedFiles = deps
+      .readUntrackedFiles()
+      .filter((file) => resolve(file) !== responsePath);
     const warnings = preflight({
       branch,
       base: options.base,
@@ -109,6 +118,7 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       ticketKey,
       issueVerified,
       pullRequest: existingPr,
+      untrackedFiles,
       config,
     }).warnings;
 
@@ -122,7 +132,7 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       }
     }
 
-    deps.commitAll(response.commitMessage);
+    deps.commitAll(response.commitMessage, [responsePath]);
     committed = true;
     deps.pushBranch(branch);
     pushed = true;

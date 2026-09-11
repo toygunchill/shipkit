@@ -5,7 +5,7 @@ import { VcsError } from "../../src/vcs/types.js";
 describe("commitAll", () => {
   it("stages everything then commits with the message as one argument", () => {
     const seen: string[][] = [];
-    commitAll("fix(x): y\n\nBody.", (args) => {
+    commitAll("fix(x): y\n\nBody.", [], (args) => {
       seen.push(args);
       return "";
     });
@@ -15,13 +15,48 @@ describe("commitAll", () => {
     ]);
   });
 
+  it("keeps an excluded path out of the staging pathspec", () => {
+    const seen: string[][] = [];
+    commitAll("m", ["/repo/response.json"], (args) => {
+      seen.push(args);
+      return "";
+    });
+    expect(seen[0]).toEqual([
+      "add", "--all", "--", ":/", ":(exclude)/repo/response.json",
+    ]);
+  });
+
+  // `:/` is what keeps the exclusion from narrowing the commit. A bare `.` pathspec means
+  // "below the current directory", so running shipkit from a subdirectory would silently
+  // stage only part of the change — the opposite of what `--all` promises.
+  it("anchors the pathspec at the repository root, not the working directory", () => {
+    const seen: string[][] = [];
+    commitAll("m", ["/repo/response.json"], (args) => {
+      seen.push(args);
+      return "";
+    });
+    expect(seen[0]).toContain(":/");
+    expect(seen[0]).not.toContain(".");
+  });
+
+  it("excludes several paths at once", () => {
+    const seen: string[][] = [];
+    commitAll("m", ["/repo/a.json", "/repo/b.json"], (args) => {
+      seen.push(args);
+      return "";
+    });
+    expect(seen[0]).toEqual([
+      "add", "--all", "--", ":/", ":(exclude)/repo/a.json", ":(exclude)/repo/b.json",
+    ]);
+  });
+
   it("throws VcsError when git fails", () => {
-    expect(() => commitAll("m", () => { throw new Error("nothing to commit"); })).toThrow(VcsError);
+    expect(() => commitAll("m", [], () => { throw new Error("nothing to commit"); })).toThrow(VcsError);
   });
 
   it("does not attempt commit when staging fails", () => {
     const seen: string[][] = [];
-    expect(() => commitAll("m", (args) => {
+    expect(() => commitAll("m", [], (args) => {
       seen.push(args);
       if (args[0] === "add") {
         throw new Error("no files to add");

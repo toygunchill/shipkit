@@ -10,6 +10,7 @@ const base = {
   ticketKey: "ABC-31087",
   issueVerified: true,
   pullRequest: null,
+  untrackedFiles: [],
   config,
 };
 const ids = (r: { warnings: { check: string }[] }) => r.warnings.map((w) => w.check);
@@ -109,5 +110,39 @@ describe("preflight", () => {
       pullRequest: { number: 1, url: "https://github.com/x/y/pull/1", baseRefName: "develop", labels: ["needs-design"], approvals: [] },
     });
     expect(ids(result)).not.toContain("blocking-label");
+  });
+});
+
+describe("preflight untracked-files", () => {
+  it("warns about the untracked files staging would sweep into the commit", () => {
+    const result = preflight({ ...base, untrackedFiles: [".env.local", "debug-notes.md"] });
+    const finding = result.warnings.find((w) => w.check === "untracked-files");
+    expect(finding?.message).toContain(".env.local");
+    expect(finding?.message).toContain("debug-notes.md");
+  });
+
+  it("stays silent when the tree carries no untracked files", () => {
+    expect(ids(preflight({ ...base, untrackedFiles: [] }))).not.toContain("untracked-files");
+  });
+
+  // The list exists so someone can act on it. Twenty paths scrolling past is the same as
+  // no warning, so the message names a handful and says how many more there are.
+  it("caps the listing and says how many were left out", () => {
+    const many = Array.from({ length: 12 }, (_, i) => `file-${i}.txt`);
+    const finding = preflight({ ...base, untrackedFiles: many }).warnings.find(
+      (w) => w.check === "untracked-files",
+    );
+    expect(finding?.message).toContain("file-0.txt");
+    expect(finding?.message).not.toContain("file-11.txt");
+    expect(finding?.message).toContain("7 more");
+  });
+
+  it("names every path when there are few enough to show", () => {
+    const finding = preflight({ ...base, untrackedFiles: ["a.txt", "b.txt"] }).warnings.find(
+      (w) => w.check === "untracked-files",
+    );
+    expect(finding?.message).toContain("a.txt");
+    expect(finding?.message).toContain("b.txt");
+    expect(finding?.message).not.toContain("more");
   });
 });

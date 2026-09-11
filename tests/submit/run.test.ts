@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "../../src/config/load.js";
+import { ConfigError, loadConfig } from "../../src/config/load.js";
 import type { ShipkitConfig } from "../../src/config/schema.js";
 import type { IssueFacts } from "../../src/jira/types.js";
 import { renderBody, type SubmitResponse } from "../../src/submit/response.js";
@@ -481,6 +481,61 @@ describe("runSubmit result shape", () => {
     expect(calls.find((c) => c.fn === "commitAll")?.args[1]).toEqual([]);
     expect(calls.some((c) => c.fn === "realpath")).toBe(false);
     expect(calls.some((c) => c.fn === "readRepoRoot")).toBe(false);
+  });
+
+  // Both `body` and `warnings` are computed well before the mutating tail that can throw —
+  // a VcsError escaping pushBranch must not make the catch report either as though nothing
+  // had been computed yet. The next task's `applyContent` reads exactly these two fields.
+  it("returns the body and warnings already computed when a VcsError escapes after commitAll", async () => {
+    const { deps } = makeDeps({
+      readUntrackedFiles: () => [".env.local"],
+      pushBranch: () => {
+        throw new VcsError("git push --set-upstream origin failed: rejected");
+      },
+    });
+
+    const result = await runSubmit({ ...OPTIONS, yes: true }, deps);
+
+    expect(result.code).toBe(2);
+    expect(result.committed).toBe(true);
+    expect(result.pushed).toBe(false);
+    expect(result.body).toContain("## Summary");
+    expect(result.warnings.map((w) => w.check)).toContain("untracked-files");
+  });
+
+  // The mirror image of the test above: a failure before renderBody ever ran must not claim
+  // a body or warnings exist, since neither was computed.
+  it("returns no body and no warnings when the failure happens before rendering", async () => {
+    const { deps } = makeDeps({
+      loadConfig: () => {
+        throw new ConfigError("Cannot read config at nope.yml");
+      },
+    });
+
+    const result = await runSubmit(OPTIONS, deps);
+
+    expect(result.code).toBe(2);
+    expect(result.body).toBeUndefined();
+    expect(result.warnings).toEqual([]);
+  });
+
+  // Same fix, a different call site — pins that the hoist isn't accidentally scoped to only
+  // the pushBranch failure above.
+  it("returns the warnings too when createPullRequest throws after a successful push", async () => {
+    const { deps } = makeDeps({
+      readUntrackedFiles: () => [".env.local"],
+      createPullRequest: () => {
+        throw new VcsError("gh pr create failed: not authenticated");
+      },
+    });
+
+    const result = await runSubmit({ ...OPTIONS, yes: true }, deps);
+
+    expect(result.code).toBe(2);
+    expect(result.committed).toBe(true);
+    expect(result.pushed).toBe(true);
+    expect(result.body).toContain("## Summary");
+    expect(result.warnings.map((w) => w.check)).toContain("untracked-files");
   });
 });
 

@@ -86,11 +86,17 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
   // discovering it themselves the next time `commitAll` fails on "nothing to commit".
   let committed = false;
   let pushed = false;
+  // Hoisted for the same reason as `committed`/`pushed`: a typed error thrown by the mutating
+  // tail (after both have been computed) must still be able to report the body that was
+  // rendered and the warnings that were accepted, rather than the catch claiming neither ever
+  // existed.
+  let body: string | undefined;
+  let warnings: Warning[] = [];
 
   try {
     const config = deps.loadConfig(options.config);
     const response = options.response;
-    const body = deps.renderBody(response.sections, config);
+    body = deps.renderBody(response.sections, config);
     const branch = deps.currentBranch();
 
     // `issue-level` checks the keys the body *cites* (the same source of truth `check`
@@ -180,7 +186,7 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
     const untrackedFiles = deps
       .readUntrackedFiles()
       .filter((file) => !responseInRepo || file !== relativeToRoot);
-    const warnings = preflight({
+    warnings = preflight({
       branch,
       base: options.base,
       commits: repo.commits,
@@ -263,7 +269,7 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
             : "A commit was created locally and has not been pushed. It is yours to keep, amend, or drop.",
         );
       }
-      return { code: 2, findings: [], warnings: [], message: error.message, committed, pushed };
+      return { code: 2, findings: [], warnings, body, message: error.message, committed, pushed };
     }
     throw error;
   }

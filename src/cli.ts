@@ -190,6 +190,14 @@ program
     }
   });
 
+program
+  .command("mcp")
+  .description("Serve the shipkit tools to an agent over stdio")
+  .action(async () => {
+    const { serveStdio } = await import("./mcp/server.js");
+    await serveStdio();
+  });
+
 try {
   // parseAsync (not parse) so that a rejection from an async action's `throw error` — an
   // internal bug, not a validation finding — surfaces here instead of becoming an unhandled

@@ -25,7 +25,7 @@ describe("defaultBranch", () => {
     const { run, calls } = fakeRunner(
       new Map([[JSON.stringify(DEFAULT_BRANCH_ARGS), JSON.stringify({ defaultBranchRef: { name: "develop" } })]]),
     );
-    expect(defaultBranch(run)).toBe("develop");
+    expect(defaultBranch("/repo", run)).toBe("develop");
     expect(calls).toEqual([DEFAULT_BRANCH_ARGS]);
   });
 
@@ -33,12 +33,12 @@ describe("defaultBranch", () => {
     const run = () => {
       throw new Error("gh: command not found");
     };
-    expect(() => defaultBranch(run)).toThrow(VcsError);
+    expect(() => defaultBranch("/repo", run)).toThrow(VcsError);
   });
 
   it("throws VcsError when JSON shape is wrong", () => {
     const { run } = fakeRunner(new Map([[JSON.stringify(DEFAULT_BRANCH_ARGS), JSON.stringify({})]]));
-    expect(() => defaultBranch(run)).toThrow(VcsError);
+    expect(() => defaultBranch("/repo", run)).toThrow(VcsError);
   });
 });
 
@@ -50,7 +50,7 @@ describe("baseCandidates", () => {
         [JSON.stringify(BRANCHES_ARGS), JSON.stringify([{ name: "develop" }])],
       ]),
     );
-    baseCandidates(run);
+    baseCandidates("/repo", run);
     expect(calls).toEqual([DEFAULT_BRANCH_ARGS, BRANCHES_ARGS]);
   });
 
@@ -67,7 +67,7 @@ describe("baseCandidates", () => {
         ],
       ]),
     );
-    expect(baseCandidates(run)).toEqual(["develop", "release/3.9.0", "release/3.10.0"]);
+    expect(baseCandidates("/repo", run)).toEqual(["develop", "release/3.9.0", "release/3.10.0"]);
   });
 
   it("orders release branches numerically regardless of gh's own listing order", () => {
@@ -80,7 +80,7 @@ describe("baseCandidates", () => {
         ],
       ]),
     );
-    expect(baseCandidates(run)).toEqual(["develop", "release/3.9.0", "release/3.10.0"]);
+    expect(baseCandidates("/repo", run)).toEqual(["develop", "release/3.9.0", "release/3.10.0"]);
   });
 
   it("throws VcsError when branches call returns non-array JSON", () => {
@@ -90,7 +90,7 @@ describe("baseCandidates", () => {
         [JSON.stringify(BRANCHES_ARGS), JSON.stringify({ message: "API rate limit exceeded" })],
       ]),
     );
-    expect(() => baseCandidates(run)).toThrow(VcsError);
+    expect(() => baseCandidates("/repo", run)).toThrow(VcsError);
   });
 });
 
@@ -104,7 +104,7 @@ describe("findPullRequest", () => {
         ],
       ]),
     );
-    expect(findPullRequest("feature/x", run)).toBeNull();
+    expect(findPullRequest("feature/x", "/repo", run)).toBeNull();
   });
 
   it("reports number, base, labels and approving logins", () => {
@@ -126,7 +126,7 @@ describe("findPullRequest", () => {
         ],
       ]),
     );
-    expect(findPullRequest("feature/x", run)).toEqual({
+    expect(findPullRequest("feature/x", "/repo", run)).toEqual({
       number: 881,
       url: "https://github.com/x/y/pull/881",
       baseRefName: "release/3.76.0",
@@ -144,7 +144,7 @@ describe("findPullRequest", () => {
         ],
       ]),
     );
-    expect(() => findPullRequest("feature/x", run)).toThrow(VcsError);
+    expect(() => findPullRequest("feature/x", "/repo", run)).toThrow(VcsError);
   });
 
   it("sends the exact arguments for both calls", () => {
@@ -165,7 +165,7 @@ describe("findPullRequest", () => {
       calls.push(args);
       return run(args);
     };
-    findPullRequest("feature/x", wrappedRun);
+    findPullRequest("feature/x", "/repo", wrappedRun);
     expect(calls).toEqual([
       ["pr", "list", "--head", "feature/x", "--state", "open", "--json", "number,url,baseRefName"],
       ["pr", "view", "7", "--json", "labels,latestReviews"],
@@ -181,7 +181,7 @@ describe("findPullRequest", () => {
         ],
       ]),
     );
-    expect(() => findPullRequest("feature/x", run)).toThrow(VcsError);
+    expect(() => findPullRequest("feature/x", "/repo", run)).toThrow(VcsError);
   });
 
   it("throws VcsError when gh pr list returns an array with a null entry", () => {
@@ -193,7 +193,7 @@ describe("findPullRequest", () => {
         ],
       ]),
     );
-    expect(() => findPullRequest("feature/x", run)).toThrow(VcsError);
+    expect(() => findPullRequest("feature/x", "/repo", run)).toThrow(VcsError);
   });
 
   it("throws VcsError when labels contains a null entry", () => {
@@ -209,7 +209,7 @@ describe("findPullRequest", () => {
         ],
       ]),
     );
-    expect(() => findPullRequest("feature/x", run)).toThrow(VcsError);
+    expect(() => findPullRequest("feature/x", "/repo", run)).toThrow(VcsError);
   });
 
   it("throws VcsError when latestReviews contains a null entry", () => {
@@ -225,6 +225,6 @@ describe("findPullRequest", () => {
         ],
       ]),
     );
-    expect(() => findPullRequest("feature/x", run)).toThrow(VcsError);
+    expect(() => findPullRequest("feature/x", "/repo", run)).toThrow(VcsError);
   });
 });

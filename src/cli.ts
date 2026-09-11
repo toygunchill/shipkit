@@ -118,7 +118,8 @@ program
       let base = options.base;
       let reason = "given with --base";
       if (base === undefined) {
-        base = baseCandidates()[0];
+        const cwd = process.cwd();
+        base = baseCandidates(cwd)[0];
         reason = "repository default branch";
       }
 
@@ -138,6 +139,8 @@ program
     }
   });
 
+const cwd = process.cwd();
+
 const realSubmitDeps: SubmitDeps = {
   loadConfig,
   loadResponse,
@@ -145,13 +148,13 @@ const realSubmitDeps: SubmitDeps = {
   currentBranch,
   resolveIssue,
   readRepoState,
-  findPullRequest,
+  findPullRequest: (branch) => findPullRequest(branch, cwd),
   readUntrackedFiles,
   readRepoRoot,
   realpath: (path: string) => realpathSync(path),
-  commitAll,
-  pushBranch,
-  createPullRequest,
+  commitAll: (message, exclude) => commitAll(message, exclude, cwd),
+  pushBranch: (branch) => pushBranch(branch, cwd),
+  createPullRequest: (input) => createPullRequest(input, cwd),
   out: (line: string) => console.log(line),
   err: (line: string) => console.error(line),
 };

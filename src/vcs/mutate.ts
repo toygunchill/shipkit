@@ -5,9 +5,6 @@ import type { GhRunner } from "./github.js";
 // that records calls rather than executing git or gh, so the exact command line can be verified.
 export type GitRunner = (args: string[]) => string;
 
-const defaultGit: GitRunner = execRunner("git");
-const defaultGh: GhRunner = execRunner("gh");
-
 function guard(run: (args: string[]) => string, args: string[], binary: string): string {
   return asVcsError(binary, args, () => run(args));
 }
@@ -27,7 +24,8 @@ function guard(run: (args: string[]) => string, args: string[], binary: string):
 export function commitAll(
   message: string,
   exclude: string[],
-  run: GitRunner = defaultGit,
+  cwd: string = process.cwd(),
+  run: GitRunner = execRunner("git", cwd),
 ): void {
   const stage =
     exclude.length === 0
@@ -37,13 +35,18 @@ export function commitAll(
   guard(run, ["commit", "-m", message], "git");
 }
 
-export function pushBranch(branch: string, run: GitRunner = defaultGit): void {
+export function pushBranch(
+  branch: string,
+  cwd: string = process.cwd(),
+  run: GitRunner = execRunner("git", cwd),
+): void {
   guard(run, ["push", "--set-upstream", "origin", "--end-of-options", branch], "git");
 }
 
 export function createPullRequest(
   input: { title: string; body: string; base: string; head: string },
-  run: GhRunner = defaultGh,
+  cwd: string = process.cwd(),
+  run: GhRunner = execRunner("gh", cwd),
 ): string {
   const out = guard(
     run,

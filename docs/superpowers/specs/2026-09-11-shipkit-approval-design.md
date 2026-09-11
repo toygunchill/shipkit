@@ -132,6 +132,7 @@ So an approval is bound to a SHA-256 over a canonical rendering of:
 - the repository path,
 - the branch, the base, and the current `HEAD` commit,
 - the pull-request title and the commit message,
+- the diffstat,
 - every warning, its check id **and its message**, ordered by id.
 
 The title and the commit message are in the hash because they are on the
@@ -276,14 +277,32 @@ returns nothing, and `issue-unverified` fires on every single run. That is how a
 warning becomes one nobody reads.
 
 The application stores the token in the Keychain (`service: shipkit`,
-`account: jira`) from a Settings panel. shipkit reads it with
+`account: jira`) from a Settings panel.
 
-```
-security find-generic-password -s shipkit -a jira -w
+An earlier draft had shipkit read it back with `security find-generic-password
+-s shipkit -a jira -w`, a subprocess call to a system binary in the same shape
+`git` and `gh` already have. **That does not work, and it was measured rather
+than assumed.** An item written by an application through `SecItemAdd` cannot be
+read by `/usr/bin/security`: the command blocks on a SecurityAgent
+authorisation prompt — eight seconds to an alarm, no output, no error. Adding
+`/usr/bin/security` as a trusted application, through
+`SecTrustedApplicationCreateFromPath` and `SecAccessCreate`, does not fix it
+either. The obvious repair fails the same way.
+
+The application reading its own item prompts for nothing. So the token travels
+over the socket that already exists, as a second kind of request:
+
+```json
+{ "protocol": 1, "kind": "token", "account": "jira" }
 ```
 
-a subprocess call to a system binary, the same shape `git` and `gh` already
-have — no native module, no new dependency.
+answered with the secret or with nothing. One channel, one place holding the
+keychain access that works, and no new dependency — which is what the
+subprocess call was for.
+
+The environment variable is still read first, so CI and a deliberate override
+are untouched, and a machine with no surface running behaves exactly as it does
+today.
 
 Order: the environment first, so CI and explicit overrides keep working, then the
 Keychain. A token in neither place is not an error; it is the existing
@@ -329,3 +348,35 @@ consults `policy`. The existing acknowledgement path is untouched under `echo`.
 - **The application quitting mid-wait.** The client's timeout covers it, and the
   caller retries. Whether that should be distinguished from a timeout in the
   message is unknown until it is seen.
+
+## Amendment: the diffstat is bound, and it describes the push
+
+The list of bound fields above originally omitted `diffstat`, while the panel
+displayed it. That is exactly the failure the paragraph beneath the list argues
+against, applied to the one field the argument forgot.
+
+Two things were wrong and both are fixed.
+
+**It was not bound.** `diffstat` now joins the canonical form immediately after
+the commit message, length-prefixed like every other scalar. The form's header
+moves from `shipkit-approval-v1` to `shipkit-approval-v2`, since what is hashed
+changed. `PROTOCOL_VERSION` stays `1`: the wire shape did not change — the field
+was always transmitted — only what is bound did.
+
+**It described the wrong commit.** The value came from `git diff --stat
+base...HEAD`, a three-dot range covering committed work only, while `commitAll`
+runs `git add --all` *after* the gate and sweeps the whole working tree into the
+commit that is pushed. An agent with four hundred uncommitted files on a fresh
+branch therefore produced an empty diffstat: the panel rendered a blank line
+where the size of the change belongs, and approving it pushed all four hundred.
+
+The diffstat is now measured against the tree the commit will actually produce —
+a scratch index outside the repository, `read-tree` from the merge base, then
+`add --all` using the very pathspec `commitAll` passes. The staging rules are
+therefore git's own rather than a second implementation of them, so `.gitignore`
+and the response-file exclusion apply by construction.
+
+Two things here were measured rather than assumed: `git add --all -N` drops the
+index entry for a file deleted in the working tree, which would under-report in
+the one direction that matters; and a scratch index written beside `.git` is
+itself untracked, so `add --all` swept the index into the stat it was computing.

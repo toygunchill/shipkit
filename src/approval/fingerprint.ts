@@ -11,10 +11,21 @@ export type Situation = {
   title: string;
   /** The commit message, as the application displays it. */
   commitMessage: string;
+  /** The size of the change, as the application displays it. */
+  diffstat: string;
   warnings: Warning[];
 };
 
-const VERSION = "shipkit-approval-v1";
+/**
+ * The marker for *this* canonical form, bumped to v2 when `diffstat` joined the
+ * hash. Deliberately not `PROTOCOL_VERSION`, which stays at 1: the wire shape
+ * did not change — `diffstat` was always transmitted and the application always
+ * displayed it — only what is bound did. Resyncing the two would announce a
+ * version disagreement to every surface that is in fact perfectly compatible,
+ * and a shipkit and an application that disagree about the hash already refuse
+ * each other by fingerprint mismatch, which is the check that matters.
+ */
+const VERSION = "shipkit-approval-v2";
 
 /**
  * Warnings ordered by check id, then message, using code-unit order — the same order
@@ -62,6 +73,7 @@ export function canonical(situation: Situation): string {
     field(situation.head),
     field(situation.title),
     field(situation.commitMessage),
+    field(situation.diffstat),
     String(sorted.length),
   ];
   for (const warning of sorted) {
@@ -73,4 +85,38 @@ export function canonical(situation: Situation): string {
 /** Lowercase hex SHA-256 of the canonical form's UTF-8 bytes. */
 export function fingerprint(situation: Situation): string {
   return createHash("sha256").update(canonical(situation), "utf8").digest("hex");
+}
+
+/**
+ * The field names that differ between two situations, in a fixed order. Built for the
+ * refusal after a fingerprint mismatch: "the situation changed" tells a person nothing
+ * they can act on, but "diffstat changed" points straight at the watcher or autosave that
+ * touched the tree during the wait. `warnings` counts as one field — naming which warning
+ * changed would mean explaining preflight's check ids to someone who approved a push, not
+ * a preflight run.
+ */
+export function changedFields(before: Situation, after: Situation): string[] {
+  const changed: string[] = [];
+  if (before.repo !== after.repo) changed.push("repo");
+  if (before.branch !== after.branch) changed.push("branch");
+  if (before.base !== after.base) changed.push("base");
+  if (before.head !== after.head) changed.push("head");
+  if (before.title !== after.title) changed.push("title");
+  if (before.commitMessage !== after.commitMessage) changed.push("commitMessage");
+  if (before.diffstat !== after.diffstat) changed.push("diffstat");
+  if (canonicalWarnings(before.warnings) !== canonicalWarnings(after.warnings)) {
+    changed.push("warnings");
+  }
+  return changed;
+}
+
+// Same length-prefixing `canonical` uses, for the same reason: a plain `\n` join could
+// call two genuinely different warning lists equal if a check id or message happens to
+// contain the delimiter. This only feeds a diagnostic message, never the hash itself, but
+// there is no reason to give it a weaker equality check than the one that matters.
+function canonicalWarnings(warnings: Warning[]): string {
+  const field = (value: string) => `${Buffer.byteLength(value, "utf8")}:${value}`;
+  return sortWarnings(warnings)
+    .map((warning) => `${field(warning.check)}\n${field(warning.message)}`)
+    .join("\n");
 }

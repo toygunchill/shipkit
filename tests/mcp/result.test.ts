@@ -154,6 +154,7 @@ describe("applyContent", () => {
       readRepoState: () => ({
         branch: "bugfix/squadb/31087-invoice", changedFiles: [], diffstat: "", commits: [],
       }),
+      readPushDiffstat: () => " .env.local | 1 +\n 1 file changed, 1 insertion(+)",
       findPullRequest: () => null,
       readUntrackedFiles: () => [".env.local"],
       readRepoRoot: () => "/repo",

@@ -14,12 +14,14 @@ import {
 import { ConfigError, loadConfig } from "./config/load.js";
 import { fetchIssue, JiraError } from "./jira/client.js";
 import type { IssueFacts } from "./jira/types.js";
+import { jiraToken } from "./secrets/keychain.js";
 import { loadResponse, renderBody, ResponseError } from "./submit/response.js";
 import { runSubmit, type SubmitDeps } from "./submit/run.js";
 import { validate } from "./validate/rules.js";
 import {
   currentBranch,
   readHeadSha,
+  readPushDiffstat,
   readRepoRoot,
   readRepoState,
   readUntrackedFiles,
@@ -65,10 +67,15 @@ program
 
       let issues: IssueFacts[] | undefined;
       if (options.issue !== undefined) {
-        const token = process.env.SHIPKIT_JIRA_TOKEN;
+        // Same source `submit` reads from: the environment variable first, the
+        // approval surface's socket as the fallback for a token saved through its
+        // Settings pane. A direct `process.env` read here would leave that pane
+        // unable to satisfy this subcommand even though it satisfies every other.
+        const token = await jiraToken();
         if (token === undefined || token.length === 0) {
           console.error(
-            "issue-level validation was requested with --issue, but SHIPKIT_JIRA_TOKEN is unset",
+            "issue-level validation was requested with --issue, but no Jira token is available " +
+              "(set SHIPKIT_JIRA_TOKEN, or sign in to Jira in the menu-bar app's Settings pane)",
           );
           process.exitCode = 2;
           return;
@@ -156,6 +163,7 @@ const realSubmitDeps: SubmitDeps = {
   currentBranch,
   resolveIssue,
   readRepoState,
+  readPushDiffstat: (base, exclude) => readPushDiffstat(base, exclude, cwd),
   findPullRequest: (branch) => findPullRequest(branch, cwd),
   readUntrackedFiles,
   readRepoRoot,

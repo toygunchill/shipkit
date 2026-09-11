@@ -1,8 +1,13 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { promisify } from "node:util";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { PROTOCOL_VERSION } from "../src/approval/protocol.js";
+
+const execFileAsync = promisify(execFile);
 
 const CONFIG = resolve("tests/fixtures/valid.shipkit.yml");
 const CLI = resolve("dist/cli.js");
@@ -176,16 +181,113 @@ describe("shipkit check defaults --branch to the checked-out branch", () => {
 });
 
 describe("shipkit check --issue token gating", () => {
-  it("exits 2 when --issue is passed but SHIPKIT_JIRA_TOKEN is unset", () => {
+  const servers: Server[] = [];
+  const socketDirs: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(servers.splice(0).map((s) => new Promise<void>((r) => s.close(() => r()))));
+    for (const dir of socketDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function fakeSocketPath(): string {
+    const dir = mkdtempSync(join(tmpdir(), "shipkit-check-socket-"));
+    socketDirs.push(dir);
+    return join(dir, "approvals.sock");
+  }
+
+  /** A fake approval surface that answers every token request with `secret`. */
+  function listenWithToken(path: string, secret: string): Promise<void> {
+    const server = createServer((socket) => {
+      let buffer = "";
+      socket.on("data", (chunk) => {
+        buffer += chunk.toString("utf8");
+        const newline = buffer.indexOf("\n");
+        if (newline === -1) return;
+        socket.end(`${JSON.stringify({ protocol: PROTOCOL_VERSION, kind: "token", secret })}\n`);
+      });
+    });
+    servers.push(server);
+    return new Promise((resolve) => server.listen(path, () => resolve()));
+  }
+
+  // Pinned to a socket path nobody is listening on so this stays deterministic
+  // regardless of whether a real menu-bar app happens to be running on the
+  // machine the tests execute on.
+  it("exits 2 when --issue is passed but no token is available from the environment or the socket", () => {
     const result = run(
       [
         "check", "--title", TITLE, "--body-file", bodyFile(goodBody),
         "--config", CONFIG, "--branch", CONFORMING_BRANCH, "--issue", "ABC-31086",
       ],
-      { env: { SHIPKIT_JIRA_TOKEN: undefined } },
+      { env: { SHIPKIT_JIRA_TOKEN: undefined, SHIPKIT_APPROVAL_SOCKET: fakeSocketPath() } },
     );
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("SHIPKIT_JIRA_TOKEN");
+  });
+
+  // The token check must go through `jiraToken()`, not a direct `process.env` read, so a
+  // token saved through the menu-bar app's Settings pane — which lives behind the socket,
+  // not the environment — also satisfies `--issue`. Proven by making the socket the only
+  // source of a token and a Jira baseUrl nobody can reach: reaching a "cannot reach Jira"
+  // failure (rather than "no token is available") shows the socket's token was picked up
+  // and used, not skipped over.
+  it("falls back to the approval surface's socket for the token, exactly as submit does", async () => {
+    const socket = fakeSocketPath();
+    await listenWithToken(socket, "s3cret-from-socket");
+
+    const configPath = join(tempDir("shipkit-check-cfg-"), "local.shipkit.yml");
+    writeFileSync(
+      configPath,
+      [
+        "pr:",
+        "  titlePattern: '.*'",
+        "  forbidden: []",
+        "  sections:",
+        "    - name: Summary",
+        "      required: false",
+        "branch:",
+        "  pattern: '.*'",
+        "jira:",
+        "  baseUrl: http://127.0.0.1:1/jira",
+        "  keyPattern: 'DCP-\\d+'",
+        "  linkPolicy: story",
+      ].join("\n"),
+      "utf8",
+    );
+
+    // Not the shared `run()` helper: that shells out with `execFileSync`, which blocks
+    // this process's event loop until the child exits — and the fake socket server
+    // above lives in this same process, so it would never get to accept the child's
+    // connection. `execFile` (promisified) keeps the event loop free while the child
+    // runs, the same way the real approval surface is a separate process from shipkit.
+    const env: Record<string, string> = {};
+    for (const [key, value] of Object.entries({
+      ...process.env,
+      SHIPKIT_JIRA_TOKEN: undefined,
+      SHIPKIT_APPROVAL_SOCKET: socket,
+    })) {
+      if (value !== undefined) env[key] = value;
+    }
+
+    const result = await execFileAsync(
+      "node",
+      [
+        CLI, "check", "--title", TITLE, "--body-file", bodyFile(goodBody),
+        "--config", configPath, "--branch", CONFORMING_BRANCH, "--issue", "ABC-31086",
+      ],
+      { encoding: "utf8", env },
+    ).then(
+      (r) => ({ status: 0, stdout: r.stdout, stderr: r.stderr }),
+      (e: { code: number; stdout: string; stderr: string }) => ({
+        status: e.code,
+        stdout: e.stdout,
+        stderr: e.stderr,
+      }),
+    );
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).not.toContain("no Jira token is available");
+    expect(result.stderr).toContain("Cannot reach Jira");
   });
 
   it("stays silent (does not touch Jira or the token) when --issue is not passed", () => {

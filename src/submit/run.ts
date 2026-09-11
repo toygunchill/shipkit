@@ -1,5 +1,5 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { fingerprint, sortWarnings, type Situation } from "../approval/fingerprint.js";
+import { changedFields, fingerprint, sortWarnings, type Situation } from "../approval/fingerprint.js";
 import {
   gate,
   shouldRequestApproval,
@@ -85,6 +85,12 @@ export type SubmitDeps = {
   currentBranch: () => string;
   resolveIssue: (key: string, config: ShipkitConfig) => Promise<IssueFacts | undefined>;
   readRepoState: (base: string) => RepoState;
+  /**
+   * What the push will deliver, not what is already committed. Takes the same
+   * `exclude` that `commitAll` is given, because the size of the change a person
+   * approves has to be the size of the change that lands.
+   */
+  readPushDiffstat: (base: string, exclude: string[]) => string;
   findPullRequest: (branch: string) => PullRequestState | null;
   readUntrackedFiles: () => string[];
   readRepoRoot: () => string;
@@ -119,7 +125,15 @@ function refusalMessage(
         `Call again to resume the same request (${approvalFingerprint ?? "unknown"}).`
       );
     case "no-surface":
-      return "Refusing to proceed. This repository requires an approval, and the approval surface is not running.";
+      // Naming how to start it is the difference between a refusal someone can
+      // act on and one they can only be annoyed by: this is the reason a person
+      // is most likely to meet first, and the app is not something they can be
+      // expected to guess the existence of.
+      return (
+        "Refusing to proceed. This repository requires an approval, and the " +
+        "approval surface is not running. Start it with ./scripts/app.sh && " +
+        "open apps/menubar/build/shipkit.app, then call again."
+      );
     case "human-required":
       return "Refusing to proceed. This repository requires an approval from a person.";
   }
@@ -294,18 +308,32 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
 
       // Reading the facts is what makes a situation; both the question and the check
       // after the answer are built from the same helper so they cannot drift.
-      const situationOf = (facts: { head: string; warnings: Warning[] }): Situation => ({
+      const situationOf = (facts: {
+        head: string;
+        diffstat: string;
+        warnings: Warning[];
+      }): Situation => ({
         repo: repoPath,
         branch,
         base: options.base,
         head: facts.head,
         title: response.title,
         commitMessage: response.commitMessage,
+        diffstat: facts.diffstat,
         warnings: facts.warnings,
       });
 
       const head = deps.readHeadSha();
-      const situation = situationOf({ head, warnings });
+      // Not `repo.diffstat`. That is `base...HEAD`, committed work only, and
+      // `commitAll` below stages the whole working tree — so on a branch whose work
+      // is still uncommitted it is the empty string, and the panel renders a blank
+      // line where the size of the change belongs. The same `exclude` the commit
+      // gets, so the stat cannot name a file the commit will leave out.
+      const situation = situationOf({
+        head,
+        diffstat: deps.readPushDiffstat(options.base, exclude),
+        warnings,
+      });
       approvalFingerprint = fingerprint(situation);
       const answer = await deps.requestApproval(
         {
@@ -317,7 +345,10 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
           head: situation.head,
           title: response.title,
           commitMessage: response.commitMessage,
-          diffstat: repo.diffstat,
+          // `situation.diffstat`, never a second reading of it: the wire carries
+          // exactly the string that was hashed, so what the panel renders is
+          // provably what the fingerprint was taken over.
+          diffstat: situation.diffstat,
           // In canonical order, so what a person is shown can never diverge from what
           // was hashed — preflight emits these in check-order, not alphabetical.
           warnings: sortWarnings(warnings),
@@ -335,10 +366,11 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       if (approval === "approved") {
         const freshHead = deps.readHeadSha();
         const freshPr = deps.findPullRequest(branch);
+        const freshRepo = deps.readRepoState(options.base);
         const freshWarnings = preflight({
           branch,
           base: options.base,
-          commits: deps.readRepoState(options.base).commits,
+          commits: freshRepo.commits,
           ticketKey,
           issueVerified,
           pullRequest: freshPr,
@@ -348,12 +380,26 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
           config,
         }).warnings;
 
-        if (
-          fingerprint(situationOf({ head: freshHead, warnings: freshWarnings })) !==
-          approvalFingerprint
-        ) {
+        const freshSituation = situationOf({
+          head: freshHead,
+          // Read again, like everything else here. A file written into the
+          // working tree while the person was deciding is a file the push will
+          // now carry, and the whole point of re-hashing is that a situation
+          // which changed underneath an approval no longer satisfies it.
+          diffstat: deps.readPushDiffstat(options.base, exclude),
+          warnings: freshWarnings,
+        });
+
+        if (fingerprint(freshSituation) !== approvalFingerprint) {
+          // Named, not just flagged: "the situation changed" gives a person on a
+          // repository that churns nothing to act on, and the retry it invites fails
+          // the same way forever. `changedFields` points at what actually moved —
+          // usually `diffstat`, which is the one a stray autosave or watcher output
+          // touches — without dumping both situations into the message.
+          const fields = changedFields(situation, freshSituation);
           const message =
-            "The situation changed while the approval was pending; asking again from the start.";
+            `The situation changed while the approval was pending (${fields.join(", ")} changed); ` +
+            "asking again from the start.";
           deps.err(message);
           for (const warning of freshWarnings) {
             deps.err(`${warning.check}: ${warning.message}`);

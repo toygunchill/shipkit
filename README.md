@@ -93,9 +93,16 @@ There is no `shipkit init` yet, so it is written by hand.
   omitting it, preserves today's behaviour on every repository.
 - `human` — a person must decide, every time, regardless of which ids the
   caller echoed back. This requires a separate approval surface listening on
-  a local socket, which is **not built yet** — until it exists, `submit`
-  under `human` refuses every warned push outright, naming the approval
-  surface as the reason.
+  a local socket: the menu-bar app in `apps/menubar`. Build and launch it with
+
+  ```
+  ./scripts/app.sh
+  open apps/menubar/build/shipkit.app
+  ```
+
+  The app is ad-hoc signed, so Gatekeeper blocks the first launch: right-click
+  the bundle and choose Open once. When it is not running, `submit` under
+  `human` refuses every warned push outright rather than pushing unapproved.
 
 `pr.approvalTimeoutSeconds` (default `120`) is how long `submit` waits for
 that person's decision before refusing and naming a fingerprint the call can

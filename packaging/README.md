@@ -54,9 +54,10 @@ together.
 
 ## The menu-bar cask
 
-Not written yet, because the app does not exist yet. When it does, it ships as
-a cask — that is the normal channel for a `.app` — living beside the formula in
-the same tap.
+Not written yet. The app itself exists — `apps/menubar`, assembled into a
+bundle by `scripts/app.sh` — but it is not yet packaged, because a cask is the
+normal channel for a `.app` and that channel is only worth opening once the
+signing question below is answered.
 
 **Signing is unresolved and it affects this.** An unsigned app installed by cask
 is blocked by Gatekeeper on first launch: the user must right-click and choose

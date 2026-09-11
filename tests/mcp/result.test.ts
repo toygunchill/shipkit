@@ -43,7 +43,10 @@ describe("previewContent", () => {
       ],
       body: "b", committed: false, pushed: false,
     });
-    expect(shaped.structuredContent.warnings).toEqual(["untracked-files", "base-mismatch"]);
+    expect(shaped.structuredContent.warnings).toEqual([
+      { check: "untracked-files", message: "two files" },
+      { check: "base-mismatch", message: "targets develop" },
+    ]);
     expect(shaped.content[0].text).toContain("untracked-files");
     expect(shaped.content[0].text).toContain("base-mismatch");
   });
@@ -110,7 +113,9 @@ describe("applyContent", () => {
       committed: false, pushed: false,
     });
     expect(shaped.isError).toBe(true);
-    expect(shaped.structuredContent.warnings).toEqual(["untracked-files"]);
+    expect(shaped.structuredContent.warnings).toEqual([
+      { check: "untracked-files", message: "m" },
+    ]);
     expect(shaped.content[0].text).toContain(`Call again with acknowledge: ["untracked-files"] to proceed.`);
   });
 
@@ -125,7 +130,10 @@ describe("applyContent", () => {
       committed: false, pushed: false,
     });
     expect(shaped.isError).toBe(true);
-    expect(shaped.structuredContent.warnings).toEqual(["untracked-files", "base-mismatch"]);
+    expect(shaped.structuredContent.warnings).toEqual([
+      { check: "untracked-files", message: "m1" },
+      { check: "base-mismatch", message: "m2" },
+    ]);
     expect(shaped.content[0].text).toContain(`acknowledge: ["untracked-files", "base-mismatch"]`);
   });
 

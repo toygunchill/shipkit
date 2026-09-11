@@ -31,6 +31,14 @@ function warningIds(result: SubmitResult): string[] {
   return result.warnings.map((warning) => warning.check);
 }
 
+// The ids alone are what `apply` requires echoed back in `acknowledge`; the messages are what
+// make those ids mean anything to whoever — human or agent — decides whether to send them.
+// Carrying only `check` in structuredContent left the message reachable solely by parsing the
+// prose in `content[0].text`.
+function structuredWarnings(result: SubmitResult): { check: string; message: string }[] {
+  return result.warnings.map((warning) => ({ check: warning.check, message: warning.message }));
+}
+
 function findingLines(result: SubmitResult): string[] {
   return result.findings.map((finding) => `${finding.rule}: ${finding.message}`);
 }
@@ -42,7 +50,7 @@ function warningLines(result: SubmitResult): string[] {
 export function previewContent(result: SubmitResult): ToolContent {
   const structured = {
     findings: findingLines(result),
-    warnings: warningIds(result),
+    warnings: structuredWarnings(result),
     body: result.body ?? "",
   };
 
@@ -81,7 +89,7 @@ export function previewContent(result: SubmitResult): ToolContent {
 export function applyContent(result: SubmitResult): ToolContent {
   const structured: Record<string, unknown> = {
     findings: findingLines(result),
-    warnings: warningIds(result),
+    warnings: structuredWarnings(result),
     committed: result.committed,
     pushed: result.pushed,
   };

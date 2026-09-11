@@ -4,3 +4,4 @@ dist/
 # Subagent-driven-development scratch: ledgers, briefs, reports, review packages
 .superpowers/
 dist-release/
+design/icon/generated/

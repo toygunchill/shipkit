@@ -143,4 +143,47 @@ describe("requestApproval", () => {
       "string",
     );
   });
+
+  // A listener that accepted the connection and then hung up without ever
+  // writing an answer is not the same situation as nobody being home: an
+  // application is present, it just didn't say yes. `no-surface` under the
+  // `echo` policy can let a push through on the caller's own acknowledgement;
+  // `denied` never can. Collapsing this into `no-surface` would let a
+  // listener dodge the decision entirely just by closing early.
+  it("returns denied when the listener closes the connection without answering", async () => {
+    const path = socketPath();
+    const server = createServer((socket) => {
+      // Drain and discard whatever the client sends. Without this the
+      // client's request sits unread and the socket's readable side never
+      // reaches "end", which would leave the connection half-open and hang
+      // `server.close()` in `afterEach` — a quirk of Node streams, not of
+      // the client under test.
+      socket.resume();
+      socket.end();
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(path, () => resolve()));
+
+    await expect(requestApproval(REQUEST, { socketPath: path })).resolves.toBe("denied");
+  });
+
+  // `timeoutMs` is a promise made to the caller, not just an upper bound
+  // vitest's own budget happens to cover. A client that waited far longer
+  // than asked (or timed out far sooner) would still pass a test that only
+  // checked the eventual outcome, so this measures the actual elapsed time.
+  it("times out close to the requested timeoutMs, not merely eventually", async () => {
+    const path = socketPath();
+    await listen(path, () => null);
+
+    const start = Date.now();
+    await expect(requestApproval(REQUEST, { socketPath: path, timeoutMs: 120 })).resolves.toBe(
+      "timed-out",
+    );
+    const elapsed = Date.now() - start;
+
+    // Comfortably over 120ms to absorb scheduler jitter, comfortably under a
+    // second so a timer hardcoded to something else (e.g. 3000ms) still fails.
+    expect(elapsed).toBeGreaterThanOrEqual(100);
+    expect(elapsed).toBeLessThan(500);
+  });
 });

@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { extractIssueKeysFromBody, firstIssueKey, isValidBase } from "../cli-support.js";
 import { ConfigError } from "../config/load.js";
 import type { ShipkitConfig } from "../config/schema.js";
@@ -37,6 +37,8 @@ export type SubmitDeps = {
   readRepoState: (base: string) => RepoState;
   findPullRequest: (branch: string) => PullRequestState | null;
   readUntrackedFiles: () => string[];
+  readRepoRoot: () => string;
+  realpath: (path: string) => string;
   commitAll: (message: string, exclude: string[]) => void;
   pushBranch: (branch: string) => void;
   createPullRequest: (input: { title: string; body: string; base: string; head: string }) => string;
@@ -104,13 +106,31 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
 
     const repo = deps.readRepoState(options.base);
     const existingPr = deps.findPullRequest(branch);
-    // The response file lives in the repository and is shipkit's own input, never part of
-    // the change, so it is excluded from staging rather than merely reported. Everything
-    // else untracked is the author's to judge, which is what the warning is for.
-    const responsePath = resolve(options.input);
+    // The response file is shipkit's own input, never part of the change, so it is excluded
+    // from staging rather than merely reported — and dropped from the warning too, since a
+    // warning that fires on every single run is one nobody reads. Everything else untracked
+    // is the author's to judge, which is what the warning is for.
+    //
+    // Paths here are repository-root-relative, which is what the pathspec needs and what
+    // `readUntrackedFiles` returns. A response file written outside the repository is not
+    // excluded at all: git rejects an out-of-tree pathspec outright, and there is nothing
+    // to exclude anyway, since staging can never reach it.
+    // Both sides go through realpath first. `git rev-parse --show-toplevel` resolves
+    // symbolic links and `resolve` does not, so on a checkout reached through one (macOS
+    // puts every temporary directory behind /var -> /private/var) the two spellings of the
+    // same directory would not match. The mismatch fails quietly in the worst direction:
+    // the response file is judged to be outside the repository, the exclusion is skipped,
+    // and it lands in the commit again.
+    const repoRoot = deps.realpath(deps.readRepoRoot());
+    const relativeToRoot = relative(repoRoot, deps.realpath(resolve(options.input)));
+    const responseInRepo =
+      relativeToRoot.length > 0 &&
+      !relativeToRoot.startsWith("..") &&
+      !isAbsolute(relativeToRoot);
+    const exclude = responseInRepo ? [relativeToRoot] : [];
     const untrackedFiles = deps
       .readUntrackedFiles()
-      .filter((file) => resolve(file) !== responsePath);
+      .filter((file) => !responseInRepo || file !== relativeToRoot);
     const warnings = preflight({
       branch,
       base: options.base,
@@ -132,7 +152,7 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       }
     }
 
-    deps.commitAll(response.commitMessage, [responsePath]);
+    deps.commitAll(response.commitMessage, exclude);
     committed = true;
     deps.pushBranch(branch);
     pushed = true;

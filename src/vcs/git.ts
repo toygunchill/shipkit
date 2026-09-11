@@ -36,7 +36,16 @@ export function readRepoState(base: string, cwd: string = process.cwd()): RepoSt
  * keeps ignored paths out, so what comes back is only what would really be committed.
  */
 export function readUntrackedFiles(cwd: string = process.cwd()): string[] {
-  return git(["ls-files", "--others", "--exclude-standard"], cwd)
+  // `:/` and `--full-name` together make this a question about the repository rather than
+  // about the current directory. Without them `ls-files` reports only what sits below cwd,
+  // so running shipkit from a subdirectory would hide the root-level files that staging
+  // sweeps in anyway — the warning would go quiet exactly where it is most needed.
+  return git(["ls-files", "--others", "--exclude-standard", "--full-name", "--", ":/"], cwd)
     .split("\n")
     .filter(Boolean);
+}
+
+/** Absolute path of the repository root, for turning caller paths into root-relative ones. */
+export function readRepoRoot(cwd: string = process.cwd()): string {
+  return git(["rev-parse", "--show-toplevel"], cwd).trim();
 }

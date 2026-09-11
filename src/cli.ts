@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { Command, CommanderError } from "commander";
 import { assembleBrief } from "./brief/assemble.js";
 import {
@@ -15,7 +15,7 @@ import type { IssueFacts } from "./jira/types.js";
 import { loadResponse, renderBody } from "./submit/response.js";
 import { runSubmit, type SubmitDeps } from "./submit/run.js";
 import { validate } from "./validate/rules.js";
-import { currentBranch, readRepoState, readUntrackedFiles, VcsError } from "./vcs/git.js";
+import { currentBranch, readRepoRoot, readRepoState, readUntrackedFiles, VcsError } from "./vcs/git.js";
 import { baseCandidates, findPullRequest } from "./vcs/github.js";
 import { commitAll, createPullRequest, pushBranch } from "./vcs/mutate.js";
 
@@ -147,6 +147,8 @@ const realSubmitDeps: SubmitDeps = {
   readRepoState,
   findPullRequest,
   readUntrackedFiles,
+  readRepoRoot,
+  realpath: (path: string) => realpathSync(path),
   commitAll,
   pushBranch,
   createPullRequest,

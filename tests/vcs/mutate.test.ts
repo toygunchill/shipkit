@@ -17,12 +17,12 @@ describe("commitAll", () => {
 
   it("keeps an excluded path out of the staging pathspec", () => {
     const seen: string[][] = [];
-    commitAll("m", ["/repo/response.json"], (args) => {
+    commitAll("m", ["scratch/response.json"], (args) => {
       seen.push(args);
       return "";
     });
     expect(seen[0]).toEqual([
-      "add", "--all", "--", ":/", ":(exclude)/repo/response.json",
+      "add", "--all", "--", ":/", ":(exclude,literal,top)scratch/response.json",
     ]);
   });
 
@@ -31,7 +31,7 @@ describe("commitAll", () => {
   // stage only part of the change — the opposite of what `--all` promises.
   it("anchors the pathspec at the repository root, not the working directory", () => {
     const seen: string[][] = [];
-    commitAll("m", ["/repo/response.json"], (args) => {
+    commitAll("m", ["scratch/response.json"], (args) => {
       seen.push(args);
       return "";
     });
@@ -41,13 +41,36 @@ describe("commitAll", () => {
 
   it("excludes several paths at once", () => {
     const seen: string[][] = [];
-    commitAll("m", ["/repo/a.json", "/repo/b.json"], (args) => {
+    commitAll("m", ["a.json", "b.json"], (args) => {
       seen.push(args);
       return "";
     });
     expect(seen[0]).toEqual([
-      "add", "--all", "--", ":/", ":(exclude)/repo/a.json", ":(exclude)/repo/b.json",
+      "add", "--all", "--", ":/", ":(exclude,literal,top)a.json", ":(exclude,literal,top)b.json",
     ]);
+  });
+
+  // Without `literal`, a pathspec is glob-matched: excluding a real file named
+  // `weird[1].txt` also silently drops an unrelated `weird1.txt` from the commit. Dropping
+  // someone's actual work is worse than the stray-file problem this exclusion exists for.
+  it("disables globbing so a bracket in a filename cannot match another file", () => {
+    const seen: string[][] = [];
+    commitAll("m", ["weird[1].txt"], (args) => {
+      seen.push(args);
+      return "";
+    });
+    expect(seen[0]).toContain(":(exclude,literal,top)weird[1].txt");
+  });
+
+  // `top` is what makes the root-relative path match when shipkit runs from a
+  // subdirectory; without it the pathspec is read relative to the working directory.
+  it("reads excluded paths from the repository root", () => {
+    const seen: string[][] = [];
+    commitAll("m", ["sub/response.json"], (args) => {
+      seen.push(args);
+      return "";
+    });
+    expect(seen[0][4]).toContain("top");
   });
 
   it("throws VcsError when git fails", () => {

@@ -137,10 +137,18 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       };
     }
 
-    // The response title's key, not the branch's — titlePattern guarantees the title carries
-    // one, which is what foreign-commits needs as this change's identity to compare commits
-    // against.
-    const ticketKey = firstIssueKey(response.title, config.jira.keyPattern);
+    // This change's identity, which foreign-commits compares the branch's commits against.
+    // The title first, when it carries a key — that is the most explicit statement of what
+    // the work is. Otherwise the first key the body cites.
+    //
+    // Neither source can be assumed. The branch cannot carry a key at all under the
+    // reference config, whose branch.pattern admits no uppercase. And the title need not
+    // either: that repository's own workflow derives the ticket tag from the branch and
+    // prepends it when the pull request opens, so requiring authors to write one produced
+    // titles carrying two, and the pattern dropped it. The body is the one place a key is
+    // always present, because issue-key-missing refuses a body without one.
+    const ticketKey =
+      firstIssueKey(response.title, config.jira.keyPattern) ?? citedKeys[0];
 
     const repo = deps.readRepoState(options.base);
     const existingPr = deps.findPullRequest(branch);

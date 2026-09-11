@@ -12,8 +12,28 @@ function guard(run: (args: string[]) => string, args: string[], binary: string):
   return asVcsError(binary, args, () => run(args));
 }
 
-export function commitAll(message: string, run: GitRunner = defaultGit): void {
-  guard(run, ["add", "--all"], "git");
+/**
+ * Stages the whole tree and commits it. `exclude` takes repository-root-relative paths that
+ * are never part of the change — shipkit's own response file above all, which sits in the
+ * repository and would otherwise be committed into the pull request on every run.
+ *
+ * Three pieces of pathspec magic, each load-bearing. `:/` anchors staging at the repository
+ * root: a bare `.` means "below the current directory", so invoking shipkit from a
+ * subdirectory would quietly stage only part of the work. `literal` turns off globbing —
+ * without it, excluding a file named `weird[1].txt` also silently drops an unrelated
+ * `weird1.txt` from the commit. `top` reads the path from the root, so it matches wherever
+ * shipkit was invoked from. An absolute path here is a bug: git rejects it outright.
+ */
+export function commitAll(
+  message: string,
+  exclude: string[],
+  run: GitRunner = defaultGit,
+): void {
+  const stage =
+    exclude.length === 0
+      ? ["add", "--all"]
+      : ["add", "--all", "--", ":/", ...exclude.map((path) => `:(exclude,literal,top)${path}`)];
+  guard(run, stage, "git");
   guard(run, ["commit", "-m", message], "git");
 }
 

@@ -9,7 +9,7 @@ vi.mock("node:child_process", () => ({
   execFileSync: execFileSyncMock,
 }));
 
-const { readRepoState } = await import("../../src/vcs/git.js");
+const { readRepoRoot, readRepoState, readUntrackedFiles } = await import("../../src/vcs/git.js");
 
 beforeEach(() => {
   execFileSyncMock.mockReset();
@@ -53,5 +53,43 @@ describe("readRepoState git invocations", () => {
     for (const call of execFileSyncMock.mock.calls as [string, string[], { cwd?: string }][]) {
       expect(call[2]?.cwd).toBe("/some/repo");
     }
+  });
+});
+
+describe("readUntrackedFiles", () => {
+  it("asks git only for untracked files that are not ignored", () => {
+    execFileSyncMock.mockImplementation(() => "");
+    readUntrackedFiles("/some/repo");
+    expect(calls()).toEqual([
+      ["ls-files", "--others", "--exclude-standard", "--full-name", "--", ":/"],
+    ]);
+  });
+
+  // `git ls-files --others` alone reports only what sits below the working directory, so
+  // from a subdirectory the warning would go silent about root-level files that staging
+  // sweeps in regardless. `:/` plus `--full-name` make it a question about the repository.
+  it("asks about the whole repository, not just the working directory", () => {
+    execFileSyncMock.mockImplementation(() => "");
+    readUntrackedFiles("/some/repo/sub");
+    expect(calls()[0]).toContain(":/");
+    expect(calls()[0]).toContain("--full-name");
+  });
+
+  it("splits the output into paths and drops the trailing blank", () => {
+    execFileSyncMock.mockImplementation(() => ".env.local\nnotes.md\n");
+    expect(readUntrackedFiles("/some/repo")).toEqual([".env.local", "notes.md"]);
+  });
+
+  it("returns an empty list for a clean tree", () => {
+    execFileSyncMock.mockImplementation(() => "");
+    expect(readUntrackedFiles("/some/repo")).toEqual([]);
+  });
+});
+
+describe("readRepoRoot", () => {
+  it("asks git for the worktree top level and trims it", () => {
+    execFileSyncMock.mockImplementation(() => "/some/repo\n");
+    expect(readRepoRoot("/some/repo/sub")).toBe("/some/repo");
+    expect(calls()).toEqual([["rev-parse", "--show-toplevel"]]);
   });
 });

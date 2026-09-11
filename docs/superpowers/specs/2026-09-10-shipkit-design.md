@@ -211,8 +211,14 @@ because the failure it catches actually happened while this tool was being desig
 | Branch is based on X but targets Y | A PR whose base was moved to 3.76 while its branch still sat on 3.75. |
 | A blocking label is present | Two PRs sitting green-but-unmergeable behind an `in test` label. |
 | Branch name violates the ruleset | A push rejected for a `.` in the branch name, discovered only at push time. |
+| Staging will sweep in N untracked files | `git add --all` committing a `.env.local`, a scratch note, or the agent's own response file into the pull request. |
 
 Pre-flight reports; the human decides. It does not silently refuse.
+
+The one exception is shipkit's own response file. It sits in the repository, it is never
+part of the change, and staging it is never what anyone wanted — so it is excluded from
+the commit outright rather than reported. Reporting it would also put a warning on every
+run, and a warning that always fires is one nobody reads.
 
 ## Target branch
 

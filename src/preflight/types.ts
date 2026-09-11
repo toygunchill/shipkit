@@ -14,6 +14,8 @@ export type PreflightInput = {
   /** False when a key was derived but Jira could not be consulted — see `issue-unverified`. */
   issueVerified: boolean;
   pullRequest: PullRequestState | null;
+  /** Untracked, non-ignored paths that staging would sweep into the commit. */
+  untrackedFiles: string[];
   config: ShipkitConfig;
 };
 

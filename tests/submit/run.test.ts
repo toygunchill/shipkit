@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../../src/config/load.js";
 import type { ShipkitConfig } from "../../src/config/schema.js";
@@ -76,6 +77,9 @@ function makeDeps(
         resolveIssue: poisoned("resolveIssue"),
         readRepoState: poisoned("readRepoState"),
         findPullRequest: poisoned("findPullRequest"),
+        readUntrackedFiles: poisoned("readUntrackedFiles"),
+        readRepoRoot: poisoned("readRepoRoot"),
+        realpath: poisoned("realpath"),
         commitAll: poisoned("commitAll"),
         pushBranch: poisoned("pushBranch"),
         createPullRequest: poisoned("createPullRequest"),
@@ -94,6 +98,9 @@ function makeDeps(
         resolveIssue: (key: string) => Promise.resolve({ key, type: "Story", summary: "" } as IssueFacts),
         readRepoState: () => ({ branch: BRANCH, changedFiles: [], diffstat: "", commits: [] }),
         findPullRequest: () => NO_PR,
+        readUntrackedFiles: () => [],
+        readRepoRoot: () => "/repo",
+        realpath: (path: string) => path,
         commitAll: () => undefined,
         pushBranch: () => undefined,
         createPullRequest: () => "https://github.com/x/y/pull/1",
@@ -111,6 +118,9 @@ function makeDeps(
     resolveIssue: record("resolveIssue", merged.resolveIssue),
     readRepoState: record("readRepoState", merged.readRepoState),
     findPullRequest: record("findPullRequest", merged.findPullRequest),
+    readUntrackedFiles: record("readUntrackedFiles", merged.readUntrackedFiles),
+    readRepoRoot: record("readRepoRoot", merged.readRepoRoot),
+    realpath: record("realpath", merged.realpath),
     commitAll: record("commitAll", merged.commitAll),
     pushBranch: record("pushBranch", merged.pushBranch),
     createPullRequest: record("createPullRequest", merged.createPullRequest),
@@ -129,6 +139,9 @@ const DOMAIN_DEPS = [
   "resolveIssue",
   "readRepoState",
   "findPullRequest",
+  "readUntrackedFiles",
+  "readRepoRoot",
+  "realpath",
   "commitAll",
   "pushBranch",
   "createPullRequest",
@@ -401,5 +414,128 @@ describe("runSubmit", () => {
       const { ticketFromBranch } = await import("../../src/cli-support.js");
       expect(ticketFromBranch(REPRO_BRANCH, REFERENCE_CONFIG.jira.keyPattern)).toBeUndefined();
     });
+  });
+});
+
+// `git add --all` was staging shipkit's own response file into the pull request on every
+// run, alongside whatever else happened to be lying in the checkout. These pin the two
+// halves of the answer: the response file is excluded outright, everything else untracked
+// is reported so the author can decide.
+describe("runSubmit and the working tree", () => {
+  it("excludes the response file from staging, as a root-relative path", async () => {
+    const { deps, calls } = makeDeps({});
+
+    const code = await runSubmit({ ...OPTIONS, input: "/repo/scratch/response.json" }, deps);
+
+    expect(code).toBe(0);
+    const staged = calls.find((c) => c.fn === "commitAll");
+    expect(staged?.args[1]).toEqual(["scratch/response.json"]);
+  });
+
+  // An absolute or out-of-tree pathspec is rejected by git outright, so passing one would
+  // turn an otherwise clean submit into a hard failure. A response file written outside the
+  // repository also needs no exclusion: staging can never reach it.
+  it("excludes nothing when the response file lives outside the repository", async () => {
+    const { deps, calls } = makeDeps({});
+
+    const code = await runSubmit({ ...OPTIONS, input: "/tmp/elsewhere/response.json" }, deps);
+
+    expect(code).toBe(0);
+    expect(calls.find((c) => c.fn === "commitAll")?.args[1]).toEqual([]);
+  });
+
+  it("warns about the other untracked files staging would sweep in", async () => {
+    const { deps, err } = makeDeps({
+      readUntrackedFiles: () => [".env.local", "debug-notes.md"],
+    });
+
+    const code = await runSubmit({ ...OPTIONS, yes: false }, deps);
+
+    expect(code).toBe(2);
+    expect(err.join("\n")).toContain("untracked-files");
+    expect(err.join("\n")).toContain(".env.local");
+  });
+
+  // The response file is untracked too. Reporting it would put a warning on every single
+  // run, and a warning that always fires is one nobody reads.
+  it("does not warn about the response file itself", async () => {
+    const { deps, err } = makeDeps({
+      readUntrackedFiles: () => ["scratch/response.json"],
+    });
+
+    const code = await runSubmit(
+      { ...OPTIONS, input: "/repo/scratch/response.json", yes: false },
+      deps,
+    );
+
+    expect(code).toBe(0);
+    expect(err.join("\n")).not.toContain("untracked-files");
+  });
+
+  it("still warns about the others when the response file sits among them", async () => {
+    const { deps, err } = makeDeps({
+      readUntrackedFiles: () => ["scratch/response.json", ".env.local"],
+    });
+
+    const code = await runSubmit(
+      { ...OPTIONS, input: "/repo/scratch/response.json", yes: false },
+      deps,
+    );
+
+    expect(code).toBe(2);
+    expect(err.join("\n")).toContain(".env.local");
+    expect(err.join("\n")).not.toContain("response.json");
+  });
+});
+
+// git rev-parse --show-toplevel resolves symbolic links; node's resolve() does not. On a
+// checkout reached through one, the two spellings of the same directory disagree and the
+// response file looks like it lives outside the repository — so the exclusion is skipped
+// and the file lands in the commit, which is the bug this whole change exists to fix.
+describe("runSubmit under a symlinked checkout", () => {
+  it("still excludes the response file when the root is reached through a symlink", async () => {
+    const { deps, calls } = makeDeps({
+      readRepoRoot: () => "/private/var/repo",
+      realpath: (path: string) => path.replace(/^\/var\//, "/private/var/"),
+    });
+
+    const code = await runSubmit({ ...OPTIONS, input: "/var/repo/scratch/response.json" }, deps);
+
+    expect(code).toBe(0);
+    expect(calls.find((c) => c.fn === "commitAll")?.args[1]).toEqual(["scratch/response.json"]);
+  });
+});
+
+describe("runSubmit path dialects and a vanished response file", () => {
+  // `relative` answers in the platform separator; `git ls-files --full-name` always answers
+  // in forward slashes. The two are compared to each other and one of them becomes a
+  // pathspec, so a backslash here means the exclusion misses and the response file is
+  // reported as untracked on every single run.
+  it("spells the excluded path the way git spells paths", async () => {
+    const { deps, calls } = makeDeps({});
+
+    const code = await runSubmit({ ...OPTIONS, input: "/repo/a/b/response.json" }, deps);
+
+    expect(code).toBe(0);
+    const excluded = calls.find((c) => c.fn === "commitAll")?.args[1] as string[];
+    expect(excluded).toEqual(["a/b/response.json"]);
+    expect(excluded[0]).not.toContain("\\");
+  });
+
+  // realpath throws on a path that no longer exists, and a raw ENOENT is none of the typed
+  // errors the catch below classifies — it would escape and crash with a stack trace
+  // instead of the exit 2 every other bad input gets.
+  it("returns 2 instead of crashing when the response file vanishes mid-run", async () => {
+    const { deps, calls, err } = makeDeps({
+      realpath: () => {
+        throw new Error("ENOENT: no such file or directory");
+      },
+    });
+
+    const code = await runSubmit(OPTIONS, deps);
+
+    expect(code).toBe(2);
+    expect(err.join("\n")).toContain(OPTIONS.input);
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
   });
 });

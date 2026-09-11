@@ -67,5 +67,18 @@ export function preflight(input: PreflightInput): PreflightResult {
     });
   }
 
+  if (input.untrackedFiles.length > 0) {
+    const SHOWN = 5;
+    const shown = input.untrackedFiles.slice(0, SHOWN);
+    const remaining = input.untrackedFiles.length - shown.length;
+    const tail = remaining > 0 ? `, and ${remaining} more` : "";
+    warnings.push({
+      check: "untracked-files",
+      message:
+        `Staging will add ${input.untrackedFiles.length} untracked file(s) to this commit: ` +
+        `${shown.join(", ")}${tail}`,
+    });
+  }
+
   return { warnings };
 }

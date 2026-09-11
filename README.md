@@ -78,6 +78,25 @@ node dist/cli.js --help
 ## Configuration
 
 `.shipkit.yml` at the repository root. `docs/examples/example-app.shipkit.yml`
-is a working one, reconstructed from a real team's rules.
+is a working one, reconstructed from a real team's rules — but note that it
+sets `pr.approval: human` (see below); a reader copying it as a starting point
+inherits that setting too.
 
 There is no `shipkit init` yet, so it is written by hand.
+
+### `pr.approval` and `pr.approvalTimeoutSeconds`
+
+`pr.approval` decides who a pre-flight warning is answered by:
+
+- `echo` (the default) — the caller's own acknowledgement of the warning ids
+  is enough, exactly as before these keys existed. Setting this explicitly, or
+  omitting it, preserves today's behaviour on every repository.
+- `human` — a person must decide, every time, regardless of which ids the
+  caller echoed back. This requires a separate approval surface listening on
+  a local socket, which is **not built yet** — until it exists, `submit`
+  under `human` refuses every warned push outright, naming the approval
+  surface as the reason.
+
+`pr.approvalTimeoutSeconds` (default `120`) is how long `submit` waits for
+that person's decision before refusing and naming a fingerprint the call can
+be repeated with to resume the same request.

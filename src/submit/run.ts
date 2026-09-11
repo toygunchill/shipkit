@@ -1,6 +1,12 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { fingerprint, type Situation } from "../approval/fingerprint.js";
-import { gate, shouldRequestApproval, type ApprovalOutcome, type GateResult } from "../approval/policy.js";
+import {
+  gate,
+  shouldRequestApproval,
+  type ApprovalOutcome,
+  type GateReason,
+  type GateResult,
+} from "../approval/policy.js";
 import { PROTOCOL_VERSION, type ApprovalRequest } from "../approval/protocol.js";
 import { extractIssueKeysFromBody, firstIssueKey, isValidBase } from "../cli-support.js";
 import { ConfigError } from "../config/load.js";
@@ -51,6 +57,14 @@ export type SubmitResult = {
    * rather than starting over.
    */
   approvalFingerprint?: string;
+  /**
+   * Why the gate refused, when it did. Each interface words its own remedy from
+   * this rather than guessing one from `code` and `warnings.length` — a guess
+   * that cannot tell "unacknowledged" (where --yes / acknowledge would help)
+   * apart from "denied", "timed-out", "no-surface" or "human-required" (where
+   * it would not).
+   */
+  refusal?: GateReason;
 };
 
 /**
@@ -192,7 +206,10 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       firstIssueKey(response.title, config.jira.keyPattern) ?? citedKeys[0];
 
     const repo = deps.readRepoState(options.base);
-    const existingPr = deps.findPullRequest(branch);
+    // Reassigned below when a re-derivation runs and the situation is unchanged: the
+    // open-or-update decision at the end of this function must act on the pull request
+    // as it stands now, not as it stood when the person was first asked.
+    let existingPr = deps.findPullRequest(branch);
     // The response file is shipkit's own input, never part of the change, so it is excluded
     // from staging rather than merely reported — and dropped from the warning too, since a
     // warning that fires on every single run is one nobody reads. Everything else untracked
@@ -342,6 +359,13 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
             pushed: false,
           };
         }
+
+        // The re-derivation is authoritative: the open-or-update decision below must
+        // act on the pull request as it stands now, not on the one read before the
+        // person was asked. A pull request that opened during the wait — with no new
+        // warning of its own, so the fingerprint above still matched — must still be
+        // updated rather than collided with by an errant createPullRequest.
+        existingPr = freshPr;
       }
     }
 
@@ -366,6 +390,7 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
         message,
         approval,
         approvalFingerprint,
+        refusal: decision.reason,
         committed: false,
         pushed: false,
       };

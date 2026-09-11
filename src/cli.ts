@@ -190,13 +190,15 @@ program
         realSubmitDeps,
       );
       // runSubmit's refusal message is deliberately neutral — it has no business knowing this
-      // caller has a --yes flag. When --yes was not given, a code-2 result carrying warnings
-      // can only be this gate refusal (with --yes, acknowledge is "all", so the gate never
-      // triggers; every other code-2 cause — an invalid base, a config that will not load, a
-      // git or gh failure — reports before pre-flight ever runs and so carries no warnings).
-      // Appending the remedy here, after the fact, is what keeps the interface-specific advice
-      // out of the core so an MCP caller — who has no --yes — never sees it.
-      if (!options.yes && result.code === 2 && result.warnings.length > 0) {
+      // caller has a --yes flag, and under the `human` approval policy `--yes` cannot help at
+      // all (an echoed id is not a person's decision). `result.refusal` names the exact gate
+      // reason, so this appends the remedy only for the one reason it actually fixes —
+      // "unacknowledged" — rather than guessing from `code` and `warnings.length`, which also
+      // matches "denied", "timed-out", "no-surface" and "human-required" and would send the
+      // reader into a --yes retry that reproduces the identical refusal. Appending the remedy
+      // here, after the fact, is what keeps the interface-specific advice out of the core so an
+      // MCP caller — who has no --yes — never sees it.
+      if (!options.yes && result.refusal === "unacknowledged") {
         console.error("Re-run with --yes to accept these.");
       }
       process.exitCode = result.code;

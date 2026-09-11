@@ -860,20 +860,30 @@ describe("the approval surface", () => {
     expect(result.code).toBe(0);
     expect(result.approval).toBe("approved");
     expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
+    // The fingerprint is what a repeated call would need to recognize this same
+    // situation — it must survive onto a successful result, not only a refusal.
+    expect(result.approvalFingerprint).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("refuses and mutates nothing when denied", async () => {
     const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => "denied" as const });
     const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
     expect(result.code).toBe(2);
+    expect(result.refusal).toBe("denied");
     expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
   });
 
-  it("refuses and mutates nothing when the wait runs out", async () => {
+  it("refuses and mutates nothing when the wait runs out, naming the fingerprint to resume", async () => {
     const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => "timed-out" as const });
     const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
     expect(result.code).toBe(2);
+    expect(result.refusal).toBe("timed-out");
     expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
+    // Naming the actual fingerprint, not a placeholder, is what makes the resumption
+    // claim true — an implementation that always printed "unknown" would still pass
+    // every assertion above.
+    expect(result.approvalFingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.message).toContain(result.approvalFingerprint as string);
   });
 
   // The property that keeps the application optional.
@@ -952,6 +962,40 @@ describe("the approval surface", () => {
     expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
   });
 
+  // The re-derivation exists to refresh the facts a mutating call is about to act on — not
+  // only the ones that feed the fingerprint. A pull request that opens during the wait, with
+  // no warning of its own, leaves the fingerprint unchanged and the gate opens legitimately;
+  // but the open-or-update decision at the end must still see it, or createPullRequest fires
+  // against a branch that already has one open.
+  it("updates the pull request that opened during the wait, instead of creating a second one", async () => {
+    let reads = 0;
+    const { deps, calls } = makeDeps({
+      ...warned,
+      requestApproval: async () => "approved" as const,
+      findPullRequest: () => {
+        reads += 1;
+        return reads === 1
+          ? NO_PR
+          : {
+              number: 9,
+              url: "https://github.com/x/y/pull/9",
+              baseRefName: "develop",
+              labels: [],
+              approvals: [],
+            };
+      },
+    });
+
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+
+    expect(result.code).toBe(0);
+    expect(result.updated).toBe(true);
+    expect(result.url).toBe("https://github.com/x/y/pull/9");
+    expect(calls.some((c) => c.fn === "commitAll")).toBe(true);
+    expect(calls.some((c) => c.fn === "pushBranch")).toBe(true);
+    expect(calls.some((c) => c.fn === "createPullRequest")).toBe(false);
+  });
+
   it("never asks in preview mode", async () => {
     const { deps, calls } = makeDeps(warned);
     await runSubmit({ ...OPTIONS, mode: "preview", acknowledge: [] }, deps);
@@ -977,6 +1021,10 @@ describe("the human policy", () => {
     const { deps, calls } = makeDeps({ ...warned, requestApproval: async () => "no-surface" as const /* extra args ignored */ });
     const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
     expect(result.code).toBe(2);
+    // Under echo the same outcome maps to "unacknowledged" (see the describe above); under
+    // human it must not, or the CLI's "Re-run with --yes" and MCP's "acknowledge: [...]"
+    // guidance would both be offered as if they could fix what --yes/acknowledge cannot.
+    expect(result.refusal).toBe("no-surface");
     expect(calls.some((c) => c.fn === "commitAll")).toBe(false);
   });
 

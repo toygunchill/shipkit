@@ -129,6 +129,7 @@ describe("applyContent", () => {
       warnings: [{ check: "untracked-files", message: "m" }],
       body: "b", message: "Refusing to proceed",
       committed: false, pushed: false,
+      refusal: "unacknowledged",
     });
     expect(shaped.isError).toBe(true);
     expect(shaped.structuredContent.warnings).toEqual([
@@ -200,6 +201,7 @@ describe("applyContent", () => {
       ],
       body: "b", message: "Refusing to proceed",
       committed: false, pushed: false,
+      refusal: "unacknowledged",
     });
     expect(shaped.isError).toBe(true);
     expect(shaped.structuredContent.warnings).toEqual([
@@ -207,6 +209,38 @@ describe("applyContent", () => {
       { check: "base-mismatch", message: "m2" },
     ]);
     expect(shaped.content[0].text).toContain(`acknowledge: ["untracked-files", "base-mismatch"]`);
+  });
+
+  // The bug class this project already shipped once: one interface's remedy in another's
+  // mouth. `warnings.length > 0` is also true for these two reasons — a person was asked
+  // and either said no, said nothing before the wait ran out, or the surface that would
+  // relay the question is not running under a policy that requires one. `acknowledge:
+  // [...]` fixes none of that, so applyContent must not offer it.
+  it("gives no acknowledge guidance on a human-required refusal", () => {
+    const shaped = applyContent({
+      code: 2, findings: [],
+      warnings: [{ check: "untracked-files", message: "m" }],
+      body: "b",
+      message: "Refusing to proceed. This repository requires an approval from a person.",
+      committed: false, pushed: false,
+      refusal: "human-required",
+    });
+    expect(shaped.isError).toBe(true);
+    expect(shaped.content[0].text).not.toContain("acknowledge:");
+  });
+
+  it("gives no acknowledge guidance on a no-surface refusal", () => {
+    const shaped = applyContent({
+      code: 2, findings: [],
+      warnings: [{ check: "untracked-files", message: "m" }],
+      body: "b",
+      message:
+        "Refusing to proceed. This repository requires an approval, and the approval surface is not running.",
+      committed: false, pushed: false,
+      refusal: "no-surface",
+    });
+    expect(shaped.isError).toBe(true);
+    expect(shaped.content[0].text).not.toContain("acknowledge:");
   });
 
   // Half-done is the state a caller most needs told, and the one it is least likely to guess.

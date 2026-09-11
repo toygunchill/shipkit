@@ -96,4 +96,62 @@ describe("the MCP server", () => {
     });
     expect(result.isError).toBe(true);
   });
+
+  it("routes an apply call through to the core in apply mode", async () => {
+    const seen: SubmitOptions[] = [];
+    const client = await connect(seen);
+
+    await client.callTool({
+      name: "shipkit_apply",
+      arguments: {
+        repo: "/repo", base: "develop",
+        title: "[ABC-1] fix(x): y", commitMessage: "fix(x): y",
+        sections: { Summary: "s" },
+      },
+    });
+
+    expect(seen[0].mode).toBe("apply");
+  });
+
+  it("forwards the acknowledge array a shipkit_apply call was given", async () => {
+    const seen: SubmitOptions[] = [];
+    const client = await connect(seen);
+
+    await client.callTool({
+      name: "shipkit_apply",
+      arguments: {
+        repo: "/repo", base: "develop",
+        title: "[ABC-1] fix(x): y", commitMessage: "fix(x): y",
+        sections: { Summary: "s" },
+        acknowledge: ["warn-1", "warn-2"],
+      },
+    });
+
+    expect(seen[0].acknowledge).toEqual(["warn-1", "warn-2"]);
+  });
+
+  it("reaches the core with an empty acknowledge when shipkit_apply omits it", async () => {
+    const seen: SubmitOptions[] = [];
+    const client = await connect(seen);
+
+    await client.callTool({
+      name: "shipkit_apply",
+      arguments: {
+        repo: "/repo", base: "develop",
+        title: "[ABC-1] fix(x): y", commitMessage: "fix(x): y",
+        sections: { Summary: "s" },
+      },
+    });
+
+    expect(seen[0].acknowledge).toEqual([]);
+  });
+
+  it("rejects a shipkit_apply call that omits a required argument", async () => {
+    const client = await connect([]);
+    const result = await client.callTool({
+      name: "shipkit_apply",
+      arguments: { repo: "/repo" },
+    });
+    expect(result.isError).toBe(true);
+  });
 });

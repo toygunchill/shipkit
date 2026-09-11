@@ -3,6 +3,7 @@
 // imported from tests.
 import { fetchIssue } from "./jira/client.js";
 import type { IssueFacts } from "./jira/types.js";
+import type { SubmitResult } from "./submit/run.js";
 import { parseBody } from "./validate/body.js";
 
 /** The first key matching `keyPattern` anywhere in `text`, or undefined when there is none. */
@@ -72,4 +73,21 @@ const BASE_PATTERN = /^[A-Za-z0-9._/-]+$/;
 /** True when `base` is a plausible ref/branch name — never something git could parse as an option. */
 export function isValidBase(base: string): boolean {
   return base.length > 0 && !base.startsWith("-") && BASE_PATTERN.test(base);
+}
+
+/**
+ * The line the command line adds after a refusal, or nothing when it has no useful remedy.
+ *
+ * `runSubmit`'s own message is deliberately neutral about which interface is asking — it
+ * has no business knowing this caller has a --yes flag, and under the `human` policy --yes
+ * cannot help at all (an echoed id is not a person's decision). This is the CLI's own
+ * after-the-fact remedy, kept out of the core and driven by `result.refusal` — the exact
+ * gate reason — rather than guessed from `code`/`warnings.length`, which also matches
+ * "denied", "timed-out", "no-surface" and "human-required" and would send the reader into a
+ * --yes retry that reproduces the identical refusal.
+ */
+export function cliRemedy(result: SubmitResult, yesGiven: boolean): string | undefined {
+  if (yesGiven) return undefined;
+  if (result.refusal !== "unacknowledged") return undefined;
+  return "Re-run with --yes to accept these.";
 }

@@ -4,6 +4,7 @@ import { Command, CommanderError } from "commander";
 import { requestApproval } from "./approval/client.js";
 import { assembleBrief } from "./brief/assemble.js";
 import {
+  cliRemedy,
   extractIssueKeysFromBody,
   isValidBase,
   resolveIssue,
@@ -189,17 +190,13 @@ program
         },
         realSubmitDeps,
       );
-      // runSubmit's refusal message is deliberately neutral — it has no business knowing this
-      // caller has a --yes flag, and under the `human` approval policy `--yes` cannot help at
-      // all (an echoed id is not a person's decision). `result.refusal` names the exact gate
-      // reason, so this appends the remedy only for the one reason it actually fixes —
-      // "unacknowledged" — rather than guessing from `code` and `warnings.length`, which also
-      // matches "denied", "timed-out", "no-surface" and "human-required" and would send the
-      // reader into a --yes retry that reproduces the identical refusal. Appending the remedy
-      // here, after the fact, is what keeps the interface-specific advice out of the core so an
-      // MCP caller — who has no --yes — never sees it.
-      if (!options.yes && result.refusal === "unacknowledged") {
-        console.error("Re-run with --yes to accept these.");
+      // cliRemedy (src/cli-support.ts) is this interface's own after-the-fact remedy,
+      // kept out of the core and testable without a subprocess — the core's own message
+      // has no business knowing this caller has a --yes flag, and under the `human`
+      // approval policy --yes cannot help at all.
+      const remedy = cliRemedy(result, options.yes);
+      if (remedy !== undefined) {
+        console.error(remedy);
       }
       process.exitCode = result.code;
     } catch (error) {

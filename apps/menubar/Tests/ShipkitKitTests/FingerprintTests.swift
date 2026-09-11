@@ -24,7 +24,7 @@ private func loadVectors() throws -> [Vector] {
 
 @Test func matchesEveryVectorInTheSharedFixture() throws {
     let vectors = try loadVectors()
-    #expect(vectors.count >= 8)
+    #expect(vectors.count >= 9)
 
     for vector in vectors {
         let situation = Situation(

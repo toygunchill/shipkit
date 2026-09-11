@@ -30,10 +30,23 @@ private let version = "shipkit-approval-v1"
 
 /// Code-unit order, matching the TypeScript. Not `localeCompare`, which is
 /// locale-sensitive, and not a collation that would put "alpha" before "Alpha".
+///
+/// Comparison must walk UTF-16 code units, not Swift's native `String <`,
+/// which compares Unicode scalars. The two disagree for exactly the pair that
+/// matters here: an astral character (a UTF-16 surrogate pair, whose leading
+/// unit is below 0xE000) against a BMP character at or above U+E000. Scalar
+/// order puts the astral character last; JavaScript's `<`, which compares
+/// UTF-16 code units, puts it first. Swift adapts to match JavaScript because
+/// `src/approval/fingerprint.ts` is the implementation the fixture was
+/// generated from.
+private func utf16Less(_ a: String, _ b: String) -> Bool {
+    a.utf16.lexicographicallyPrecedes(b.utf16)
+}
+
 public func sortWarnings(_ warnings: [Warning]) -> [Warning] {
     warnings.sorted { a, b in
-        if a.check != b.check { return a.check < b.check }
-        return a.message < b.message
+        if a.check != b.check { return utf16Less(a.check, b.check) }
+        return utf16Less(a.message, b.message)
     }
 }
 

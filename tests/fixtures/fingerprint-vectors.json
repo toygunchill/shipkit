@@ -180,5 +180,27 @@
       "warnings": []
     },
     "fingerprint": "20dec7d57deda5f8668b92f26ab976961bc55d2896a1336b7c2d46fe6dbfa8d8"
+  },
+  {
+    "name": "astral vs. BMP-above-U+E000, same check (UTF-16 vs. Unicode-scalar sort)",
+    "situation": {
+      "repo": "/r",
+      "branch": "b",
+      "base": "d",
+      "head": "g44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "title": "t",
+      "commitMessage": "m",
+      "warnings": [
+        {
+          "check": "x",
+          "message": "🎉"
+        },
+        {
+          "check": "x",
+          "message": ""
+        }
+      ]
+    },
+    "fingerprint": "781c73eb37bcdb4925641ac518430bb9d329fbff07c4f5871dd884059800df17"
   }
 ]

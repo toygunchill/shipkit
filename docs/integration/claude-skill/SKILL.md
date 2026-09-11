@@ -48,7 +48,15 @@ Fix the response and run it again.
 **Exit 2 after warnings** — something expensive to undo is about to happen:
 approvals a push will dismiss, commits belonging to another ticket, a base that
 disagrees with the open pull request, a blocking label, or untracked files staging
-would sweep into the commit. Report the warnings and ask before re-running with
-`--yes`. Do not pass `--yes` on your own judgement.
+would sweep into the commit. Read what shipkit printed before deciding what to do:
+
+- If it names the warnings as unacknowledged, report them and ask before
+  re-running with `--yes`. Do not pass `--yes` on your own judgement.
+- If instead it says the approval surface is not running, or that this
+  repository requires a person's approval, `--yes` cannot fix that — some
+  repositories require a person's decision through a separate approval
+  application before a push with warnings can proceed. Re-running with
+  `--yes` reproduces the identical refusal. Tell the person what shipkit said
+  and wait.
 
 **Exit 0** — the pull request URL is on stdout. Report it.

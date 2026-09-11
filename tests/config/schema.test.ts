@@ -1,10 +1,18 @@
-import { describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConfigError, loadConfig } from "../../src/config/load.js";
 
+const tmpDirs: string[] = [];
+
+afterAll(() => {
+  for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
 function writeConfig(yaml: string): string {
-  const tmpDir = mkdtempSync(join("/tmp", "shipkit-test-"));
+  const tmpDir = mkdtempSync(join(tmpdir(), "shipkit-test-"));
+  tmpDirs.push(tmpDir);
   const filePath = join(tmpDir, "test.shipkit.yml");
   writeFileSync(filePath, yaml);
   return filePath;

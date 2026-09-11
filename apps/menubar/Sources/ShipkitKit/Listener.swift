@@ -218,6 +218,17 @@ public actor Listener {
                 close(client)
                 return
             }
+            // The Node client waits with its own timeout and closes when it
+            // fires; a person can still take a minute to click Approve after
+            // that. `serve`'s later `send` then lands on a vanished peer,
+            // and the default disposition for SIGPIPE kills the process --
+            // same reasoning as SO_RCVTIMEO above, so it fails closed the
+            // same way.
+            var noSigPipe: Int32 = 1
+            guard setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size)) == 0 else {
+                close(client)
+                return
+            }
             Task { await Listener.serve(client: client, on: self) }
         }
         source.setEventHandler(handler: onReadable)

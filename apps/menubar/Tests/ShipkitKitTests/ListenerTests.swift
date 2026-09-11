@@ -673,3 +673,63 @@ private func askInChunks(_ path: String, _ line: String) throws -> String {
     #expect(read == 0)
     #expect(asked.value == false)
 }
+
+// The finding: `serve`'s `send` runs on whatever socket `accept` handed back,
+// and the listener never asked for `SO_NOSIGPIPE` on it. The ordinary
+// sequence this product is built around produces exactly the situation that
+// setting exists to survive: the Node client waits with its own timeout,
+// gives up, and closes its end -- and only later does a person actually
+// click Approve or Deny, at which point `serve`'s `send` lands on a peer
+// that is already gone. Writing to a vanished peer without SO_NOSIGPIPE
+// raises SIGPIPE, whose default disposition kills the whole process, not
+// just the one connection. `present` here is rigged to suspend on a
+// continuation the test controls, so the client's close can be made to
+// happen deterministically before the decision -- and so the `send` --
+// comes back.
+@Test func answersACorrectlyBehavedRequestAfterAnEarlierClientVanishedBeforeItsAnswer() async throws {
+    let path = scratchSocket()
+    defer { removeScratchDirectory(for: path) }
+
+    let presentStarted = DispatchSemaphore(value: 0)
+    let resumeBox = SyncBox<CheckedContinuation<Decision, Never>?>(nil)
+    let listener = noSecret(socketPath: path) { _ in
+        await withCheckedContinuation { continuation in
+            resumeBox.set(continuation)
+            presentStarted.signal()
+        }
+    }
+    try await listener.start()
+    defer { Task { await listener.stop() } }
+
+    let fd = openSilentConnection(path)
+    #expect(fd >= 0)
+    let line = requestLine() + "\n"
+    _ = line.withCString { send(fd, $0, strlen($0), 0) }
+
+    // Wait until the listener has actually parsed the request and reached
+    // `present` -- i.e. it is now the one holding the pending decision --
+    // before pulling the connection out from under it.
+    let arrived = await waitBlocking(presentStarted, timeout: .now() + 2)
+    #expect(arrived == .success)
+
+    // The client vanishes before its decision comes back: the Node side of
+    // this exchange giving up on its own timeout, well before the person at
+    // the menu bar has actually clicked anything.
+    close(fd)
+    try await Task.sleep(nanoseconds: 200_000_000)
+
+    // The slow human, finally clicking Approve.
+    resumeBox.value?.resume(returning: .approved)
+
+    // `serve`'s `send` on this now-closed connection is exactly where an
+    // unfixed listener dies. There is no catching that from inside this
+    // process -- SIGPIPE's default disposition is termination -- so the
+    // only assertion available is that execution reaches here at all, on
+    // the far side of that `send` having happened.
+    try await Task.sleep(nanoseconds: 300_000_000)
+
+    // The listener itself is unaffected: a normal request right after is
+    // still answered correctly.
+    let reply = try ask(path, requestLine() + "\n")
+    #expect(reply.contains("\"decision\":\"approved\""))
+}

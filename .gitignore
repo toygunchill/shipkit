@@ -7,3 +7,4 @@ dist-release/
 design/icon/generated/
 apps/menubar/build/
 apps/menubar/.build/
+.claude/worktrees/

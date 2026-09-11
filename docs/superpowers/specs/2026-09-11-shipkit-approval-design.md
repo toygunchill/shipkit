@@ -276,14 +276,32 @@ returns nothing, and `issue-unverified` fires on every single run. That is how a
 warning becomes one nobody reads.
 
 The application stores the token in the Keychain (`service: shipkit`,
-`account: jira`) from a Settings panel. shipkit reads it with
+`account: jira`) from a Settings panel.
 
-```
-security find-generic-password -s shipkit -a jira -w
+An earlier draft had shipkit read it back with `security find-generic-password
+-s shipkit -a jira -w`, a subprocess call to a system binary in the same shape
+`git` and `gh` already have. **That does not work, and it was measured rather
+than assumed.** An item written by an application through `SecItemAdd` cannot be
+read by `/usr/bin/security`: the command blocks on a SecurityAgent
+authorisation prompt — eight seconds to an alarm, no output, no error. Adding
+`/usr/bin/security` as a trusted application, through
+`SecTrustedApplicationCreateFromPath` and `SecAccessCreate`, does not fix it
+either. The obvious repair fails the same way.
+
+The application reading its own item prompts for nothing. So the token travels
+over the socket that already exists, as a second kind of request:
+
+```json
+{ "protocol": 1, "kind": "token", "account": "jira" }
 ```
 
-a subprocess call to a system binary, the same shape `git` and `gh` already
-have — no native module, no new dependency.
+answered with the secret or with nothing. One channel, one place holding the
+keychain access that works, and no new dependency — which is what the
+subprocess call was for.
+
+The environment variable is still read first, so CI and a deliberate override
+are untouched, and a machine with no surface running behaves exactly as it does
+today.
 
 Order: the environment first, so CI and explicit overrides keep working, then the
 Keychain. A token in neither place is not an error; it is the existing

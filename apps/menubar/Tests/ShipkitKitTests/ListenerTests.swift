@@ -216,7 +216,7 @@ private final class SyncBox<Value: Sendable>: Sendable {
     defer { Task { await listener.stop() } }
 
     let reply = try ask(path, "{\n")
-    #expect(reply.contains("\"decision\":\"denied\"") || reply.isEmpty == false)
+    #expect(reply.contains("\"decision\":\"denied\""))
     #expect(asked.value == false)
 }
 

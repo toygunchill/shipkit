@@ -1143,4 +1143,14 @@ describe("the human policy", () => {
     await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
     expect(err.join("\n")).toMatch(/approval surface/i);
   });
+
+  // The spec asks this refusal to say "that the approval surface is not running
+  // and how to start it". Saying only the first half leaves the reader stuck: a
+  // menu-bar application they have never heard of is not something anyone
+  // guesses their way to, and this is the reason most likely to be met first.
+  it("tells the reader how to start the surface, not just that it is absent", async () => {
+    const { deps, err } = makeDeps({ ...warned, requestApproval: async () => ({ outcome: "no-surface" as const }) /* extra args ignored */ });
+    await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
+    expect(err.join("\n")).toContain("scripts/app.sh");
+  });
 });

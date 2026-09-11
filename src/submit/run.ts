@@ -125,7 +125,15 @@ function refusalMessage(
         `Call again to resume the same request (${approvalFingerprint ?? "unknown"}).`
       );
     case "no-surface":
-      return "Refusing to proceed. This repository requires an approval, and the approval surface is not running.";
+      // Naming how to start it is the difference between a refusal someone can
+      // act on and one they can only be annoyed by: this is the reason a person
+      // is most likely to meet first, and the app is not something they can be
+      // expected to guess the existence of.
+      return (
+        "Refusing to proceed. This repository requires an approval, and the " +
+        "approval surface is not running. Start it with ./scripts/app.sh && " +
+        "open apps/menubar/build/shipkit.app, then call again."
+      );
     case "human-required":
       return "Refusing to proceed. This repository requires an approval from a person.";
   }

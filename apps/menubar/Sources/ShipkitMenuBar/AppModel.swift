@@ -3,12 +3,9 @@ import ShipkitKit
 
 /// Owns the listener and the requests waiting for a decision, if any.
 ///
-/// A FIFO of pending requests rather than a single slot: a second request
-/// arriving while one is on screen is not a situation the panel is asked to
-/// pick a winner for, but it must not strand the first caller either — that
-/// caller would otherwise wait until its own timeout with nobody able to
-/// answer it, ever. The panel still shows one request at a time; a second
-/// caller simply waits its turn instead of being silently denied.
+/// The ordering guarantee for overlapping requests lives in `ApprovalQueue`
+/// (`ShipkitKit`), not here, so it can be tested. What is left here is thin
+/// by design: enqueue, show whatever is now at the head, decide.
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var pending: PendingRequest?
@@ -19,8 +16,8 @@ final class AppModel: ObservableObject {
 
     private let keychain = Keychain()
     private let journal = Journal()
+    private let queue = ApprovalQueue()
     private var listener: Listener?
-    private var queue: [(request: PendingRequest, continuation: (Decision) -> Void)] = []
 
     init() {
         start()
@@ -46,28 +43,21 @@ final class AppModel: ObservableObject {
                 await MainActor.run { self?.listenerError = "\(error)" }
             }
         }
-        tokenSaved = (try? keychain.read(account: "jira")) != nil
+        refreshTokenStatus()
     }
 
     /// Puts the request on screen and suspends until a button is pressed. If
     /// another request is already waiting, this one queues behind it rather
-    /// than replacing it.
+    /// than replacing it — `ApprovalQueue.wait` is what makes "behind it"
+    /// mean arrival order rather than scheduling order.
     private func show(_ request: PendingRequest) async -> Decision {
-        await withCheckedContinuation { continuation in
-            Task { @MainActor in
-                self.queue.append((request, { decision in continuation.resume(returning: decision) }))
-                if self.queue.count == 1 {
-                    self.pending = request
-                }
-            }
+        await queue.wait(for: request) { [weak self] head in
+            self?.pending = head
         }
     }
 
     func decide(_ decision: Decision) {
-        guard queue.isEmpty == false else { return }
-        let head = queue.removeFirst()
-        pending = queue.first?.request
-        head.continuation(decision)
+        pending = queue.decide(decision)
     }
 
     func saveToken() {
@@ -90,5 +80,16 @@ final class AppModel: ObservableObject {
         } catch {
             tokenError = "\(error)"
         }
+    }
+
+    /// Re-reads whether a token is saved. `tokenSaved` is otherwise only
+    /// touched by `saveToken`/`clearToken`, so anything that changes the
+    /// keychain item from outside this process — Keychain Access, a second
+    /// copy of this app — would leave the pane showing a stale answer
+    /// forever. Called when the settings pane appears, not from within its
+    /// `body`: a view's body is a description of the current state, not a
+    /// place to go read one.
+    func refreshTokenStatus() {
+        tokenSaved = (try? keychain.read(account: "jira")) != nil
     }
 }

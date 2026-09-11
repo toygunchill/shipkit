@@ -48,5 +48,10 @@ struct SettingsPane: View {
         }
         .padding(18)
         .frame(width: 380)
+        // Refreshed on appear, not read inline in `body`: the keychain item
+        // can change from outside this process (Keychain Access, a second
+        // copy of this app), and `tokenSaved` would otherwise only ever
+        // reflect whatever this process last wrote itself.
+        .onAppear { model.refreshTokenStatus() }
     }
 }

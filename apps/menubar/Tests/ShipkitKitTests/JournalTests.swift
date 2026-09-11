@@ -69,3 +69,21 @@ private final class Clock: @unchecked Sendable {
     #expect(await journal.decision(for: "b") == .denied)
     #expect(await journal.count() == 2)
 }
+
+// A decision that is never looked up again -- the ordinary case whenever an
+// approval does not need to resume -- must not sit in memory forever. `record`
+// has to sweep expired entries itself rather than waiting for a `decision`
+// call that may never come.
+@Test func recordSweepsExpiredEntriesEvenWhenNeverQueriedAgain() async {
+    let clock = Clock()
+    let journal = Journal(ttl: 600, now: clock.now)
+    await journal.record(.approved, for: "a")
+    await journal.record(.denied, for: "b")
+    await journal.record(.approved, for: "c")
+    #expect(await journal.count() == 3)
+
+    clock.advance(601)
+    await journal.record(.approved, for: "d")
+    #expect(await journal.count() == 1)
+    #expect(await journal.decision(for: "d") == .approved)
+}

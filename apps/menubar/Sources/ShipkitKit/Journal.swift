@@ -27,7 +27,17 @@ public actor Journal {
     }
 
     public func record(_ decision: Decision, for fingerprint: String) {
+        sweep()
         entries[fingerprint] = Entry(decision: decision, recorded: now())
+    }
+
+    /// Drops every expired entry. Called on `record` so a decision that is
+    /// never queried again -- the ordinary case whenever an approval does not
+    /// need to resume -- does not sit in memory for the life of a process
+    /// that runs for weeks.
+    private func sweep() {
+        let cutoff = now()
+        entries = entries.filter { cutoff.timeIntervalSince($0.value.recorded) <= ttl }
     }
 
     public func decision(for fingerprint: String) -> Decision? {

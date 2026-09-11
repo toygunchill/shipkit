@@ -65,6 +65,32 @@ describe("previewContent", () => {
     expect(shaped.isError).toBe(true);
     expect(shaped.content[0].text).toContain("title-pattern");
   });
+
+  // runSubmit returns code 2 as data (not a throw) for an unreadable config and for every
+  // other ConfigError/VcsError/ResponseError/JiraError it catches — none of which reach
+  // handlePreview's try/catch. Without a code-2 branch this fell through to "Ready to apply.
+  // No warnings.", telling an agent its draft was clean when shipkit never read the rules.
+  it("is an error when the config could not be read, not a clean preview", () => {
+    const shaped = previewContent({
+      code: 2, findings: [], warnings: [],
+      message: "Cannot read config at /repo/.shipkit.yml",
+      committed: false, pushed: false,
+    });
+    expect(shaped.isError).toBe(true);
+    expect(shaped.content[0].text).toContain("Cannot read config at /repo/.shipkit.yml");
+    expect(shaped.content[0].text).not.toContain("Ready to apply");
+  });
+
+  it("is an error when the base is invalid, not a clean preview", () => {
+    const shaped = previewContent({
+      code: 2, findings: [], warnings: [],
+      message: 'Refusing to use "-x" as a base branch',
+      committed: false, pushed: false,
+    });
+    expect(shaped.isError).toBe(true);
+    expect(shaped.content[0].text).toContain('Refusing to use "-x" as a base branch');
+    expect(shaped.content[0].text).not.toContain("Ready to apply");
+  });
 });
 
 describe("applyContent", () => {

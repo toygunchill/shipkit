@@ -54,6 +54,18 @@ export function previewContent(result: SubmitResult): ToolContent {
     );
   }
 
+  // `runSubmit` returns code 2 as data — not a throw — for an invalid base and for every
+  // ConfigError, VcsError, ResponseError and JiraError it catches. None of those reach
+  // `handlePreview`'s try/catch, so without this branch they fall through to the "Ready to
+  // apply" text below: a preview that never ran reported as one that found nothing wrong.
+  if (result.code === 2) {
+    return text(
+      [result.message ?? "Preview failed.", ...findingLines(result), ...warningLines(result)],
+      structured,
+      true,
+    );
+  }
+
   return text(
     [
       result.warnings.length === 0

@@ -919,6 +919,8 @@ describe("the approval surface", () => {
         branch: sent!.branch,
         base: sent!.base,
         head: sent!.head,
+        title: sent!.title,
+        commitMessage: sent!.commitMessage,
         warnings: sent!.warnings,
       }),
     );

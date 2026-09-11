@@ -7,6 +7,8 @@ const BASE: Situation = {
   branch: "bugfix/squadb/31087-invoice",
   base: "release/3.76.0",
   head: "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+  title: "fix(invoice): default citizenship",
+  commitMessage: "fix(invoice): default citizenship",
   warnings: [
     { check: "approvals-dismissed", message: "Pushing will dismiss 4 approval(s) on #881" },
     { check: "blocking-label", message: 'Label(s) in test will block the merge gate' },
@@ -47,6 +49,22 @@ describe("fingerprint", () => {
 
   it("changes when the head commit changes", () => {
     expect(fingerprint({ ...BASE, head: "b".repeat(40) })).not.toBe(fingerprint(BASE));
+  });
+
+  // The application displays the title and the commit message alongside the rest of the
+  // situation, so a call that times out and is repeated with the same warnings and head but
+  // different prose must not produce the same fingerprint — otherwise the person approves the
+  // pending request and the retried call opens a pull request with prose nobody saw.
+  it("changes when the title changes", () => {
+    expect(fingerprint({ ...BASE, title: "fix(invoice): something else entirely" })).not.toBe(
+      fingerprint(BASE),
+    );
+  });
+
+  it("changes when the commit message changes", () => {
+    expect(fingerprint({ ...BASE, commitMessage: "fix(invoice): something else entirely" })).not.toBe(
+      fingerprint(BASE),
+    );
   });
 
   // The reason messages are hashed and not only ids: a fifth approval landing

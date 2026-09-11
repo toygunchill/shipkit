@@ -7,6 +7,10 @@ export type Situation = {
   branch: string;
   base: string;
   head: string;
+  /** The pull-request title, as the application displays it. */
+  title: string;
+  /** The commit message, as the application displays it. */
+  commitMessage: string;
   warnings: Warning[];
 };
 
@@ -46,6 +50,8 @@ export function canonical(situation: Situation): string {
     field(situation.branch),
     field(situation.base),
     field(situation.head),
+    field(situation.title),
+    field(situation.commitMessage),
     String(sorted.length),
   ];
   for (const warning of sorted) {

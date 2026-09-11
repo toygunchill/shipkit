@@ -294,6 +294,8 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
         branch,
         base: options.base,
         head: facts.head,
+        title: response.title,
+        commitMessage: response.commitMessage,
         warnings: facts.warnings,
       });
 

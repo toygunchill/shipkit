@@ -6,9 +6,11 @@
       "branch": "bugfix/squadb/31087-invoice",
       "base": "develop",
       "head": "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "title": "fix(invoice): default citizenship",
+      "commitMessage": "fix(invoice): default citizenship",
       "warnings": []
     },
-    "fingerprint": "933e6e54c5872b25170023430d5e0e1d15631476baa7836670d6fa7798385736"
+    "fingerprint": "e051929ea996355dba72c20c511fd29754d9c2addd485aa70d4d4e2cacc6db75"
   },
   {
     "name": "two warnings",
@@ -17,6 +19,8 @@
       "branch": "bugfix/squadb/31087-invoice",
       "base": "release/3.76.0",
       "head": "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "title": "fix(invoice): default citizenship",
+      "commitMessage": "fix(invoice): default citizenship",
       "warnings": [
         {
           "check": "approvals-dismissed",
@@ -28,7 +32,7 @@
         }
       ]
     },
-    "fingerprint": "429727e9e1256fc48b838b62ab81f6e5e2eb73045b6f90a55d8db5d314e1c117"
+    "fingerprint": "13099b9d05e2f39848d02eafb73514b44438357a6b9b2190a963076d0f09b05f"
   },
   {
     "name": "non-ascii in every field",
@@ -37,6 +41,8 @@
       "branch": "bugfix/ödeme/31087-fatura",
       "base": "release/3.76.0",
       "head": "b44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "title": "düzelt(fatura): vatandaşlık varsayılanı",
+      "commitMessage": "düzelt(fatura): vatandaşlık varsayılanı",
       "warnings": [
         {
           "check": "foreign-commits",
@@ -44,7 +50,7 @@
         }
       ]
     },
-    "fingerprint": "6b6d50ff464828a633e866e11be7df4e6c20f45f5b87e5a399c3238729348088"
+    "fingerprint": "29a0c06c792f97413e7c1f886b6628ee7f09df61284ef29533d859c453c6e806"
   },
   {
     "name": "a message that looks like the encoding",
@@ -53,6 +59,8 @@
       "branch": "b",
       "base": "d",
       "head": "c44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "title": "x",
+      "commitMessage": "y",
       "warnings": [
         {
           "check": "x",
@@ -60,7 +68,7 @@
         }
       ]
     },
-    "fingerprint": "342ee0cffe526ce3ee3b47f3f279987b97ce89ecbcf8b4a1fd019715cb240666"
+    "fingerprint": "886938618412fd16b07f0dae8a195c68d3d0d890f2eaaf1cad293c6fd7287d2b"
   },
   {
     "name": "astral characters (emoji)",
@@ -69,6 +77,8 @@
       "branch": "bugfix/🎉-celebration/123-party",
       "base": "develop",
       "head": "d44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "title": "fix 🎉 the thing",
+      "commitMessage": "fix 🎉 the thing",
       "warnings": [
         {
           "check": "untracked-files",
@@ -76,7 +86,7 @@
         }
       ]
     },
-    "fingerprint": "6accc07ab3d6db4065f93a83a707c85dc2de367a9149485083b70067b9b3d9bd"
+    "fingerprint": "638e730acc8c4c065642195409cf969d0cc389d0e05e7035284f07208e5a912c"
   },
   {
     "name": "multi-digit warning count",
@@ -85,6 +95,8 @@
       "branch": "b",
       "base": "d",
       "head": "e44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "title": "t",
+      "commitMessage": "m",
       "warnings": [
         {
           "check": "a",
@@ -128,7 +140,7 @@
         }
       ]
     },
-    "fingerprint": "b8c35dd14aeebd71a4b98de5c0f0962f71723e2c4a0f2bc9534acef39c7cd142"
+    "fingerprint": "ba5120ffd8c42be1902625b3a950ae1d1fe277c3683782b4b444f574663fb56a"
   },
   {
     "name": "empty-string field",
@@ -137,8 +149,10 @@
       "branch": "",
       "base": "develop",
       "head": "f44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
+      "title": "",
+      "commitMessage": "",
       "warnings": []
     },
-    "fingerprint": "a66183f15ed5912c00ef1b811ee18f47a066f4fd91fb9171f1b58783bc70cd94"
+    "fingerprint": "20dec7d57deda5f8668b92f26ab976961bc55d2896a1336b7c2d46fe6dbfa8d8"
   }
 ]

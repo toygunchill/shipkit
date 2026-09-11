@@ -38,8 +38,28 @@ public final class ApprovalQueue {
         }
     }
 
-    /// Resumes the head's continuation with `decision` and removes it,
-    /// returning whatever is now at the head — `nil` once nobody is left
+    /// How many requests are behind the head, still waiting their turn.
+    /// Zero once the head is the only one left, or once nobody is waiting at
+    /// all. Reported to the person before they decide: knowing another
+    /// request is already queued behind the one on screen changes how
+    /// carefully they read it.
+    public var waitingCount: Int {
+        max(0, entries.count - 1)
+    }
+
+    /// Resumes the head's continuation with `decision` and removes it, then
+    /// does the same for every *other* queued entry sharing the head's
+    /// fingerprint, removing them too.
+    ///
+    /// A fingerprint is the identity of the question (see `PendingRequest.id`):
+    /// two connections carrying the same one both passed the journal check
+    /// before either was presented, so they are the same question asked
+    /// twice, not two questions. Answering the head answers them as well —
+    /// none of them was ever shown to the person, and none of them should
+    /// wait for a second answer to a question that has already been
+    /// answered.
+    ///
+    /// Returns whatever is now at the head — `nil` once nobody is left
     /// waiting. Does nothing, rather than trapping, when the queue is
     /// already empty: there is nobody to have decided about.
     @discardableResult
@@ -47,6 +67,16 @@ public final class ApprovalQueue {
         guard entries.isEmpty == false else { return nil }
         let head = entries.removeFirst()
         head.continuation(decision)
+
+        // Removing while iterating forward would skip the entry right after
+        // whichever one was just removed; walking backward keeps every
+        // not-yet-visited index stable across a removal.
+        for index in stride(from: entries.count - 1, through: 0, by: -1) {
+            if entries[index].request.id == head.request.id {
+                entries.remove(at: index).continuation(decision)
+            }
+        }
+
         return entries.first?.request
     }
 }

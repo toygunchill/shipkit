@@ -10,6 +10,16 @@ private extension Warning {
 
 struct ApprovalPanel: View {
     let request: ApprovalRequest
+    /// How many other requests are already queued behind this one. Shown
+    /// before the person decides, not after: knowing a second repository is
+    /// waiting changes how carefully this one should be read, and a doubled
+    /// or stray click after deciding must not be the first time that is
+    /// mentioned.
+    let queuedBehind: Int
+    /// False for a short guard window right after this panel was promoted
+    /// from a queued request into the one on screen. See
+    /// `AppModel.promotionGuardDuration` for what it defends against.
+    let actionsEnabled: Bool
     let decide: (Decision) -> Void
 
     private var repoName: String {
@@ -24,6 +34,13 @@ struct ApprovalPanel: View {
                 Text("\(request.branch) → \(request.base)")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                if queuedBehind > 0 {
+                    Text(queuedBehind == 1
+                        ? "1 more request waiting"
+                        : "\(queuedBehind) more requests waiting")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             // The warnings are the content. Everything else is here so the
@@ -61,6 +78,7 @@ struct ApprovalPanel: View {
                 Button("Deny") { decide(.denied) }
                 Button("Approve push") { decide(.approved) }
             }
+            .disabled(actionsEnabled == false)
         }
         .padding(18)
         .frame(width: 380)

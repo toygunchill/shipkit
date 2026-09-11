@@ -131,7 +131,15 @@ So an approval is bound to a SHA-256 over a canonical rendering of:
 
 - the repository path,
 - the branch, the base, and the current `HEAD` commit,
+- the pull-request title and the commit message,
 - every warning, its check id **and its message**, ordered by id.
+
+The title and the commit message are in the hash because they are on the
+screen. The application shows them so the reader knows which change they are
+approving, and a field that is displayed but not bound is a field the reader
+can be shown one version of while another is committed: two calls with the same
+warnings and the same head, differing only in prose, produce the same
+fingerprint, and the second collects the decision made about the first.
 
 Including the messages, not only the ids, is deliberate. "Pushing will dismiss 4
 approvals" and "… 2 approvals" carry the same id. If a fifth approval lands
@@ -160,6 +168,30 @@ safe: a resumed call is only satisfied by a decision made about the identical
 situation. It also means two agents racing on the same branch cannot pick up
 each other's answers unless the situation is genuinely identical, in which case
 they should.
+
+## What a denial means under `echo`
+
+Unresolved, and named here rather than left to be discovered.
+
+Under `echo` the gate opens when the caller's acknowledgement covers the
+warnings, and it opens without asking anyone. So a caller that is refused by a
+person can simply call again with the ids echoed back and proceed: the surface
+is never consulted a second time, and the refusal is discarded rather than
+overridden. The whole premise is that an agent cannot fabricate a human
+decision, and this is the same hole seen from the other side — it can discard
+one.
+
+Every cheap repair is wrong. Asking every time turns `echo` into `human`.
+Not asking means never learning a denial happened. Asking only to check whether
+a decision already exists needs a query the protocol does not have, answered
+from a journal that lives in the application.
+
+So it belongs with the application, and the decision to make there is whether a
+denial binds the situation it was made about — for as long as the journal keeps
+it — regardless of policy. This design's position is that it should: a person's
+"no" about a fingerprint should outrank an agent's acknowledgement of the same
+fingerprint. Implementing that means a protocol addition and is out of scope
+for the Node half.
 
 ## Nothing is remembered
 

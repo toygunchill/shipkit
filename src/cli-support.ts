@@ -1,10 +1,11 @@
 // Small, dependency-light helpers factored out of src/cli.ts so they can be unit-tested
 // directly. src/cli.ts itself runs `program.parse()` at import time and must not be
 // imported from tests.
-import { fetchIssue } from "./jira/client.js";
+import { fetchIssue, type Fetcher } from "./jira/client.js";
 import type { IssueFacts } from "./jira/types.js";
 import type { SubmitResult } from "./submit/run.js";
 import { parseBody } from "./validate/body.js";
+import { jiraToken } from "./secrets/keychain.js";
 
 /** The first key matching `keyPattern` anywhere in `text`, or undefined when there is none. */
 export function firstIssueKey(text: string, keyPattern: string): string | undefined {
@@ -27,11 +28,21 @@ export function ticketFromBranch(branch: string, keyPattern: string): string | u
 export async function resolveIssue(
   key: string | undefined,
   config: { jira: { baseUrl: string } },
+  fetcher: Fetcher = (url, token) =>
+    fetch(url, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    }).then((response) => {
+      if (!response.ok) {
+        throw new Error(`Jira responded ${response.status} for ${url}`);
+      }
+      return response.json();
+    }),
+  readToken: (() => string | undefined) = jiraToken,
 ): Promise<IssueFacts | undefined> {
   if (key === undefined) return undefined;
-  const token = process.env.SHIPKIT_JIRA_TOKEN;
+  const token = readToken();
   if (token === undefined || token.length === 0) return undefined;
-  return fetchIssue(config.jira.baseUrl, key, token);
+  return fetchIssue(config.jira.baseUrl, key, token, fetcher);
 }
 
 /**

@@ -74,6 +74,22 @@ describe("resolveIssue", () => {
       resolveIssue("ABC-1", { jira: { baseUrl: "https://jira.example.com" } }),
     ).resolves.toBeUndefined();
   });
+
+  it("resolves an issue using a keychain token when the environment has none", async () => {
+    delete process.env.SHIPKIT_JIRA_TOKEN;
+    let seenToken = "";
+    const issue = await resolveIssue(
+      "ABC-1",
+      { jira: { baseUrl: "https://example.invalid/jira" } },
+      async (_url: string, token: string) => {
+        seenToken = token;
+        return { key: "ABC-1", fields: { issuetype: { name: "Story" }, summary: "s" } };
+      },
+      () => "from-keychain",
+    );
+    expect(seenToken).toBe("from-keychain");
+    expect(issue?.key).toBe("ABC-1");
+  });
 });
 
 describe("extractIssueKeysFromBody", () => {

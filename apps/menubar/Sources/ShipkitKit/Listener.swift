@@ -22,11 +22,12 @@ public struct PendingRequest: Sendable, Identifiable {
 /// tells the two apart on the wire.
 private struct TokenRequest: Decodable {
     let protocolVersion: Int
+    let kind: String
     let account: String
 
     enum CodingKeys: String, CodingKey {
         case protocolVersion = "protocol"
-        case account
+        case kind, account
     }
 }
 
@@ -90,6 +91,12 @@ public actor Listener {
         return base.appendingPathComponent("approvals.sock").path
     }
 
+    /// Seconds a client is given to send its one line. GCD's global queue
+    /// runs `accept` and `serve` alike; a client that connects and sends
+    /// nothing would otherwise tie up a thread forever, and enough of them
+    /// would stall accepts for everyone behind them.
+    private static let receiveTimeoutSeconds: Int = 5
+
     public func start() throws {
         let directory = (socketPath as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(
@@ -97,16 +104,30 @@ public actor Listener {
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
+        // `createDirectory(attributes:)` applies its attributes only when it
+        // creates the directory; on one that already exists -- left over
+        // from an earlier run, or from something else entirely, at whatever
+        // mode a looser umask gave it -- those attributes are silently
+        // ignored. This directory is the real access control (the socket's
+        // own mode is the second lock), so it is worth re-asserting on every
+        // start, not just on first creation.
+        guard chmod(directory, 0o700) == 0 else {
+            throw ListenerError.bind("chmod on directory failed: \(errno)")
+        }
         // A crashed run leaves the file behind; bind would fail with EADDRINUSE.
         try? FileManager.default.removeItem(atPath: socketPath)
 
-        descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard descriptor >= 0 else { throw ListenerError.bind("socket() failed") }
-
+        let newDescriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard newDescriptor >= 0 else { throw ListenerError.bind("socket() failed") }
+        // Every throw from here on must close `newDescriptor`: `start()`
+        // failing must not leak a file descriptor for the life of the
+        // process, and a caller retrying `start()` after a failure must not
+        // silently overwrite the only reference to the previous one.
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
         let capacity = MemoryLayout.size(ofValue: address.sun_path)
         guard socketPath.utf8.count < capacity else {
+            close(newDescriptor)
             throw ListenerError.bind("socket path is too long: \(socketPath)")
         }
         withUnsafeMutablePointer(to: &address.sun_path) { pointer in
@@ -120,22 +141,30 @@ public actor Listener {
 
         let size = socklen_t(MemoryLayout<sockaddr_un>.size)
         let bound = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(descriptor, $0, size) }
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(newDescriptor, $0, size) }
         }
-        guard bound == 0 else { throw ListenerError.bind("bind() failed: \(errno)") }
+        guard bound == 0 else {
+            close(newDescriptor)
+            throw ListenerError.bind("bind() failed: \(errno)")
+        }
 
         // bind honours the umask, so the file lands 0755. The 0700 directory is
-        // the real control; this is the second lock.
-        chmod(socketPath, 0o600)
+        // the real control; this is the second lock. A failed chmod here would
+        // leave the socket at 0755 with nothing noticing, so it is checked like
+        // any other step that can fail.
+        guard chmod(socketPath, 0o600) == 0 else {
+            close(newDescriptor)
+            throw ListenerError.bind("chmod on socket failed: \(errno)")
+        }
 
-        guard listen(descriptor, 8) == 0 else { throw ListenerError.bind("listen() failed") }
+        guard listen(newDescriptor, 8) == 0 else {
+            close(newDescriptor)
+            throw ListenerError.bind("listen() failed")
+        }
 
-        // Hoisted into a local `let` before the closure captures it: `descriptor`
-        // is an actor-isolated `var`, and the event handler runs off the actor,
-        // on a DispatchSource's own queue. Capturing the property itself would be
-        // a data race waiting to happen; capturing this immutable copy is not.
-        let boundDescriptor = descriptor
-        let source = DispatchSource.makeReadSource(fileDescriptor: boundDescriptor, queue: .global())
+        descriptor = newDescriptor
+
+        let source = DispatchSource.makeReadSource(fileDescriptor: newDescriptor, queue: .global())
         // Typed explicitly as `@Sendable`: `setEventHandler` takes a plain,
         // non-Sendable `() -> Void`, and a closure literal written inline here
         // would be inferred as isolated to this actor — the compiler's ordinary
@@ -145,9 +174,11 @@ public actor Listener {
         // ("Incorrect actor executor assumption"), not just a race in theory.
         // Spelling out `@Sendable` here opts back out of that inference so the
         // only actor hop is the explicit `await` inside `Task`.
-        let onReadable: @Sendable () -> Void = { [boundDescriptor] in
-            let client = accept(boundDescriptor, nil, nil)
+        let onReadable: @Sendable () -> Void = { [newDescriptor] in
+            let client = accept(newDescriptor, nil, nil)
             guard client >= 0 else { return }
+            var timeout = timeval(tv_sec: Listener.receiveTimeoutSeconds, tv_usec: 0)
+            _ = setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
             Task { await Listener.serve(client: client, on: self) }
         }
         source.setEventHandler(handler: onReadable)
@@ -219,8 +250,18 @@ public actor Listener {
     fileprivate func tokenResponseData(line: Data) async -> Data? {
         guard let request = try? JSONDecoder().decode(TokenRequest.self, from: line) else { return nil }
         guard request.protocolVersion == protocolVersion else { return nil }
+        // `hasKind` only routed on the field's presence, not its value: a
+        // line with `"kind":"anything"` reaches here too. A shape this
+        // listener does not recognize is refused the same way an absent
+        // secret is -- a `null` -- and never by asking `readSecret` about it.
+        guard request.kind == "token" else {
+            return Self.encodeToken(TokenResponse(protocolVersion: protocolVersion, secret: nil))
+        }
         let secret = readSecret(request.account)
-        let response = TokenResponse(protocolVersion: protocolVersion, secret: secret)
+        return Self.encodeToken(TokenResponse(protocolVersion: protocolVersion, secret: secret))
+    }
+
+    private static func encodeToken(_ response: TokenResponse) -> Data? {
         guard var data = try? JSONEncoder().encode(response) else { return nil }
         data.append(0x0A)
         return data

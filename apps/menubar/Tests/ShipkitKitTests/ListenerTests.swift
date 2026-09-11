@@ -267,3 +267,135 @@ private final class SyncBox<Value: Sendable>: Sendable {
     _ = try ask(path, "{\"protocol\":1,\"kind\":\"token\",\"account\":\"jira\"}\n")
     #expect(asked.value == false)
 }
+
+/// `hasKind` only routes on the field's presence, so a shape with a `kind` it
+/// doesn't recognize still reaches the token path. `readSecret` must not be
+/// consulted about it, and the reply must carry no secret.
+@Test func refusesATokenRequestWithAnUnknownKindWithoutReadingTheSecret() async throws {
+    let path = scratchSocket()
+    defer { removeScratchDirectory(for: path) }
+    let calledReadSecret = SyncBox(false)
+    let listener = Listener(socketPath: path, journal: Journal(), present: { _ in .denied }) { _ in
+        calledReadSecret.set(true)
+        return "s3cr3t"
+    }
+    try await listener.start()
+    defer { Task { await listener.stop() } }
+
+    let reply = try ask(path, "{\"protocol\":1,\"kind\":\"anything\",\"account\":\"jira\"}\n")
+    #expect(reply.contains("\"secret\":null"))
+    #expect(calledReadSecret.value == false)
+}
+
+/// The number of descriptors this process has open, via `/dev/fd`. A leaked
+/// `socket()` on every failed `start()` would grow this by roughly one per
+/// attempt; ordinary noise from unrelated, concurrently-running tests opening
+/// and closing their own short-lived sockets does not come close to the
+/// margin used below.
+private func openFileDescriptorCount() -> Int {
+    (try? FileManager.default.contentsOfDirectory(atPath: "/dev/fd").count) ?? -1
+}
+
+// Before the fix, `start()` assigned `descriptor = socket(...)` before any of
+// the guards below could fail, and none of those guards closed it. A path
+// over `sun_path`'s 104-byte capacity is a deterministic way to fail late
+// enough that a leak would show up, on every one of many retries.
+@Test func startDoesNotLeakTheDescriptorWhenThePathIsTooLong() async throws {
+    let path = scratchSocket()
+    defer { removeScratchDirectory(for: path) }
+    let directory = (path as NSString).deletingLastPathComponent
+    let tooLong = directory + "/" + String(repeating: "x", count: 150)
+    let failing = noSecret(socketPath: tooLong) { _ in .denied }
+
+    let before = openFileDescriptorCount()
+    for _ in 0..<200 {
+        do {
+            try await failing.start()
+            Issue.record("expected start() to throw for an over-long socket path")
+        } catch {
+            // expected: ListenerError.bind
+        }
+    }
+    let after = openFileDescriptorCount()
+    // A leak here shows up as ~200 (one per iteration); measured noise from
+    // unrelated tests racing this one under `swift test`'s default
+    // parallelism tops out around 30, so the margin below cleanly separates
+    // the two rather than chasing the noise ceiling exactly.
+    #expect(after - before < 60)
+
+    // And the process is still healthy: a listener that can actually bind
+    // still can, right after 200 failed attempts on another instance.
+    let working = noSecret(socketPath: path) { _ in .approved }
+    try await working.start()
+    defer { Task { await working.stop() } }
+    let reply = try ask(path, requestLine() + "\n")
+    #expect(reply.contains("\"decision\":\"approved\""))
+}
+
+// `createDirectory(attributes:)` only applies its attributes when it creates
+// the directory. A directory left over at a looser mode -- from an earlier
+// run, or from anything else -- must not stay that way forever: the spec
+// calls this directory the real access control, the socket's own mode the
+// second lock.
+@Test func reassertsThe0700DirectoryModeEvenIfItAlreadyExisted() async throws {
+    let path = scratchSocket()
+    defer { removeScratchDirectory(for: path) }
+    let directory = (path as NSString).deletingLastPathComponent
+    chmod(directory, 0o755)
+
+    let listener = noSecret(socketPath: path) { _ in .denied }
+    try await listener.start()
+    defer { Task { await listener.stop() } }
+
+    let attributes = try FileManager.default.attributesOfItem(atPath: directory)
+    let mode = (attributes[.posixPermissions] as? NSNumber)?.intValue
+    #expect(mode == 0o700)
+}
+
+// Without a receive timeout on the accepted socket, a client that connects
+// and sends nothing ties up its server-side handling forever. Connects raw,
+// sends nothing, and waits (bounded by `poll`, so an unfixed listener fails
+// this test instead of hanging it) for the server to give up and close.
+@Test func closesAConnectionThatSendsNothingInsteadOfBlockingForever() async throws {
+    let path = scratchSocket()
+    defer { removeScratchDirectory(for: path) }
+    let listener = noSecret(socketPath: path) { _ in .approved }
+    try await listener.start()
+    defer { Task { await listener.stop() } }
+
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    #expect(fd >= 0)
+    defer { close(fd) }
+
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    let capacity = MemoryLayout.size(ofValue: address.sun_path)
+    withUnsafeMutablePointer(to: &address.sun_path) { pointer in
+        path.withCString { source in
+            _ = strncpy(UnsafeMutableRawPointer(pointer).assumingMemoryBound(to: CChar.self),
+                        source, capacity - 1)
+        }
+    }
+    let size = socklen_t(MemoryLayout<sockaddr_un>.size)
+    let connected = withUnsafePointer(to: &address) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, size) }
+    }
+    #expect(connected == 0)
+
+    // Send nothing. Wait, with a generous margin over the server's own
+    // receive timeout, for it to close the connection on its own.
+    var descriptor = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+    let waited = poll(&descriptor, 1, 8000)
+    #expect(waited > 0)
+
+    var probe: UInt8 = 0
+    let read = recv(fd, &probe, 1, 0)
+    // The server closed the connection once its own timeout fired -- it had
+    // nothing to answer, and it did not hang.
+    #expect(read == 0)
+
+    // The listener itself is unaffected: a normal request right after is
+    // answered as usual.
+    let reply = try ask(path, requestLine() + "\n")
+    #expect(reply.contains("\"decision\":\"approved\""))
+}

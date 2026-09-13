@@ -1,4 +1,5 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { observedChangedFiles } from "../advice/observe.js";
 import type { Advice } from "../advice/types.js";
 import { conversionAdvice, detectConversion, type ChangedFile } from "../advice/uikit.js";
 import { changedFields, fingerprint, sortWarnings, type Situation } from "../approval/fingerprint.js";
@@ -321,7 +322,14 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
     // `readPushChangedFiles`. Nothing below this line consults `advice`: it is not in
     // `gate`, not in `shouldRequestApproval`, not in the `Situation`, and not on the wire
     // to the approval surface. It is printed and returned, and that is all it does.
-    const conversion = detectConversion(deps.readPushChangedFiles(options.base, exclude));
+    //
+    // Wrapped in `observedChangedFiles` because the read itself can fail on a repository
+    // where nothing is wrong with the change — see src/advice/observe.ts. An advisory read
+    // that threw here would land in the catch below and return `code: 2` with nothing
+    // committed, which is precisely the thing advice must never do.
+    const conversion = detectConversion(
+      observedChangedFiles(() => deps.readPushChangedFiles(options.base, exclude)),
+    );
     advice =
       conversion === undefined
         ? []

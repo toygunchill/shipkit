@@ -236,7 +236,7 @@ Pure over already-fetched data; the fetching is Task 5's.
 **The measured facts these encode** — from the spec, do not re-derive them:
 - Team varies per developer and is usually unanimous on their own issues.
 - Cross-team work exists: one issue in a Squad A sprint carried Squad B. So a **majority** is required, not a plurality.
-- The portfolio child has *no* majority on two of four teams (Squad D splits four ways; Squad B is 36/20). Refusing is the expected outcome there, not an edge case.
+- The portfolio child has *no* majority on one of four teams — Squad D, which splits four ways at 22/18/11/7. (An earlier draft said two of four and named Squad B's 36/20; that is 36 of 59, which is 61% and a majority. The spec carries the correction.) Refusing on the Squad D shape is the expected outcome, not an edge case. Note also that these are *team sprint* distributions while the derivation reads the developer's own issues; the one personal sample measured is 68% "Only Digital".
 - Four sprints were active on one board at once, and six teams exist while only four had a sprint.
 
 - [ ] **Step 1: Write the failing test**

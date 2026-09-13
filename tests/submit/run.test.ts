@@ -1332,4 +1332,68 @@ describe("advice", () => {
     const read = calls.find((c) => c.fn === "readPushChangedFiles");
     expect(read?.args).toEqual(["develop", ["scratch/response.json"]]);
   });
+
+  // The read the advice needs builds a scratch index and runs `git add --all` against the
+  // real working tree, and it fails on repositories where nothing is wrong with the change:
+  // a `.gitattributes` clean filter marked `required` whose binary is missing, or one
+  // unreadable file. Both reproduced. Before this branch that read only happened inside the
+  // `shouldRequestApproval` branch, so an `echo`-policy repository never reached it; the
+  // advisory channel put it on every run. Unguarded it returns `code: 2` with nothing
+  // committed — advice changing an exit code, the one thing it must never do.
+  describe("when the advisory read itself fails", () => {
+    const failing = (error: unknown) => ({
+      readPushChangedFiles: () => {
+        throw error;
+      },
+    });
+
+    it("commits and pushes anyway, with no advice and the same exit code", async () => {
+      const plain = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, makeDeps({}).deps);
+      const { deps, calls } = makeDeps(
+        failing(new VcsError("git add --all failed: fatal: asset.bin: clean filter 'lfs' failed")),
+      );
+
+      const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
+
+      expect(result.code).toBe(plain.code);
+      expect(result.code).toBe(0);
+      expect(result.advice).toEqual([]);
+      expect(result.committed).toBe(true);
+      expect(result.pushed).toBe(true);
+      // And it really was the failing run: the read was attempted, not skipped.
+      expect(calls.some((c) => c.fn === "readPushChangedFiles")).toBe(true);
+    });
+
+    // `mkdtempSync` and `rmSync` throw a plain Error, so they are not one of the typed
+    // errors the catch below runSubmit's body knows about — unguarded they escape it
+    // entirely and reach a person as a stack trace rather than as anything shipkit said.
+    it("survives a plain Error, which the typed catch would not have held", async () => {
+      const { deps } = makeDeps(failing(new Error("ENOSPC: no space left on device, mkdtemp")));
+
+      const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
+
+      expect(result.code).toBe(0);
+      expect(result.advice).toEqual([]);
+      expect(result.committed).toBe(true);
+    });
+
+    it("prints nothing about it — there is nothing for a reader to do", async () => {
+      const { deps, err } = makeDeps(failing(new VcsError("clean filter 'lfs' failed")));
+
+      await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
+
+      expect(err.join("\n")).not.toContain("clean filter");
+      expect(err.join("\n")).not.toContain("tech-task");
+    });
+
+    it("still emits a preview rather than refusing one", async () => {
+      const { deps } = makeDeps(failing(new VcsError("clean filter 'lfs' failed")));
+
+      const result = await runSubmit({ ...OPTIONS, mode: "preview" }, deps);
+
+      expect(result.code).toBe(0);
+      expect(result.advice).toEqual([]);
+      expect(result.body).toContain("## Summary");
+    });
+  });
 });

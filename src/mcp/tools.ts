@@ -1,4 +1,5 @@
 import { isAbsolute, join } from "node:path";
+import { observedChangedFiles } from "../advice/observe.js";
 import type { ChangedFile } from "../advice/uikit.js";
 import { assembleBrief } from "../brief/assemble.js";
 import { isValidBase } from "../cli-support.js";
@@ -71,7 +72,10 @@ export async function handleBrief(args: BriefArgs, deps: ToolDeps): Promise<Tool
         repo,
         target: { branch: args.base, reason: "given by the caller" },
         config,
-        changed: deps.readPushChangedFiles(args.base, args.repo),
+        // `observedChangedFiles` because this read can fail on a repository where nothing
+        // is wrong with the change — see src/advice/observe.ts. Unguarded, a missing
+        // clean-filter binary turns the whole brief into `isError: true`.
+        changed: observedChangedFiles(() => deps.readPushChangedFiles(args.base, args.repo)),
       }),
     );
   } catch (error) {

@@ -53,11 +53,22 @@ export const SPRINT_FIELD = "customfield_10005";
 export function buildCreatePayload(input: TechTaskInput): Record<string, unknown> {
   const { config, subject, team, sprintId, portfolioChild } = input;
 
+  // The four ids this module owns. Stripped out of the config spread rather than merely
+  // written after it: spreading first only wins for a field this function sets
+  // *unconditionally*, and three of the four are conditional. Before this, a repository
+  // whose `fields:` block named `customfield_10005` supplied a sprint on the very runs the
+  // command had decided there was none — `--sprint none` printed "given with --sprint" over
+  // a payload carrying the config's sprint. A silently wrong value in a created ticket is
+  // the class this whole design exists to prevent, so the ownership is enforced up front
+  // and each id below is set, or deliberately left out, by this function alone.
+  //
+  // The portfolio parent is the one owned id whose config value is still read — not copied
+  // through, but taken apart and rebuilt with the derived child under it, just below.
+  const extra: Record<string, unknown> = { ...(config.fields ?? {}) };
+  for (const owned of [PORTFOLIO_FIELD, TEAM_FIELD, EPIC_FIELD, SPRINT_FIELD]) delete extra[owned];
+
   const fields: Record<string, unknown> = {
-    // Extra fields from config first, so the four ids this module owns below cannot be
-    // silently overridden by a repository's `fields:` block. The portfolio parent is the
-    // one config value that is read back out again, just below.
-    ...(config.fields ?? {}),
+    ...extra,
     project: { key: config.project },
     issuetype: { name: config.issueType },
     summary: config.summaryPattern.replaceAll("{subject}", subject),
@@ -69,8 +80,12 @@ export function buildCreatePayload(input: TechTaskInput): Record<string, unknown
   // accepts — so the field is omitted rather than built into an invalid shape. `tech-task`
   // refuses before reaching here in that case; this is the safe reading of it, not the
   // route a person will take.
+  //
+  // `!Array.isArray` because `typeof [] === "object"`: a YAML list under
+  // `customfield_10101:` is not a cascading-select parent, and spreading one would build
+  // `{0: …, child: {…}}` — a child with no parent value, in a shape Jira rejects.
   const parent = config.fields?.[PORTFOLIO_FIELD];
-  if (typeof parent === "object" && parent !== null) {
+  if (typeof parent === "object" && parent !== null && !Array.isArray(parent)) {
     fields[PORTFOLIO_FIELD] = { ...parent, child: { value: portfolioChild } };
   }
 

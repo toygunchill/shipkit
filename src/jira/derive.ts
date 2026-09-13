@@ -29,8 +29,10 @@ export type Derived<T> = { value: T } | { unresolved: string; candidates: string
  *
  * Half, not a plurality. Cross-team work happens — one issue inside a Squad A sprint
  * carried Squad B — so the commonest answer is not by itself evidence of the right one.
- * Measured against the live Jira, this threshold accepts Squad A's portfolio child at
- * 55/60 and Squad C's at 50/60, and refuses Squad D' 22/18/11/7.
+ * Measured against the live Jira — those are *team sprint* distributions rather than the
+ * per-developer sample this actually votes on, and the spec says so, but they are the
+ * widest set of real shapes measured: this threshold accepts Squad A's portfolio child at
+ * 55/60, Squad C's at 50/60 and Squad B's at 36 of 59, and refuses Squad D' 22/18/11/7.
  *
  * Someone will want to lower it the first time a derivation refuses on their machine.
  * What that trades away: at a plurality, Squad D' four-way split resolves to a value
@@ -38,10 +40,16 @@ export type Derived<T> = { value: T } | { unresolved: string; candidates: string
  * nobody re-reads. Below half there is no reading of the data that makes the winner more
  * likely right than wrong. Pass `--team` or `--portfolio` instead; that is what they are for.
  *
- * Raising it is the live question, not lowering it. The spec calls Squad B's 36/20 a
- * team with "no majority at all", but 36/56 is 64.3% and clears half comfortably; only a
- * two-thirds threshold would refuse it. See the task report — the brief mandates half, so
- * half is what this is, and `tests/jira/derive.test.ts` pins the consequence.
+ * Raising it is the live question, not lowering it, and the spec's own correction is what
+ * settles it. Two thirds was considered and rejected there: the only *personal* sample ever
+ * measured — one real developer's last 60 issues — sits at 68% "Only Digital", so a
+ * two-thirds rule would decide that developer's case by 1.6 percentage points, and one
+ * issue landing elsewhere would flip it into a refusal. A rule that arbitrary is worse than
+ * a looser one. (An earlier draft of the spec argued the opposite from Squad B's 36/20,
+ * calling it a team with "no majority at all". It is 36 of 59, which is 61% and a majority
+ * — and it is a team sprint distribution besides, so it was never evidence about this
+ * function's input. Only Squad D lacks a majority.) So half is what this is, and
+ * `tests/jira/derive.test.ts` pins the consequence.
  */
 export const MAJORITY_THRESHOLD = 0.5;
 
@@ -106,11 +114,12 @@ export function deriveTeam(sample: IssueFieldSample[]): Derived<string> {
 /**
  * The child of the cascading portfolio field, from the developer's recent issues.
  *
- * This is the field that usually cannot be answered. The child tracks the nature of the
- * work rather than the team, and two of the four measured teams have no majority at all —
- * Squad D splits 22/18/11/7 across four values. Refusing here is the expected outcome,
- * not an edge case, and the refusal names `--portfolio` because that is the only honest
- * way to fill this in.
+ * This is the field least likely to be answerable. The child tracks the nature of the work
+ * rather than the team, and one of the four measured teams has no majority at all — Sky
+ * Stones splits 22/18/11/7 across four values. (An earlier draft of the spec said two of
+ * four; the second, Squad B, is a majority at 36 of 59. The spec carries the correction.)
+ * Refusing here is an ordinary outcome rather than an edge case, and the refusal names
+ * `--portfolio` because that is the only honest way to fill this in.
  */
 export function derivePortfolioChild(sample: IssueFieldSample[]): Derived<string> {
   const seen = votes(sample, "portfolioChild");

@@ -2,6 +2,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Command, CommanderError } from "commander";
+import { observedChangedFiles } from "./advice/observe.js";
 import { requestApproval } from "./approval/client.js";
 import { assembleBrief } from "./brief/assemble.js";
 import {
@@ -157,7 +158,11 @@ program
       const key = ticketFromBranch(repo.branch, config.jira.keyPattern);
       const issue = await resolveIssue(key, config);
       // No exclusion: `brief` runs before there is a response file to keep out of a commit.
-      const changed = readPushChangedFiles(base);
+      //
+      // `observedChangedFiles` because this read can fail on a repository where nothing is
+      // wrong with the change — see src/advice/observe.ts. Unguarded, a missing clean-filter
+      // binary means no brief is printed at all, which is a gate in everything but name.
+      const changed = observedChangedFiles(() => readPushChangedFiles(base));
       const brief = assembleBrief({ repo, target: { branch: base, reason }, config, issue, changed });
       console.log(JSON.stringify(brief, null, 2));
       process.exitCode = 0;
@@ -467,8 +472,15 @@ program
           process.exitCode = 2;
           return;
         }
+        // `Array.isArray` because `typeof [] === "object"`: a YAML list under
+        // `customfield_10101:` is not a cascading-select parent, and without this it slips
+        // past the refusal and builds a child with no parent value.
         const portfolioParent = techTask.fields?.[PORTFOLIO_FIELD];
-        if (typeof portfolioParent !== "object" || portfolioParent === null) {
+        if (
+          typeof portfolioParent !== "object" ||
+          portfolioParent === null ||
+          Array.isArray(portfolioParent)
+        ) {
           console.error(missingPortfolioParent(options.config));
           process.exitCode = 2;
           return;

@@ -124,14 +124,15 @@ describe("what a refusal hands back", () => {
 });
 
 describe("the Squad B portfolio split, 36/20", () => {
-  // The spec narrates this as one of the two teams with "no majority at all".
-  // Its own numbers say otherwise: 36 of the 56 that carry a value is 64.3%, and
-  // 36 of the 60 sampled is 60% — a majority on either denominator. Under the
-  // rule the brief mandates (strictly more than half) this team resolves. The
-  // test asserts the arithmetic rather than the prose; see the report. Raising
-  // MAJORITY_THRESHOLD to 2/3 is what would make the prose true, and this is the
-  // test that would then have to change.
-  it("resolves under a strictly-more-than-half threshold, contra the spec's prose", () => {
+  // An earlier draft of the spec narrated this as one of two teams with "no
+  // majority at all". The arithmetic said otherwise and the spec now agrees: 36
+  // of the 59 that carry a value is 61%, a majority on every denominator the
+  // spec gives. Under the rule it mandates — strictly more than half — this team
+  // resolves. Raising MAJORITY_THRESHOLD to 2/3 is what would refuse it, and the
+  // spec rejects two thirds explicitly: the only personal sample measured sits at
+  // 68%, so a two-thirds rule would decide it by 1.6 points. This is the test
+  // that would have to change if that were ever revisited.
+  it("resolves under a strictly-more-than-half threshold, as the spec now reads", () => {
     const sample = [
       ...Array(36).fill({ portfolioChild: "Portfolio B" }),
       ...Array(20).fill({ portfolioChild: "Portfolio A" }),

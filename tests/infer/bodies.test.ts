@@ -84,6 +84,134 @@ describe("boilerplateLines", () => {
     );
     expect(boilerplateLines(bodies, 3).value).toEqual([TEMPLATE_LINE]);
   });
+
+  // Length is the wrong discriminator, and this is the line that proves it: a
+  // ticked checklist item is longer and wordier than most real answers, clears
+  // every floor, and recurs in every body precisely because people fill it in.
+  // What separates template text from a completed answer is shape.
+  const TICKED = "- [x] I have run the test suite locally";
+  const UNTICKED = "- [ ] I have run the test suite locally";
+
+  it("never bans a ticked checklist item, however often it recurs", () => {
+    const bodies = Array.from({ length: 6 }, (_, i) => `## Summary\nchange ${i}\n\n## Checklist\n${TICKED}`);
+    expect(boilerplateLines(bodies, 4).value).toEqual([]);
+  });
+
+  it.each(["- [X] Updated the changelog", "* [x] Updated the changelog", "1. [x] Updated the changelog"])(
+    "treats %j as an answer too — the tick is the act of filling it in",
+    (ticked) => {
+      const bodies = Array.from({ length: 3 }, (_, i) => `## Summary\nchange ${i}\n\n${ticked}`);
+      expect(boilerplateLines(bodies, 2).value).toEqual([]);
+    },
+  );
+
+  it("bans the unticked box, which is the prompt the ticked one answers", () => {
+    const bodies = Array.from({ length: 6 }, (_, i) => `## Summary\nchange ${i}\n\n## Checklist\n${UNTICKED}`);
+    expect(boilerplateLines(bodies, 4).value).toEqual([UNTICKED]);
+  });
+
+  it("bans a short unticked box, which no length floor would have reached", () => {
+    // "- [ ] tests pass" is 16 characters and two words. It is no less
+    // unanswered for being short, and banning it cannot reject the ticked form.
+    const bodies = Array.from({ length: 3 }, (_, i) => `## Summary\nchange ${i}\n- [ ] tests pass`);
+    const got = boilerplateLines(bodies, 2).value;
+    expect(got).toEqual(["- [ ] tests pass"]);
+    expect("- [x] tests pass".includes(got[0])).toBe(false);
+  });
+
+  it("does not ban a bare, label-less checkbox, which is in every checklist there is", () => {
+    const bodies = Array.from({ length: 3 }, (_, i) => `## Summary\nchange ${i}\n- [ ]`);
+    expect(boilerplateLines(bodies, 2).value).toEqual([]);
+  });
+
+  it("bans an HTML comment whatever its length — it is scaffolding by shape", () => {
+    // The word floor counts letter-bearing tokens, and "<!--" and "-->" have no
+    // letters in them at all, so these were missed outright.
+    const bodies = Array.from({ length: 3 }, (_, i) => `## Summary\n<!-- Describe your change -->\nchange ${i}`);
+    expect(boilerplateLines(bodies, 2).value).toEqual(["<!-- Describe your change -->"]);
+  });
+
+  it("bans a short HTML comment the floors would have let through", () => {
+    const bodies = Array.from({ length: 3 }, (_, i) => `## Summary\n<!-- why -->\nchange ${i}`);
+    expect(boilerplateLines(bodies, 2).value).toEqual(["<!-- why -->"]);
+  });
+
+  it("does not ban a bare comment terminator, which is also a diagram arrow", () => {
+    // "-->" as a forbidden term rejects every body carrying "step 1 --> step 2".
+    const bodies = Array.from({ length: 3 }, (_, i) => `## Summary\nchange ${i}\n-->`);
+    expect(boilerplateLines(bodies, 2).value).toEqual([]);
+  });
+
+  // An italicised placeholder instruction is a standard PR-template idiom, and
+  // the emphasis exemption had no floor at all: any line wrapped in emphasis was
+  // read as a pseudo-heading, including a fifteen-word sentence.
+  const ITALIC_INSTRUCTION =
+    "*Delete this whole section if your change does not need any screenshots or recordings at all*";
+
+  it("bans an italicised instruction, which is no heading at fifteen words", () => {
+    const bodies = Array.from(
+      { length: 6 },
+      (_, i) => `## Screenshots / Screen Recordings\n${ITALIC_INSTRUCTION}\nN/A ${i}`,
+    );
+    expect(boilerplateLines(bodies, 4).value).toEqual([ITALIC_INSTRUCTION]);
+  });
+
+  it("still treats a real bold pseudo-heading as a heading", () => {
+    const bodies = Array.from(
+      { length: 6 },
+      (_, i) => `**Summary**\nchange ${i}\n\n**Screenshots / Screen Recordings**\nN/A`,
+    );
+    expect(boilerplateLines(bodies, 4).value).toEqual([]);
+  });
+
+  it("bans a short imperative instruction that carries fewer words than the floor", () => {
+    // "Describe your implementation." is three words: it asks rather than
+    // answers, which the word floor alone could not tell.
+    const instruction = "Describe your implementation.";
+    const bodies = Array.from({ length: 3 }, (_, i) => `## Summary\n${instruction}\nchange ${i}`);
+    expect(boilerplateLines(bodies, 2).value).toEqual([instruction]);
+  });
+
+  // `why` is one sentence above a list. It used to read the count of whichever
+  // entry sorted longest and print it as though it described all of them.
+  it("does not report one entry's count as though it described the whole list", () => {
+    const SHORTER = "Add a screenshot of the change.";
+    const bodies = Array.from({ length: 6 }, (_, i) =>
+      [`## Summary\nchange ${i}`, i < 4 ? TEMPLATE_LINE : "", SHORTER].filter((l) => l !== "").join("\n"),
+    );
+    const got = boilerplateLines(bodies, 4);
+    expect(got.value).toHaveLength(2);
+    expect(got.why).toBe("2 line(s) appear verbatim in 4 to 6 of 6 bodies");
+  });
+
+  it("still says plainly how often a single banned line recurred", () => {
+    const bodies = Array.from({ length: 3 }, (_, i) => `## Summary\nchange ${i}\n${TEMPLATE_LINE}`);
+    expect(boilerplateLines(bodies, 3).why).toBe("appears verbatim in 3 of 3 bodies");
+  });
+
+  it("says so when every banned line recurred equally often", () => {
+    const bodies = Array.from(
+      { length: 4 },
+      (_, i) => `## Summary\nchange ${i}\n${TEMPLATE_LINE}\nAdd a screenshot of the change.`,
+    );
+    expect(boilerplateLines(bodies, 3).why).toBe("2 line(s) each appear verbatim in 4 of 4 bodies");
+  });
+
+  it("puts the most-repeated line first, so the list reads in the order why describes", () => {
+    const SHORTER = "Add a screenshot of the change.";
+    const bodies = Array.from({ length: 6 }, (_, i) =>
+      [`## Summary\nchange ${i}`, i < 4 ? TEMPLATE_LINE : "", SHORTER].filter((l) => l !== "").join("\n"),
+    );
+    expect(boilerplateLines(bodies, 4).value).toEqual([SHORTER, TEMPLATE_LINE]);
+  });
+
+  it("infers nothing from a line that has no words to count, but plenty of characters", () => {
+    // A language written without spaces is one token, so the word floor made
+    // forbidden inference inert for it. The length floor is the test there.
+    const line = "この節が不要な場合はこのテキストごと削除してください。";
+    const bodies = Array.from({ length: 3 }, (_, i) => `## Summary\n${line}\n変更 ${i}`);
+    expect(boilerplateLines(bodies, 2).value).toEqual([line]);
+  });
 });
 
 describe("sectionSkeleton", () => {

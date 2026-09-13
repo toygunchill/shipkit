@@ -30,21 +30,71 @@ export type RulesetBranchPattern =
 /** GitHub's stand-in, in `conditions.ref_name.include`, for "every ref in the repository". */
 const ALL_REFS = "~ALL";
 
+/** GitHub's stand-in for "whatever this repository's default branch is called". */
+const DEFAULT_BRANCH_REF = "~DEFAULT_BRANCH";
+
+/** The prefix a branch ref carries, as distinct from a tag's or a note's. */
+const BRANCH_PREFIX = "refs/heads/";
+
 function strings(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   return value.filter((item): item is string => typeof item === "string");
 }
 
 /**
+ * Whether excluding this ref narrows what a branch-naming pattern asks of the
+ * branches people create.
+ *
+ * Not every exclusion scopes a ruleset. A branch-naming rule almost has to carry
+ * one — `^(feature|bugfix)/…` cannot apply to `main`, which was created before
+ * the convention and cannot be renamed to suit it — so `include: ["~ALL"]` with
+ * `exclude: ["~DEFAULT_BRANCH"]` is the canonical shape of exactly the ruleset
+ * this function exists to find. Treating any non-empty exclusion as ref-scoped
+ * threw that away and wrote `^.+$` instead: capability lost on the commonest
+ * real payload.
+ *
+ * So an exclusion counts only when it takes away something the pattern would
+ * otherwise have required:
+ *
+ *   - `~DEFAULT_BRANCH` never does. That is what it is for.
+ *   - a literal branch ref does only if the pattern matches it. Excluding
+ *     `refs/heads/main` from `^(feature|bugfix)/…` removes a branch the rule
+ *     would have rejected anyway; excluding it from `^.+$` really does carve
+ *     something out.
+ *   - anything else counts: a glob (`refs/heads/legacy/*`) names branches this
+ *     code cannot enumerate, and a ref outside `refs/heads/` — a tag, or a
+ *     token this parser has not seen — is not something to reason about. Both
+ *     err towards calling the ruleset scoped, which is the direction that loses
+ *     a pattern rather than imposing a wrong one.
+ */
+function narrowsTheConvention(excluded: string, pattern: string): boolean {
+  const ref = excluded.trim();
+  if (ref === DEFAULT_BRANCH_REF) return false;
+  if (!ref.startsWith(BRANCH_PREFIX)) return true;
+
+  const branch = ref.slice(BRANCH_PREFIX.length);
+  if (/[*?[\]]/.test(branch)) return true; // a glob: which branches it names is unknown
+
+  try {
+    return new RegExp(pattern).test(branch);
+  } catch {
+    return true; // an uncompilable pattern proves nothing about the exclusion
+  }
+}
+
+/**
  * Describes the subset of refs a ruleset applies to, or undefined when it applies
- * to all of them.
+ * to every branch the pattern could govern.
  *
  * Absent or unreadable `conditions` count as "all refs": nothing in the payload
  * says otherwise, and this is the shape the older fixtures have. A `~ALL` include
- * with any exclusion is *not* all refs — the exclusion is exactly the subset the
- * pattern was written to skip.
+ * is still not all refs once an exclusion takes branches away from it — but only
+ * an exclusion that takes away branches the pattern was asking about; see
+ * `narrowsTheConvention`. The scope reported back names the exclusions as the
+ * payload wrote them, immaterial ones included: it describes the ruleset, and
+ * the human reading it should see what it actually said.
  */
-function refScope(conditions: unknown): string | undefined {
+function refScope(conditions: unknown, pattern: string): string | undefined {
   if (typeof conditions !== "object" || conditions === null) return undefined;
   const refName = (conditions as Record<string, unknown>).ref_name;
   if (typeof refName !== "object" || refName === null) return undefined;
@@ -58,7 +108,8 @@ function refScope(conditions: unknown): string | undefined {
     // something to quote as a repository-wide fact.
     return "an unreadable ref_name condition";
   }
-  if (included.includes(ALL_REFS) && excluded.length === 0) return undefined;
+  const narrowing = excluded.filter((ref) => narrowsTheConvention(ref, pattern));
+  if (included.includes(ALL_REFS) && narrowing.length === 0) return undefined;
 
   const scope = included.length === 0 ? "no refs" : included.join(", ");
   return excluded.length === 0 ? scope : `${scope} except ${excluded.join(", ")}`;
@@ -124,7 +175,7 @@ export function branchPatternFromRulesets(payload: unknown): RulesetBranchPatter
     const label =
       typeof name === "string" && name.trim().length > 0 ? `ruleset "${name}"` : "an active ruleset";
 
-    const scope = refScope(conditions);
+    const scope = refScope(conditions, pattern);
     if (scope !== undefined) {
       scopes.push(`${label}, scoped to ${scope}`);
       continue;
@@ -164,12 +215,33 @@ function isNegated(expression: string, index: number): boolean {
   return at >= 0 && expression[at] === "!";
 }
 
-function collectBlockingLabels(node: unknown, labels: Set<string>): void {
+/**
+ * Walks a parsed workflow for `if:` conditions, visiting each node once.
+ *
+ * `seen` is not an optimisation. A YAML anchor may refer to itself —
+ * `jobs: &j\n  a:\n    steps: *j` — and the `yaml` package parses that happily
+ * into a structure that points back at itself, at which point an unguarded walk
+ * recurses until the stack gives out. That RangeError reached `runInit`, which
+ * calls this one inference outside any try/catch of its own, so a workflow file
+ * a person is free to write took the whole command down.
+ *
+ * A depth cap would not have been the fix: depth on its own never gets this far,
+ * because the parser's own recursion gives out first and reports it as a parse
+ * error that `blockingLabelsFromWorkflow` already tolerates. A cycle is what
+ * gets past the parser, so a cycle is what is guarded.
+ *
+ * Visiting a shared (non-cyclic) alias once is the same answer as visiting it
+ * twice: labels land in a set either way.
+ */
+function collectBlockingLabels(node: unknown, labels: Set<string>, seen: Set<object>): void {
+  if (typeof node !== "object" || node === null) return;
+  if (seen.has(node)) return;
+  seen.add(node);
+
   if (Array.isArray(node)) {
-    for (const item of node) collectBlockingLabels(item, labels);
+    for (const item of node) collectBlockingLabels(item, labels, seen);
     return;
   }
-  if (typeof node !== "object" || node === null) return;
 
   for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
     if (key === "if" && typeof value === "string") {
@@ -178,7 +250,7 @@ function collectBlockingLabels(node: unknown, labels: Set<string>): void {
         labels.add(match[1]);
       }
     }
-    collectBlockingLabels(value, labels);
+    collectBlockingLabels(value, labels, seen);
   }
 }
 
@@ -232,7 +304,7 @@ export function blockingLabelsFromWorkflow(yamlText: string): Inferred<string[]>
   if (!triggersOnPullRequest(doc)) return undefined;
 
   const labels = new Set<string>();
-  collectBlockingLabels(doc, labels);
+  collectBlockingLabels(doc, labels, new Set());
   if (labels.size === 0) return undefined;
 
   const value = [...labels].sort();

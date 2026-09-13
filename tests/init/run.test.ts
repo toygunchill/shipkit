@@ -148,6 +148,80 @@ describe("runInit", () => {
     expect(forbidden).not.toContain("Bumped the version.");
   });
 
+  // Two floors used to disagree about how small a sample is too small: a section
+  // needs three bodies before a share of them is evidence of a convention, but a
+  // substring ban fired on two — and a forbidden entry is the more dangerous of
+  // the two settings by a distance. The bot filter makes two an everyday sample:
+  // forty-eight dependabot merges and two human ones.
+  it("will not ban a line on a sample too small to make a section required", () => {
+    const body = `## Summary\nx\n${TEMPLATE}`;
+    const config = wroteConfig({ mergedPullRequests: () => byPeople([body, body]) });
+    expect(config.pr.sections.some((s) => s.required)).toBe(false);
+    expect(config.pr.forbidden).toEqual([]);
+  });
+
+  it("says the sample was too small rather than reporting arithmetic nobody can check", () => {
+    const body = `## Summary\nx\n${TEMPLATE}`;
+    const { deps: d, written } = deps({
+      sources: {
+        rulesets: () => [],
+        mergeGateWorkflow: () => undefined,
+        mergedPullRequests: () => byPeople([body, body]),
+      },
+    });
+    runInit(OPTIONS, d);
+    expect(written[0]).toContain("2 bodies cannot show a convention");
+    expect(written[0]).not.toMatch(/counted as template text at 2 of 2/);
+  });
+
+  it("bans the same line as soon as the sample is big enough for a required section", () => {
+    const body = `## Summary\nx\n${TEMPLATE}`;
+    const config = wroteConfig({ mergedPullRequests: () => byPeople([body, body, body]) });
+    expect(config.pr.forbidden).toEqual([TEMPLATE]);
+    expect(config.pr.sections.some((s) => s.required)).toBe(true);
+  });
+
+  // The finding end to end: six bodies whose checklist everybody ticked, whose
+  // template comment and italic instruction nobody deleted. `forbidden` used to
+  // come out holding the two ticked items — so the next correctly-filled pull
+  // request was rejected — and holding neither the comment nor the instruction.
+  it("bans what nobody filled in and not what everybody did", () => {
+    const COMMENT = "<!-- Describe your change -->";
+    const ITALIC =
+      "*Delete this whole section if your change does not need any screenshots or recordings at all*";
+    const TICKED = ["- [x] I have run the test suite locally", "- [x] I have updated the changelog"];
+    const bodies = Array.from({ length: 6 }, (_, i) =>
+      [
+        "## Summary",
+        COMMENT,
+        `Fixes the retry loop that hung on a 500, take ${i}.`,
+        "## Screenshots / Screen Recordings",
+        ITALIC,
+        "N/A",
+        "## Issues Addressed",
+        `https://x.example.com/jira/browse/DCP-${100 + i}`,
+        "## Checklist",
+        ...TICKED,
+      ].join("\n"),
+    );
+
+    const config = wroteConfig({ mergedPullRequests: () => byPeople(bodies) });
+    expect(config.pr.forbidden).toEqual(expect.arrayContaining([COMMENT, ITALIC]));
+    for (const ticked of TICKED) expect(config.pr.forbidden).not.toContain(ticked);
+
+    const filled = [
+      "## Summary",
+      "Adds a retry budget so a flapping upstream cannot wedge the queue.",
+      "## Screenshots / Screen Recordings",
+      "N/A",
+      "## Issues Addressed",
+      "https://x.example.com/jira/browse/ABC-999",
+      "## Checklist",
+      ...TICKED,
+    ].join("\n");
+    expect(validate({ title: "fix(retry): stop hanging on a 500", body: filled, config }).findings).toEqual([]);
+  });
+
   it("proposes a skeleton, not an empty section list, when no body could be read", () => {
     // configSchema requires at least one section: an empty list is a file that
     // cannot load, which is the one failure this command must not produce.
@@ -196,6 +270,36 @@ describe("runInit against a ref-scoped ruleset", () => {
     expect(written[0]).toContain("refs/heads/release/*");
     expect(written[0]).not.toContain("read: branch_name_pattern");
     expect(err.join("\n")).toContain("refs/heads/release/*");
+  });
+
+  it("keeps a ruleset that governs every branch a person creates", () => {
+    // include ~ALL / exclude ~DEFAULT_BRANCH is what a branch-naming ruleset
+    // looks like in practice. Discarded, it cost branch.pattern entirely.
+    const canonical = [
+      {
+        id: 32,
+        name: "branch naming",
+        enforcement: "active",
+        conditions: { ref_name: { include: ["~ALL"], exclude: ["~DEFAULT_BRANCH"] } },
+        rules: [
+          {
+            type: "branch_name_pattern",
+            parameters: { operator: "regex", pattern: "^(feature|bugfix)/.+$", negate: false },
+          },
+        ],
+      },
+    ];
+    const { deps: d, written } = deps({
+      sources: {
+        rulesets: () => canonical,
+        mergeGateWorkflow: () => undefined,
+        mergedPullRequests: () => [],
+      },
+    });
+    const result = runInit(OPTIONS, d);
+    expect(result.unresolved).not.toContain("branch.pattern");
+    expect(configSchema.parse(parse(written[0])).branch.pattern).toBe("^(feature|bugfix)/.+$");
+    expect(written[0]).toContain("read: branch_name_pattern");
   });
 
   it("still prefers a ruleset that governs every ref, wherever it sits in the list", () => {
@@ -427,6 +531,31 @@ describe("runInit provenance", () => {
         config,
       }).findings.map((f) => f.rule),
     ).toContain("issue-key-missing");
+  });
+
+  // The section's *name* is observed; which of them holds issue keys is a guess
+  // shipkit makes with a regex over the word "Ticket". Borrowing the section
+  // list's label put shipkit's own guess in the one column of the file a reader
+  // is meant to be able to trust.
+  it("labels jira.section with its own provenance, not the section list's", () => {
+    const body = "## Summary\nx\n## Ticket\nhttps://x.example.com/jira/browse/ABC-1";
+    const { deps: d, written, out } = deps({
+      sources: {
+        rulesets: () => [],
+        mergeGateWorkflow: () => undefined,
+        mergedPullRequests: () => byPeople([body, body, body]),
+      },
+    });
+    runInit(OPTIONS, d);
+    expect(configSchema.parse(parse(written[0])).jira.section).toBe("Ticket");
+    // The sections it was drawn from are still observed — only the choice is not.
+    expect(out.join("\n")).toContain("pr.sections: observed");
+    expect(out.join("\n")).toContain("jira.section: proposed");
+
+    const lines = written[0].split("\n");
+    const at = lines.findIndex((line) => line.startsWith("  section:"));
+    expect(lines[at - 1].trim()).toMatch(/^# proposed:/);
+    expect(lines[at - 1]).toContain("the name is observed");
   });
 
   it("names jira.section unresolved when no section reads as where issues are cited", () => {

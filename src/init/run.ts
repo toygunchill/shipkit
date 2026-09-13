@@ -1,6 +1,6 @@
 import { parse } from "yaml";
 import { configSchema } from "../config/schema.js";
-import { boilerplateLines, sectionSkeleton } from "../infer/bodies.js";
+import { boilerplateLines, MIN_BODIES_TO_GENERALISE, sectionSkeleton } from "../infer/bodies.js";
 import { blockingLabelsFromWorkflow, branchPatternFromRulesets } from "../infer/forge.js";
 import { inferJira, type JiraGuess } from "../infer/jira.js";
 import { renderConfig, type InitDraft } from "../infer/render.js";
@@ -110,13 +110,15 @@ const NOISE_FLOOR_NEEDS_BODIES = 10;
 
 /**
  * How many bodies must share a line verbatim before it counts as template text
- * nobody filled in: two thirds of what was actually read, never fewer than two.
- * A proportion rather than a constant, so six readable pull requests are not
- * held to a threshold designed for seventy-eight; a floor of two, because one
- * body cannot be evidence that anything recurs.
+ * nobody filled in: two thirds of what was actually read, never fewer than the
+ * sample it takes to generalise at all. A proportion rather than a constant, so
+ * six readable pull requests are not held to a threshold designed for
+ * seventy-eight; a floor, because a handful of bodies agreeing is not a
+ * convention — and this is the same floor `sectionSkeleton` holds `required` to,
+ * which is the point (see MIN_BODIES_TO_GENERALISE).
  */
 function boilerplateThreshold(bodyCount: number): number {
-  return Math.max(2, Math.ceil((bodyCount * 2) / 3));
+  return Math.max(MIN_BODIES_TO_GENERALISE, Math.ceil((bodyCount * 2) / 3));
 }
 
 /** Says what a payload actually was, so an unrecognised shape diagnoses itself. */
@@ -260,15 +262,18 @@ function blockingLabels(workflow: string | undefined): Inferred<string[]> {
 function forbidden(sample: Sample): Inferred<string[]> {
   const bodies = sample.bodies;
 
-  // Below two bodies the threshold (never fewer than two) cannot be met, so the
-  // answer is always the empty list — and reporting the arithmetic behind that,
-  // "counted as template text at 2 of 1", reads as a bug to anyone who opens the
-  // file. Say what actually happened instead.
-  if (bodies.length < 2) {
+  // Below the floor the threshold cannot be met, so the answer is always the
+  // empty list — and reporting the arithmetic behind that, "counted as template
+  // text at 3 of 2", reads as a bug to anyone who opens the file. Say what
+  // actually happened instead.
+  if (bodies.length < MIN_BODIES_TO_GENERALISE) {
     const nothing =
       bodies.length === 0
         ? "no merged pull-request body was readable"
-        : "one body cannot show that a line recurs, so nothing counted as template text";
+        : bodies.length === 1
+          ? "one body cannot show that a line recurs, so nothing counted as template text"
+          : `${bodies.length} bodies cannot show a convention, and a forbidden line is matched ` +
+            `anywhere in a body, so it takes ${MIN_BODIES_TO_GENERALISE} before one is worth banning`;
     return {
       value: [],
       provenance: "proposed",
@@ -366,6 +371,12 @@ function jira(sample: Sample): Inferred<JiraGuess> {
  * ["Summary", "Ticket"] is not a strict rule — it is a rule that never runs, and
  * nothing on the page says so. Name a section that exists, or say plainly that
  * none of them looked like the place issue keys are cited.
+ *
+ * Always `proposed`, never the section list's own label. What was observed is
+ * that a section called "Ticket" exists; that "Ticket" is where issue keys go is
+ * shipkit's guess, made by ISSUE_SECTION over its name. Borrowing `observed`
+ * from the list put that guess in the column of this file a reader is meant to
+ * be able to trust without checking.
  */
 function jiraSection(sections: Inferred<SectionSkeleton[]>): Inferred<string> {
   const names = sections.value.map((section) => section.name);
@@ -376,8 +387,10 @@ function jiraSection(sections: Inferred<SectionSkeleton[]>): Inferred<string> {
   if (named !== undefined) {
     return {
       value: named,
-      provenance: sections.provenance,
-      why: `the section named above that reads as where issue keys are cited; jira.keyPattern is checked inside "${named}" and nowhere else`,
+      provenance: "proposed",
+      why:
+        `the section above that reads as where issue keys are cited — the name is observed, ` +
+        `picking it as the one is shipkit's guess; jira.keyPattern is checked inside "${named}" and nowhere else`,
     };
   }
 

@@ -46,6 +46,32 @@ export const configSchema = z.object({
     linkPolicy: z.enum(["story", "any"]).default("story"),
     section: z.string().min(1).default("Issues Addressed"),
   }),
+  // Absent from every `.shipkit.yml` that exists today, and loading one of
+  // those must not change: this block only matters to a repository that opts
+  // a project into `shipkit tech-task`.
+  techTask: z
+    .object({
+      project: z.string().min(1),
+      issueType: z.string().min(1),
+      epic: z.string().min(1).optional(),
+      // Must carry "{subject}" — a pattern without it produces the same
+      // summary for every ticket, which is how a backlog fills with rows
+      // nobody can tell apart.
+      summaryPattern: z
+        .string()
+        .min(1)
+        .refine((pattern) => pattern.includes("{subject}"), {
+          message: 'must contain "{subject}"',
+        }),
+      // Extra Jira fields beyond project/issuetype/epic/summary, keyed by
+      // field id since that's what the Jira API takes. Known ids seen so far:
+      //   customfield_10101  Portfolio / Servis Bilgisi (a cascading select;
+      //                      its parent has exactly one allowed value,
+      //                      "Commercial")
+      //   customfield_10102  Digital Team
+      fields: z.record(z.string(), z.unknown()).optional(),
+    })
+    .optional(),
 });
 
 export type Section = z.infer<typeof sectionSchema>;

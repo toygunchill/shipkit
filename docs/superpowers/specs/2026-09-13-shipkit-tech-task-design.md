@@ -29,7 +29,7 @@ Nothing below is assumed. Each row was read from the Jira this will run against.
 | Do these carry a description? | No. Empty. | ABC-32605, length 0 |
 | Do they carry labels? | No. | 98 of 100 sprint issues carry none |
 | What does creating one require? | `summary`, `customfield_10101`, `customfield_10102` | `editmeta` on ABC-32605 |
-| Is `Portfolio / Servis Bilgisi` constant? | Yes: `Commercial` | 240 of 240, across four teams |
+| Is `Portfolio / Servis Bilgisi` constant? | Its **parent** is: `Commercial`, the only allowed value. Its **child** is not. | 240 of 240 on the parent; the child varies within a team |
 | Is `Digital Team` constant? | **No.** It is the team. | Squad D / Squad C / Squad A / Squad B, one per sprint |
 
 The epic finding is the one that justifies building this at all: half the existing
@@ -110,7 +110,7 @@ run it.
 | `project` | from config, `DCP` |
 | `issuetype` | from config, `Story` |
 | `summary` | from config's pattern and `--subject` |
-| `customfield_10101` | from config, `Commercial` |
+| `customfield_10101` | parent from config; **child derived, or `--portfolio`** |
 | `customfield_10102` | **derived**: the dominant `Digital Team` on the developer's recent issues |
 | `customfield_10006` | from config, `ABC-12154` |
 | `customfield_10005` | the active sprint whose name begins with the derived team |
@@ -125,11 +125,38 @@ techTask:
   epic: ABC-12154
   summaryPattern: "iOS - {subject} swift ui dönüşümü"
   fields:
-    customfield_10101: "Commercial"
+    customfield_10101:
+      value: "Commercial"   # the only allowed parent
+      # no child: it tracks the work, not the repository
 ```
+
+The six teams are `Squad A`, `Squad E`, `Squad F`, `Squad B`, `Squad C`
+and `Squad D`. Only four had an active sprint when this was measured, so the
+sprint lookup must tolerate a team that has none rather than assuming one exists.
 
 Everything per-person is derived. A developer on Squad D runs the same command
 against the same committed config and gets Squad D and Squad D Sprint 45.
+
+### The portfolio child is the field that cannot be answered
+
+`customfield_10101` is a cascading select, not a plain option, so its payload
+carries a child: `{"value": "Commercial", "child": {"value": "…"}}`. The parent
+has exactly one allowed value. The child has thirteen, and measuring them across the
+four active sprints shows it tracks the *nature of the work*, not the team:
+
+| Team | Distribution |
+|---|---|
+| Squad C | Only Digital 50/60 |
+| Squad A | Only Digital 55/60 |
+| Squad D | Only Digital 22, Kişiselleştirme 18, Loyalty 11, MCP Tool 7 |
+| Squad B | Payment 36, Only Digital 20 |
+
+Two of four teams have no majority at all. So this field is neither a repository
+constant nor reliably derivable, and it is the clearest case in the design for the
+rule the rest of it follows: derive from the developer's own recent issues, require
+a real majority, and where there is none, **refuse and name `--portfolio`**, listing
+what the candidates were. A default here would be wrong roughly half the time on two
+of the four teams, and wrong quietly, inside a field nobody re-reads after creation.
 
 ### Deriving the team, and refusing to guess
 

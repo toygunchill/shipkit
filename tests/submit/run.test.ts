@@ -79,6 +79,7 @@ function makeDeps(
         currentBranch: poisoned("currentBranch"),
         resolveIssue: poisoned("resolveIssue"),
         readRepoState: poisoned("readRepoState"),
+        readPushDiffstat: poisoned("readPushDiffstat"),
         findPullRequest: poisoned("findPullRequest"),
         readUntrackedFiles: poisoned("readUntrackedFiles"),
         readRepoRoot: poisoned("readRepoRoot"),

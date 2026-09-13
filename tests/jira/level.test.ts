@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { assembleBrief } from "../../src/brief/assemble.js";
 import { loadConfig } from "../../src/config/load.js";
 import { citeTarget, STORY_LEVEL } from "../../src/jira/level.js";
+import type { IssueFacts } from "../../src/jira/types.js";
 import { validate } from "../../src/validate/rules.js";
 
 const config = loadConfig("tests/fixtures/valid.shipkit.yml"); // linkPolicy: story
@@ -83,7 +84,7 @@ describe("assembleBrief and validate agree on what to cite (cross-module)", () =
   // whatever key is actually cited in the body — not by reusing whatever facts happened to
   // be resolved for the branch's own key. This simulates that: if the agent followed
   // `ticket.cite`, the facts fed to validate are facts *for that cited key*.
-  function factsForCitedKey(issue: typeof story | typeof subtask | typeof deepChain, cite: string) {
+  function factsForCitedKey(issue: IssueFacts, cite: string): IssueFacts {
     return cite === issue.key ? issue : { ...issue.parent! };
   }
 

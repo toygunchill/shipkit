@@ -15,7 +15,7 @@
   "scripts": {
     "build": "tsc",
     "test": "npm run build && vitest run",
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

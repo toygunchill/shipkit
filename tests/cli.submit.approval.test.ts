@@ -77,7 +77,7 @@ function run(args: string[], cwd: string): { status: number; stdout: string; std
   // SHIPKIT_APPROVAL_SOCKET points at a path with nothing listening, so requestApproval
   // resolves to "no-surface" almost instantly (a real ENOENT/ECONNREFUSED, not a timeout) —
   // no real approval surface, no real git remote, no real gh, ever reached by this file.
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     SHIPKIT_APPROVAL_SOCKET: join(tempDir("shipkit-nosocket-"), "approvals.sock"),
     PATH: `${fakeGhDir()}:${process.env.PATH ?? ""}`,

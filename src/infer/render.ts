@@ -1,0 +1,98 @@
+import { Document } from "yaml";
+import type { Inferred, SectionSkeleton } from "./types.js";
+import type { JiraGuess } from "./jira.js";
+
+/** Everything `init` writes, each field carrying where it came from. */
+export type InitDraft = {
+  titlePattern: Inferred<string>;
+  branchPattern: Inferred<string>;
+  forbidden: Inferred<string[]>;
+  blockingLabels: Inferred<string[]>;
+  sections: Inferred<SectionSkeleton[]>;
+  jira: Inferred<JiraGuess>;
+};
+
+/**
+ * The header carries what each label means, once. Per-field comments then say
+ * only the label and the evidence.
+ *
+ * An earlier draft repeated the meaning above every field, and reading the
+ * result made the case against it: the same sentence three times in thirty
+ * lines is how a file teaches people to skip its comments, which costs more
+ * than the explanation gains.
+ */
+const HEADER = `Written by \`shipkit init\`. Every field below says where it came from:
+
+  read      the forge proved it — a fact, not a guess
+  observed  merged pull requests actually contain this — true of the past,
+            which is not the same as intended
+  proposed  shipkit's suggestion — your call
+
+Edit the observed and proposed values. The point of this file is to hold new
+pull requests to a baseline you chose, not to the average of the old ones.`;
+
+function note(inferred: Inferred<unknown>): string {
+  return ` ${inferred.provenance}: ${inferred.why}`;
+}
+
+/**
+ * Renders the draft as YAML that `configSchema` accepts, with a provenance
+ * comment above every field.
+ *
+ * Serialisation goes through the `yaml` package's `Document` rather than string
+ * building. A pattern like `DCP-\d+` written by interpolation comes back from
+ * the parser as `DCP-d+` — a regular expression that silently matches nothing,
+ * in the field whose whole job is matching. The comments are attached to each
+ * pair's *key* node; putting them on the value node is also valid YAML but
+ * pushes the value onto its own line, which reads as a mistake.
+ */
+export function renderConfig(draft: InitDraft): string {
+  const doc = new Document({
+    pr: {
+      titlePattern: draft.titlePattern.value,
+      forbidden: draft.forbidden.value,
+      blockingLabels: draft.blockingLabels.value,
+      sections: draft.sections.value.map((section) => ({
+        name: section.name,
+        required: section.required,
+        ...(section.minItems === undefined ? {} : { minItems: section.minItems }),
+      })),
+      // Never `human` from `init`. That mode refuses every warned push until a
+      // separate application is installed and running, and opting a team into it
+      // as a side effect of bootstrapping would break their first push for a
+      // reason nothing on screen explains.
+      approval: "echo",
+      approvalTimeoutSeconds: 120,
+    },
+    branch: { pattern: draft.branchPattern.value },
+    jira: {
+      baseUrl: draft.jira.value.baseUrl ?? "https://jira.example.com",
+      keyPattern: draft.jira.value.keyPattern ?? "[A-Z]+-\\d+",
+      linkPolicy: "story",
+      section: "Issues Addressed",
+    },
+  });
+
+  doc.commentBefore = HEADER.split("\n")
+    .map((line) => (line === "" ? "" : ` ${line}`))
+    .join("\n");
+
+  comment(doc, ["pr", "titlePattern"], draft.titlePattern);
+  comment(doc, ["pr", "forbidden"], draft.forbidden);
+  comment(doc, ["pr", "blockingLabels"], draft.blockingLabels);
+  comment(doc, ["pr", "sections"], draft.sections);
+  comment(doc, ["branch", "pattern"], draft.branchPattern);
+  comment(doc, ["jira", "baseUrl"], draft.jira);
+  comment(doc, ["jira", "keyPattern"], draft.jira);
+
+  return doc.toString({ lineWidth: 0 });
+}
+
+/** Attaches a provenance note above one key, leaving the document alone if the key is absent. */
+function comment(doc: Document, path: string[], inferred: Inferred<unknown>): void {
+  const parent = doc.getIn(path.slice(0, -1), true) as { items?: { key?: { value?: unknown; commentBefore?: string } }[] };
+  const last = path[path.length - 1];
+  const pair = parent?.items?.find((item) => item.key?.value === last);
+  if (pair?.key === undefined) return;
+  pair.key.commentBefore = note(inferred);
+}

@@ -1,8 +1,27 @@
+import { parse } from "yaml";
+import { configSchema } from "../config/schema.js";
 import { boilerplateLines, sectionSkeleton } from "../infer/bodies.js";
 import { blockingLabelsFromWorkflow, branchPatternFromRulesets } from "../infer/forge.js";
 import { inferJira, type JiraGuess } from "../infer/jira.js";
 import { renderConfig, type InitDraft } from "../infer/render.js";
 import type { Inferred, SectionSkeleton } from "../infer/types.js";
+
+/**
+ * One merged pull request, as much of it as the forge would say.
+ *
+ * The author comes back with the body because most merged pull requests in many
+ * repositories are bot merges, and a sample of ten dependabot bodies plus one
+ * human's infers dependabot's template as the house style — including a required
+ * "Release notes" section that the human pull request in the very same sample
+ * then fails.
+ */
+export type MergedPullRequest = {
+  body: string;
+  /** The author's login, when the forge reported one. */
+  author?: string;
+  /** Whether the forge itself called that author a bot. */
+  authorIsBot?: boolean;
+};
 
 /**
  * Where the facts come from. Every member may throw: there may be no remote, no
@@ -14,7 +33,7 @@ import type { Inferred, SectionSkeleton } from "../infer/types.js";
 export type InitSources = {
   rulesets: () => unknown;
   mergeGateWorkflow: () => string | undefined;
-  mergedBodies: (limit: number) => string[];
+  mergedPullRequests: (limit: number) => MergedPullRequest[];
 };
 
 export type InitDeps = {
@@ -54,6 +73,21 @@ const DEFAULT_SECTIONS: SectionSkeleton[] = [
   { name: "What to Test", required: true, minItems: 3 },
   { name: "Issues Addressed", required: true },
 ];
+
+/** Where the spec's worked example cites its issue keys. */
+const DEFAULT_JIRA_SECTION = "Issues Addressed";
+
+/** Section names that read as the place issue keys are cited. */
+const ISSUE_SECTION = /\b(issues?|tickets?|jira|stor(y|ies))\b/i;
+
+/**
+ * Logins a forge does not always flag as bots.
+ *
+ * `gh` reports `author.is_bot`, and that is believed first; this is the fallback
+ * for the accounts it misses — `app/dependabot`, anything ending in `[bot]`, and
+ * the handful of automations that merge under plain user accounts.
+ */
+const BOT_LOGIN = /(\[bot\]$|^app\/|^(dependabot|renovate|renovate-bot|github-actions|mergify|snyk-bot|imgbot|greenkeeper)$)/i;
 
 /**
  * The section agents most often reduce to one vague line, so it carries a floor
@@ -119,6 +153,44 @@ function attempt<T>(label: string, run: () => T, err: (line: string) => void): A
   }
 }
 
+/**
+ * The bodies the inference actually ran on, and what was left out of them.
+ *
+ * The spec seeds the starter from the project's best-formed pull requests. A
+ * repository's merged list is not that sample: bot merges dominate it, and their
+ * bodies are the most uniform text in the repository, which is exactly what every
+ * "most bodies agree" test in here mistakes for a convention.
+ */
+type Sample = { bodies: string[]; read: number; skipped: number };
+
+function authoredByBot(pull: MergedPullRequest): boolean {
+  if (pull.authorIsBot === true) return true;
+  return typeof pull.author === "string" && BOT_LOGIN.test(pull.author.trim());
+}
+
+function sampleOf(pulls: MergedPullRequest[]): Sample {
+  const bodies: string[] = [];
+  let skipped = 0;
+  for (const pull of pulls) {
+    if (typeof pull?.body !== "string" || pull.body.trim().length === 0) continue;
+    if (authoredByBot(pull)) {
+      skipped += 1;
+      continue;
+    }
+    bodies.push(pull.body);
+  }
+  return { bodies, read: bodies.length, skipped };
+}
+
+/** Says what the sample was, so "most bodies agree" can be weighed against how many. */
+function sampleNote(sample: Sample): string {
+  if (sample.skipped === 0) return `${sample.read} merged pull request(s) read`;
+  return (
+    `${sample.read} of ${sample.read + sample.skipped} merged pull request(s) read; ` +
+    `${sample.skipped} skipped as bot-authored`
+  );
+}
+
 /** How many distinct bodies carry each `## ` heading. */
 function headingCounts(bodies: string[]): Map<string, number> {
   const counts = new Map<string, number>();
@@ -138,8 +210,29 @@ function headingCounts(bodies: string[]): Map<string, number> {
 
 function branchPattern(payload: Attempt<unknown>, err: (line: string) => void): Inferred<string> {
   if (payload.read) {
-    const read = branchPatternFromRulesets(payload.value);
-    if (read !== undefined) return read;
+    const reading = branchPatternFromRulesets(payload.value);
+    if (reading.kind === "required") return reading.inferred;
+
+    if (reading.kind === "ref-scoped") {
+      // The pattern is real, but it governs release refs (or some other subset),
+      // not how branches are named in general. Writing it here would reject every
+      // feature branch on the first `check`, under a comment claiming the forge
+      // said so.
+      const scopes = reading.scopes.join("; ");
+      err(
+        `Every enforced branch_name_pattern rule is scoped to a subset of refs (${scopes}). ` +
+          "A rule for some refs is not a naming convention for all of them, so branch.pattern " +
+          "accepts everything and is left for a human.",
+      );
+      return {
+        value: PERMISSIVE_BRANCH,
+        provenance: "proposed",
+        why:
+          `the only enforced branch_name_pattern rules govern a subset of refs (${scopes}), ` +
+          "which does not say how branches are named generally; this accepts every branch name, so replace it",
+      };
+    }
+
     err(
       `No enforced branch_name_pattern rule in the rulesets payload (got ${describeShape(payload.value)}). ` +
         "Writing a branch.pattern that accepts everything rather than inventing one.",
@@ -164,27 +257,39 @@ function blockingLabels(workflow: string | undefined): Inferred<string[]> {
   };
 }
 
-function forbidden(bodies: string[]): Inferred<string[]> {
-  if (bodies.length === 0) {
+function forbidden(sample: Sample): Inferred<string[]> {
+  const bodies = sample.bodies;
+
+  // Below two bodies the threshold (never fewer than two) cannot be met, so the
+  // answer is always the empty list — and reporting the arithmetic behind that,
+  // "counted as template text at 2 of 1", reads as a bug to anyone who opens the
+  // file. Say what actually happened instead.
+  if (bodies.length < 2) {
+    const nothing =
+      bodies.length === 0
+        ? "no merged pull-request body was readable"
+        : "one body cannot show that a line recurs, so nothing counted as template text";
     return {
       value: [],
       provenance: "proposed",
-      why: "no merged pull-request bodies were readable; add the template lines that mean nobody answered",
+      why: `${nothing} (${sampleNote(sample)}); add the template lines that mean nobody answered`,
     };
   }
+
   const atLeast = boilerplateThreshold(bodies.length);
   const observed = boilerplateLines(bodies, atLeast);
   return {
     ...observed,
-    why: `${observed.why} (counted as template text at ${atLeast} of ${bodies.length})`,
+    why: `${observed.why} (counted as template text at ${atLeast} of ${bodies.length}; ${sampleNote(sample)})`,
   };
 }
 
-function sections(bodies: string[]): Inferred<SectionSkeleton[]> {
+function sections(sample: Sample): Inferred<SectionSkeleton[]> {
+  const bodies = sample.bodies;
   const proposed: Inferred<SectionSkeleton[]> = {
     value: DEFAULT_SECTIONS,
     provenance: "proposed",
-    why: "no section headings could be observed; this is shipkit's suggested skeleton",
+    why: `no section headings could be observed (${sampleNote(sample)}); this is shipkit's suggested skeleton`,
   };
   if (bodies.length === 0) return proposed;
 
@@ -205,7 +310,7 @@ function sections(bodies: string[]): Inferred<SectionSkeleton[]> {
     return { ...section, minItems: WHAT_TO_TEST_MIN_ITEMS };
   });
 
-  const notes = [observed.why];
+  const notes = [`${observed.why} (${sampleNote(sample)})`];
   if (dropped > 0) {
     notes.push(`${dropped} heading(s) seen in under ${NOISE_FLOOR * 100}% of them dropped as noise`);
   }
@@ -215,18 +320,73 @@ function sections(bodies: string[]): Inferred<SectionSkeleton[]> {
   return { value, provenance: "observed", why: notes.join("; ") };
 }
 
-function jira(bodies: string[]): Inferred<JiraGuess> {
+/**
+ * The schema's own opinion of what a `jira.baseUrl` may be, borrowed rather than
+ * restated — a second definition of "is a URL" would drift from the one `check`
+ * enforces, and the whole point is that they agree.
+ */
+const BASE_URL = configSchema.shape.jira.shape.baseUrl;
+
+function jira(sample: Sample): Inferred<JiraGuess> {
+  const bodies = sample.bodies;
   const observed = bodies.length === 0 ? undefined : inferJira(bodies);
-  if (observed !== undefined && observed.value.baseUrl !== undefined) return observed;
+  const link = observed?.value.baseUrl;
+
+  if (link !== undefined && BASE_URL.safeParse(link).success) {
+    return { ...observed!, why: `${observed!.why} (${sampleNote(sample)})` };
+  }
+
+  // A host scraped out of prose is not necessarily a URL: `https://a<b/browse/X-1`
+  // is a link somebody typed and `check` cannot load a config holding it. Refusing
+  // the value and saying so beats writing a file that will not parse.
+  const unusable =
+    link === undefined
+      ? undefined
+      : `the most-linked Jira host in those bodies, ${JSON.stringify(link)}, is not a URL this config can hold`;
+
   return {
     value: {},
     provenance: "proposed",
     // Not "observed": the value that reaches the file is a placeholder host, and
     // labelling a placeholder as something merged pull requests contain would be
     // a lie in the one column of this file a reader is meant to trust.
-    why:
+    why: `${
+      unusable ??
       observed?.why ??
-      "no merged pull-request bodies were readable, so no Jira link could be found",
+      "no merged pull-request bodies were readable, so no Jira link could be found"
+    } (${sampleNote(sample)})`,
+  };
+}
+
+/**
+ * Which section the issue-key rule reads.
+ *
+ * `validate` only checks for an issue key when the section `jira.section` names is
+ * present in the body, so a hardcoded "Issues Addressed" over sections called
+ * ["Summary", "Ticket"] is not a strict rule — it is a rule that never runs, and
+ * nothing on the page says so. Name a section that exists, or say plainly that
+ * none of them looked like the place issue keys are cited.
+ */
+function jiraSection(sections: Inferred<SectionSkeleton[]>): Inferred<string> {
+  const names = sections.value.map((section) => section.name);
+  const named =
+    names.find((name) => name.trim().toLowerCase() === DEFAULT_JIRA_SECTION.toLowerCase()) ??
+    names.find((name) => ISSUE_SECTION.test(name));
+
+  if (named !== undefined) {
+    return {
+      value: named,
+      provenance: sections.provenance,
+      why: `the section named above that reads as where issue keys are cited; jira.keyPattern is checked inside "${named}" and nowhere else`,
+    };
+  }
+
+  return {
+    value: DEFAULT_JIRA_SECTION,
+    provenance: "proposed",
+    why:
+      `none of the sections above (${names.join(", ")}) names the place issue keys are cited, ` +
+      `so the issue-key rule will not run until this points at a section that exists`,
   };
 }
 
@@ -245,12 +405,25 @@ export function runInit(options: InitOptions, deps: InitDeps): InitResult {
 
   // Each source in its own try/catch: one unreachable forge must not cost us the
   // three facts the other sources could still have given.
-  const bodies =
-    attempt("merged pull-request bodies", () => deps.sources.mergedBodies(options.limit), deps.err)
-      .value ?? [];
+  const pulls =
+    attempt(
+      "merged pull requests",
+      () => deps.sources.mergedPullRequests(options.limit),
+      deps.err,
+    ).value ?? [];
   const rulesets = attempt("the repository rulesets", () => deps.sources.rulesets(), deps.err);
   const workflow = attempt("the merge-gate workflow", () => deps.sources.mergeGateWorkflow(), deps.err);
 
+  const sample = sampleOf(pulls);
+  if (sample.skipped > 0) {
+    deps.err(
+      `Left ${sample.skipped} bot-authored pull request(s) out of the sample, inferring from the ` +
+        `${sample.read} written by people. A starter built from dependabot's bodies is one the ` +
+        "humans in the same sample fail.",
+    );
+  }
+
+  const observedSections = sections(sample);
   const draft: InitDraft = {
     titlePattern: {
       value: CONVENTIONAL_TITLE,
@@ -258,10 +431,11 @@ export function runInit(options: InitOptions, deps: InitDeps): InitResult {
       why: "the conventional-commits shape; nothing on a forge states a title convention",
     },
     branchPattern: branchPattern(rulesets, deps.err),
-    forbidden: forbidden(bodies),
+    forbidden: forbidden(sample),
     blockingLabels: blockingLabels(workflow.value),
-    sections: sections(bodies),
-    jira: jira(bodies),
+    sections: observedSections,
+    jira: jira(sample),
+    jiraSection: jiraSection(observedSections),
   };
 
   // Only a forge-proved branch pattern counts as resolved. Anything else in that
@@ -270,9 +444,30 @@ export function runInit(options: InitOptions, deps: InitDeps): InitResult {
   const unresolved: string[] = [];
   if (draft.branchPattern.provenance !== "read") unresolved.push("branch.pattern");
   if (draft.jira.value.baseUrl === undefined) unresolved.push("jira.baseUrl");
+  // A jira.section naming no section that exists is a rule that never runs. That
+  // is a silence, which is the failure mode this command is built against.
+  if (!draft.sections.value.some((section) => section.name === draft.jiraSection.value)) {
+    unresolved.push("jira.section");
+  }
+
+  const text = renderConfig(draft);
+
+  // What this command infers must load. The unit tests put every path through
+  // `configSchema`; until now the command itself never did, so a ruleset with an
+  // empty pattern, or a Jira host scraped out of prose that is not a URL, exited 0
+  // over a file `check` cannot read. Refusing and naming the field is worse than a
+  // correct value and better than a broken file.
+  const failure = schemaFailure(text);
+  if (failure !== undefined) {
+    deps.err(
+      `Refusing to write ${options.config}: what shipkit inferred does not load as a config — ${failure}. ` +
+        "Nothing was written; a config that cannot be read is worse than no config.",
+    );
+    return { code: 2, wrote: false, unresolved };
+  }
 
   try {
-    deps.write(options.config, renderConfig(draft));
+    deps.write(options.config, text);
   } catch (error) {
     deps.err(`Cannot write ${options.config}: ${reason(error)}`);
     return { code: 2, wrote: false, unresolved };
@@ -300,5 +495,32 @@ function summaryOrder(draft: InitDraft): [string, Inferred<unknown>][] {
     ["pr.sections", draft.sections],
     ["branch.pattern", draft.branchPattern],
     ["jira", draft.jira],
+    ["jira.section", draft.jiraSection],
   ];
+}
+
+/**
+ * Names the fields a rendered config fails the schema on, in the schema's own
+ * words, or undefined when it loads.
+ *
+ * Exported to be tested directly. Both inputs known to reach it — a ruleset with
+ * an empty pattern, a Jira host scraped out of prose that is not a URL — are now
+ * refused where they are read, so no argument to `runInit` can drive this branch;
+ * that is the intent, and it is also why the gate needs a test of its own. It is
+ * here for the next such input, not for those two.
+ */
+export function schemaFailure(text: string): string | undefined {
+  let document: unknown;
+  try {
+    document = parse(text);
+  } catch (error) {
+    return `the rendered YAML does not parse (${reason(error)})`;
+  }
+
+  const result = configSchema.safeParse(document);
+  if (result.success) return undefined;
+
+  return result.error.issues
+    .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+    .join("; ");
 }

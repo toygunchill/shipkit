@@ -10,6 +10,39 @@ export type InitDraft = {
   blockingLabels: Inferred<string[]>;
   sections: Inferred<SectionSkeleton[]>;
   jira: Inferred<JiraGuess>;
+  /**
+   * Which section the issue-key rule reads. Part of the draft rather than a
+   * constant here because it has to name a section that actually exists: naming
+   * one that doesn't is not a stricter config, it is a rule that never runs.
+   */
+  jiraSection: Inferred<string>;
+};
+
+/**
+ * The three fields nothing can be inferred about, carrying their reasons anyway.
+ *
+ * The header promises every field says where it came from, and four fields used
+ * to carry no comment at all. A constant is still a choice somebody made for you,
+ * which is the whole content of the `proposed` label.
+ */
+const APPROVAL: Inferred<string> = {
+  value: "echo",
+  provenance: "proposed",
+  why:
+    "acknowledging the warning ids is enough. Never `human` from `init`: that mode " +
+    "refuses every warned push until the approval app is installed and running",
+};
+
+const APPROVAL_TIMEOUT: Inferred<number> = {
+  value: 120,
+  provenance: "proposed",
+  why: "long enough to read three warnings and click, short enough not to outlast an agent's own tool call",
+};
+
+const LINK_POLICY: Inferred<string> = {
+  value: "story",
+  provenance: "proposed",
+  why: "cite the story rather than its sub-task; nothing on a forge or in a body states this preference",
 };
 
 /**
@@ -57,19 +90,15 @@ export function renderConfig(draft: InitDraft): string {
         required: section.required,
         ...(section.minItems === undefined ? {} : { minItems: section.minItems }),
       })),
-      // Never `human` from `init`. That mode refuses every warned push until a
-      // separate application is installed and running, and opting a team into it
-      // as a side effect of bootstrapping would break their first push for a
-      // reason nothing on screen explains.
-      approval: "echo",
-      approvalTimeoutSeconds: 120,
+      approval: APPROVAL.value,
+      approvalTimeoutSeconds: APPROVAL_TIMEOUT.value,
     },
     branch: { pattern: draft.branchPattern.value },
     jira: {
       baseUrl: draft.jira.value.baseUrl ?? "https://jira.example.com",
       keyPattern: draft.jira.value.keyPattern ?? "[A-Z]+-\\d+",
-      linkPolicy: "story",
-      section: "Issues Addressed",
+      linkPolicy: LINK_POLICY.value,
+      section: draft.jiraSection.value,
     },
   });
 
@@ -81,9 +110,13 @@ export function renderConfig(draft: InitDraft): string {
   comment(doc, ["pr", "forbidden"], draft.forbidden);
   comment(doc, ["pr", "blockingLabels"], draft.blockingLabels);
   comment(doc, ["pr", "sections"], draft.sections);
+  comment(doc, ["pr", "approval"], APPROVAL);
+  comment(doc, ["pr", "approvalTimeoutSeconds"], APPROVAL_TIMEOUT);
   comment(doc, ["branch", "pattern"], draft.branchPattern);
   comment(doc, ["jira", "baseUrl"], draft.jira);
   comment(doc, ["jira", "keyPattern"], draft.jira);
+  comment(doc, ["jira", "linkPolicy"], LINK_POLICY);
+  comment(doc, ["jira", "section"], draft.jiraSection);
 
   return doc.toString({ lineWidth: 0 });
 }

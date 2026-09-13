@@ -21,6 +21,7 @@ const draft: InitDraft = {
     provenance: "observed",
     why: "from links",
   },
+  jiraSection: { value: "Summary", provenance: "observed", why: "the section issue keys are cited in" },
 };
 
 describe("renderConfig", () => {
@@ -69,6 +70,29 @@ describe("renderConfig", () => {
     const parsed = configSchema.parse(parse(renderConfig(draft)));
     expect(parsed.pr.sections.find((s) => s.name === "What to Test")?.minItems).toBe(3);
     expect(parsed.pr.sections.find((s) => s.name === "Summary")?.minItems).toBeUndefined();
+  });
+
+  // The header promises every field says where it came from. Four of them —
+  // approval, approvalTimeoutSeconds, linkPolicy, section — used to say nothing.
+  it("comments the constants too, or the header's promise is false", () => {
+    const lines = renderConfig(draft).split("\n");
+    for (const key of ["approval", "approvalTimeoutSeconds", "linkPolicy", "section"]) {
+      const at = lines.findIndex((line) => line.startsWith(`  ${key}:`));
+      expect(at, `${key} is missing`).toBeGreaterThan(0);
+      expect(lines[at - 1].trim(), `${key} carries no comment`).toMatch(/^# (read|observed|proposed):/);
+    }
+  });
+
+  it("takes jira.section from the draft, so it can name a section that exists", () => {
+    const parsed = configSchema.parse(
+      parse(
+        renderConfig({
+          ...draft,
+          jiraSection: { value: "Ticket", provenance: "observed", why: "the observed section" },
+        }),
+      ),
+    );
+    expect(parsed.jira.section).toBe("Ticket");
   });
 
   it("still loads when nothing could be learned about Jira", () => {

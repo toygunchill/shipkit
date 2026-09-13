@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { configSchema, type ShipkitConfig } from "../../src/config/schema.js";
-import { runInit, type InitDeps } from "../../src/init/run.js";
+import { runInit, schemaFailure, type InitDeps, type MergedPullRequest } from "../../src/init/run.js";
+import { renderConfig, type InitDraft } from "../../src/infer/render.js";
+import { validate } from "../../src/validate/rules.js";
+
+/** Bodies written by people — the sample `init` is meant to learn a house style from. */
+function byPeople(bodies: string[]): MergedPullRequest[] {
+  return bodies.map((body, index) => ({ body, author: `person-${index}`, authorIsBot: false }));
+}
 
 function deps(over: Partial<InitDeps> = {}) {
   const written: string[] = [];
@@ -11,7 +18,8 @@ function deps(over: Partial<InitDeps> = {}) {
     sources: {
       rulesets: () => [],
       mergeGateWorkflow: () => undefined,
-      mergedBodies: () => ["## Summary\nreal work\n## Issues Addressed\nhttps://x.example.com/jira/browse/ABC-1"],
+      mergedPullRequests: () =>
+        byPeople(["## Summary\nreal work\n## Issues Addressed\nhttps://x.example.com/jira/browse/ABC-1"]),
     },
     exists: () => false,
     write: (_p, text) => void written.push(text),
@@ -30,7 +38,7 @@ function wroteConfig(sources: Partial<InitDeps["sources"]> = {}): ShipkitConfig 
     sources: {
       rulesets: () => [],
       mergeGateWorkflow: () => undefined,
-      mergedBodies: () => [],
+      mergedPullRequests: () => [],
       ...sources,
     },
   });
@@ -46,7 +54,7 @@ describe("runInit", () => {
       sources: {
         rulesets: () => { throw new Error("no remote"); },
         mergeGateWorkflow: () => { throw new Error("no remote"); },
-        mergedBodies: () => { throw new Error("no remote"); },
+        mergedPullRequests: () => { throw new Error("no remote"); },
       },
     });
     const result = runInit(OPTIONS, d);
@@ -60,7 +68,7 @@ describe("runInit", () => {
       sources: {
         rulesets: () => { throw new Error("no remote"); },
         mergeGateWorkflow: () => undefined,
-        mergedBodies: () => [],
+        mergedPullRequests: () => [],
       },
     });
     expect(runInit(OPTIONS, d).unresolved).toContain("branch.pattern");
@@ -81,7 +89,7 @@ describe("runInit", () => {
   });
 
   it("reports what it actually received when a payload makes no sense", () => {
-    const { deps: d, err } = deps({ sources: { rulesets: () => ({ nope: true }), mergeGateWorkflow: () => undefined, mergedBodies: () => [] } });
+    const { deps: d, err } = deps({ sources: { rulesets: () => ({ nope: true }), mergeGateWorkflow: () => undefined, mergedPullRequests: () => [] } });
     runInit(OPTIONS, d);
     expect(err.join("\n")).toMatch(/ruleset/i);
   });
@@ -91,7 +99,7 @@ describe("runInit", () => {
       sources: {
         rulesets: () => ({ nope: true }),
         mergeGateWorkflow: () => undefined,
-        mergedBodies: () => [],
+        mergedPullRequests: () => [],
       },
     });
     runInit(OPTIONS, d);
@@ -104,7 +112,7 @@ describe("runInit", () => {
     // reduce to one vague line. Observing the past faithfully would drop the
     // check that exists to correct it.
     const bodies = ["## Summary\na\n## What to Test\nb", "## Summary\nc\n## What to Test\nd"];
-    const config = wroteConfig({ mergedBodies: () => bodies });
+    const config = wroteConfig({ mergedPullRequests: () => byPeople(bodies) });
     const observed = config.pr.sections.find((s) => s.name === "What to Test");
     expect(observed?.minItems).toBe(3);
     // ...and the note must not claim the forge or the past proved it.
@@ -115,14 +123,14 @@ describe("runInit", () => {
     const bodies = Array.from({ length: 12 }, () => "## Summary\na");
     bodies[0] += "\n## Someone's personal note\nx";
     for (let i = 0; i < 3; i++) bodies[i] += "\n## Analysis JIRA Issue\ny";
-    const names = wroteConfig({ mergedBodies: () => bodies }).pr.sections.map((s) => s.name);
+    const names = wroteConfig({ mergedPullRequests: () => byPeople(bodies) }).pr.sections.map((s) => s.name);
     expect(names).not.toContain("Someone's personal note");
     expect(names).toContain("Analysis JIRA Issue");
   });
 
   it("keeps every heading when the sample is too small for a tenth to mean anything", () => {
     const bodies = ["## Summary\na\n## Analysis JIRA Issue\nx", "## Summary\na", "## Summary\na", "## Summary\na"];
-    const names = wroteConfig({ mergedBodies: () => bodies }).pr.sections.map((s) => s.name);
+    const names = wroteConfig({ mergedPullRequests: () => byPeople(bodies) }).pr.sections.map((s) => s.name);
     expect(names).toContain("Analysis JIRA Issue");
   });
 
@@ -135,7 +143,7 @@ describe("runInit", () => {
         .filter((line) => line !== "")
         .join("\n"),
     );
-    const forbidden = wroteConfig({ mergedBodies: () => bodies }).pr.forbidden;
+    const forbidden = wroteConfig({ mergedPullRequests: () => byPeople(bodies) }).pr.forbidden;
     expect(forbidden).toContain(TEMPLATE);
     expect(forbidden).not.toContain("Bumped the version.");
   });
@@ -146,5 +154,297 @@ describe("runInit", () => {
     const config = wroteConfig();
     expect(config.pr.sections.length).toBeGreaterThan(0);
     expect(config.pr.sections.map((s) => s.name)).toContain("What to Test");
+  });
+});
+
+// A ruleset over refs/heads/release/* says how release branches are named. It does
+// not say how branches are named. Written into branch.pattern as a fact, it fails
+// every feature branch on the first check anybody runs.
+describe("runInit against a ref-scoped ruleset", () => {
+  const RELEASE_ONLY = [
+    {
+      id: 30,
+      name: "release branches",
+      enforcement: "active",
+      conditions: { ref_name: { include: ["refs/heads/release/*"], exclude: [] } },
+      rules: [
+        {
+          type: "branch_name_pattern",
+          parameters: { operator: "regex", pattern: "^release/[0-9]+\\.[0-9]+$", negate: false },
+        },
+      ],
+    },
+  ];
+
+  it("does not hold every branch to the release refs' pattern", () => {
+    const config = wroteConfig({ rulesets: () => RELEASE_ONLY });
+    expect(config.branch.pattern).not.toContain("release");
+    expect(new RegExp(config.branch.pattern).test("feature/toygun/1234-thing")).toBe(true);
+  });
+
+  it("says in the file why it could not read a branch convention, and names it unresolved", () => {
+    const { deps: d, written, err } = deps({
+      sources: {
+        rulesets: () => RELEASE_ONLY,
+        mergeGateWorkflow: () => undefined,
+        mergedPullRequests: () => [],
+      },
+    });
+    const result = runInit(OPTIONS, d);
+    expect(result.unresolved).toContain("branch.pattern");
+    expect(written[0]).toContain("subset of refs");
+    expect(written[0]).toContain("refs/heads/release/*");
+    expect(written[0]).not.toContain("read: branch_name_pattern");
+    expect(err.join("\n")).toContain("refs/heads/release/*");
+  });
+
+  it("still prefers a ruleset that governs every ref, wherever it sits in the list", () => {
+    const all = {
+      id: 31,
+      name: "branch naming",
+      enforcement: "active",
+      conditions: { ref_name: { include: ["~ALL"], exclude: [] } },
+      rules: [
+        {
+          type: "branch_name_pattern",
+          parameters: { operator: "regex", pattern: "^feature/.+$", negate: false },
+        },
+      ],
+    };
+    const config = wroteConfig({ rulesets: () => [...RELEASE_ONLY, all] });
+    expect(config.branch.pattern).toBe("^feature/.+$");
+  });
+});
+
+describe("runInit writes only what loads", () => {
+  // Both of these compile as regular expressions. "" fails the schema's min(1) and
+  // "   " loads while matching no branch anybody's is called — under a comment
+  // saying the forge proved it.
+  it.each(["", "   "])("refuses a blank ruleset pattern (%j) at the source", (pattern) => {
+    const { deps: d, written } = deps({
+      sources: {
+        rulesets: () => [
+          {
+            name: "blank",
+            enforcement: "active",
+            rules: [{ type: "branch_name_pattern", parameters: { operator: "regex", pattern } }],
+          },
+        ],
+        mergeGateWorkflow: () => undefined,
+        mergedPullRequests: () => [],
+      },
+    });
+    const result = runInit(OPTIONS, d);
+    expect(result.code).toBe(0);
+    expect(result.unresolved).toContain("branch.pattern");
+    const config = configSchema.parse(parse(written[0]));
+    expect(config.branch.pattern).toBe("^.+$");
+  });
+
+  // A host lifted out of prose is not necessarily a URL, and z.string().url()
+  // rejects all of these — a config holding one is a config `check` cannot load.
+  it.each(["a<b", "a|b", "[bad", "a%20b", "ex.com:notaport"])(
+    "refuses an observed Jira host that is not a URL (%s)",
+    (host) => {
+      const body = `## Summary\nx\n## Issues Addressed\nhttps://${host}/browse/ABC-1`;
+      const { deps: d, written, out } = deps({
+        sources: {
+          rulesets: () => [],
+          mergeGateWorkflow: () => undefined,
+          mergedPullRequests: () => byPeople([body, body]),
+        },
+      });
+      const result = runInit(OPTIONS, d);
+      expect(result.code).toBe(0);
+      expect(result.unresolved).toContain("jira.baseUrl");
+      expect(() => configSchema.parse(parse(written[0]))).not.toThrow();
+      expect(configSchema.parse(parse(written[0])).jira.baseUrl).toBe("https://jira.example.com");
+      expect(out.join("\n")).toContain("is not a URL this config can hold");
+    },
+  );
+
+  it("keeps a Jira host that is a URL", () => {
+    const body = "## Summary\nx\n## Issues Addressed\nhttps://x.example.com/jira/browse/ABC-1";
+    const config = wroteConfig({ mergedPullRequests: () => byPeople([body, body]) });
+    expect(config.jira.baseUrl).toBe("https://x.example.com/jira");
+  });
+
+  // The last gate: whatever is inferred in future, a file `check` cannot read is
+  // worse than a refusal that names the field.
+  it("names the offending field rather than letting an unloadable config through", () => {
+    const draft: InitDraft = {
+      titlePattern: { value: "^x$", provenance: "proposed", why: "w" },
+      branchPattern: { value: "", provenance: "read", why: "w" },
+      forbidden: { value: [], provenance: "proposed", why: "w" },
+      blockingLabels: { value: [], provenance: "proposed", why: "w" },
+      sections: { value: [{ name: "Summary", required: true }], provenance: "observed", why: "w" },
+      jira: { value: { baseUrl: "https://a<b" }, provenance: "observed", why: "w" },
+      jiraSection: { value: "Summary", provenance: "observed", why: "w" },
+    };
+    const failure = schemaFailure(renderConfig(draft));
+    expect(failure).toContain("branch.pattern");
+    expect(failure).toContain("jira.baseUrl");
+  });
+
+  it("says nothing is wrong with a config that loads", () => {
+    const { written } = (() => {
+      const d = deps();
+      runInit(OPTIONS, d.deps);
+      return d;
+    })();
+    expect(schemaFailure(written[0])).toBeUndefined();
+  });
+});
+
+// Most merged pull requests in many repositories are bot merges, and their bodies
+// are the most uniform text in the repository — which is exactly what every "most
+// bodies agree" rule in here mistakes for a house style.
+describe("runInit against a bot-dominated sample", () => {
+  const DEPENDABOT = [
+    "Bumps lodash from 4.17.20 to 4.17.21.",
+    "## Release notes",
+    "sourced from lodash's releases.",
+    "## Commits",
+    "- deadbee chore: release 4.17.21",
+    "Dependabot will resolve any conflicts with this PR as long as you don't alter it yourself.",
+  ].join("\n");
+
+  const HUMAN = [
+    "## Summary",
+    "Fixes the retry loop that hung on a 500.",
+    "## What to Test",
+    "- open the page",
+    "- force a 500",
+    "- watch it retry three times",
+    "## Issues Addressed",
+    "https://x.example.com/jira/browse/ABC-1",
+  ].join("\n");
+
+  function sample(): MergedPullRequest[] {
+    const bots: MergedPullRequest[] = Array.from({ length: 10 }, () => ({
+      body: DEPENDABOT,
+      author: "app/dependabot",
+      authorIsBot: true,
+    }));
+    return [...bots, { body: HUMAN, author: "toyguncil", authorIsBot: false }];
+  }
+
+  it("does not make dependabot's sections mandatory", () => {
+    const config = wroteConfig({ mergedPullRequests: () => sample() });
+    const names = config.pr.sections.map((s) => s.name);
+    expect(names).not.toContain("Release notes");
+    expect(names).not.toContain("Commits");
+    expect(names).toContain("Summary");
+  });
+
+  it("does not put dependabot's boilerplate in forbidden", () => {
+    const config = wroteConfig({ mergedPullRequests: () => sample() });
+    expect(config.pr.forbidden.join("\n")).not.toContain("Dependabot will resolve");
+  });
+
+  // The sharpest form of the finding: the human pull request that was in the
+  // sample used to fail the config inferred from it.
+  it("writes a config the human pull request in the sample passes", () => {
+    const config = wroteConfig({ mergedPullRequests: () => sample() });
+    const result = validate({ title: "fix(retry): stop hanging on a 500", body: HUMAN, config });
+    expect(result.findings).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
+  it("says how many it read and how many it skipped", () => {
+    const { deps: d, written, err } = deps({
+      sources: {
+        rulesets: () => [],
+        mergeGateWorkflow: () => undefined,
+        mergedPullRequests: () => sample(),
+      },
+    });
+    runInit(OPTIONS, d);
+    expect(written[0]).toContain("1 of 11 merged pull request(s) read");
+    expect(written[0]).toContain("10 skipped as bot-authored");
+    expect(err.join("\n")).toContain("10 bot-authored pull request(s)");
+  });
+
+  it.each(["dependabot[bot]", "app/dependabot", "renovate[bot]", "github-actions"])(
+    "recognises %s as a bot even when the forge does not flag it",
+    (author) => {
+      const pulls: MergedPullRequest[] = [
+        ...Array.from({ length: 10 }, () => ({ body: DEPENDABOT, author })),
+        { body: HUMAN, author: "toyguncil" },
+      ];
+      const names = wroteConfig({ mergedPullRequests: () => pulls }).pr.sections.map((s) => s.name);
+      expect(names).not.toContain("Release notes");
+    },
+  );
+
+  it("leaves a pull request with no author at all in the sample", () => {
+    const names = wroteConfig({
+      mergedPullRequests: () => [{ body: HUMAN }, { body: HUMAN }],
+    }).pr.sections.map((s) => s.name);
+    expect(names).toContain("Summary");
+  });
+});
+
+describe("runInit provenance", () => {
+  // `validate` only checks the issue key when the section jira.section names is
+  // present. Hardcoding "Issues Addressed" over sections called Summary/Ticket is
+  // not a strict rule, it is a rule that never runs, and nothing said so.
+  it("points jira.section at a section that exists", () => {
+    const body = "## Summary\nx\n## Ticket\nhttps://x.example.com/jira/browse/ABC-1";
+    const config = wroteConfig({ mergedPullRequests: () => byPeople([body, body]) });
+    expect(config.pr.sections.map((s) => s.name)).toEqual(["Summary", "Ticket"]);
+    expect(config.jira.section).toBe("Ticket");
+    expect(
+      validate({
+        title: "feat(x): y",
+        body: "## Summary\nx\n## Ticket\nno key here",
+        config,
+      }).findings.map((f) => f.rule),
+    ).toContain("issue-key-missing");
+  });
+
+  it("names jira.section unresolved when no section reads as where issues are cited", () => {
+    const body = "## Summary\nx\n## Notes\ny";
+    const { deps: d, written } = deps({
+      sources: {
+        rulesets: () => [],
+        mergeGateWorkflow: () => undefined,
+        mergedPullRequests: () => byPeople([body, body]),
+      },
+    });
+    const result = runInit(OPTIONS, d);
+    expect(result.unresolved).toContain("jira.section");
+    expect(written[0]).toContain("will not run until this points at a section that exists");
+  });
+
+  it("comments every field, as the header promises", () => {
+    const { deps: d, written } = deps();
+    runInit(OPTIONS, d);
+    const lines = written[0].split("\n");
+    for (const key of [
+      "titlePattern",
+      "forbidden",
+      "blockingLabels",
+      "sections",
+      "approval",
+      "approvalTimeoutSeconds",
+      "pattern",
+      "baseUrl",
+      "keyPattern",
+      "linkPolicy",
+      "section",
+    ]) {
+      const at = lines.findIndex((line) => line.startsWith(`  ${key}:`));
+      expect(at, `${key} is not a top-level field of its group`).toBeGreaterThan(0);
+      expect(lines[at - 1].trim(), `${key} carries no provenance comment`).toMatch(/^#/);
+    }
+  });
+
+  // "counted as template text at 2 of 1" reads as a bug to anyone who opens it.
+  it("does not report a threshold larger than the sample it was read from", () => {
+    const { deps: d, written } = deps();
+    runInit(OPTIONS, d);
+    expect(written[0]).not.toMatch(/at 2 of 1\b/);
+    expect(written[0]).toContain("one body cannot show that a line recurs");
   });
 });

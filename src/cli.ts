@@ -13,7 +13,8 @@ import {
   ticketFromBranch,
 } from "./cli-support.js";
 import { ConfigError, loadConfig } from "./config/load.js";
-import { runInit, type InitSources } from "./init/run.js";
+import { blockingLabelsFromWorkflow } from "./infer/forge.js";
+import { runInit, type InitSources, type MergedPullRequest } from "./init/run.js";
 import { fetchIssue, JiraError } from "./jira/client.js";
 import type { IssueFacts } from "./jira/types.js";
 import { jiraToken } from "./secrets/keychain.js";
@@ -228,9 +229,14 @@ program
  * forge this machine cannot reach.
  *
  * `InitSources.mergeGateWorkflow` returns one document, so when several workflows
- * gate on labels the first by name is the one read. Concatenating them is not an
- * option: two YAML documents joined are not one YAML document, and the parser
- * would reject the pair after accepting either alone.
+ * gate on labels the first that actually gates is the one read. Concatenating them
+ * is not an option: two YAML documents joined are not one YAML document, and the
+ * parser would reject the pair after accepting either alone.
+ *
+ * Mentioning `pull_request.labels` is not the same as gating on one — a nightly
+ * that only runs on a schedule, or a job whose condition is `!contains(...)` and
+ * so runs when the label is *absent*, both mention it. The parser decides, so that
+ * picking the first such file cannot cost us a real gate in a later one.
  */
 function mergeGateWorkflow(cwd: string): string | undefined {
   let root = cwd;
@@ -245,7 +251,8 @@ function mergeGateWorkflow(cwd: string): string | undefined {
   for (const name of readdirSync(dir).sort()) {
     if (!name.endsWith(".yml") && !name.endsWith(".yaml")) continue;
     const text = readFileSync(join(dir, name), "utf8");
-    if (text.includes("pull_request.labels")) return text;
+    if (!text.includes("pull_request.labels")) continue;
+    if (blockingLabelsFromWorkflow(text) !== undefined) return text;
   }
   return undefined;
 }
@@ -261,15 +268,41 @@ function realInitSources(cwd: string): InitSources {
   return {
     rulesets: () => JSON.parse(gh(["api", "repos/{owner}/{repo}/rulesets"])) as unknown,
     mergeGateWorkflow: () => mergeGateWorkflow(cwd),
-    mergedBodies: (limit: number) => {
-      const raw = gh(["pr", "list", "--state", "merged", "--json", "body", "--limit", String(limit)]);
+    // The author comes back with the body so that `runInit` can leave bot merges
+    // out of the sample. `gh` reports `author.is_bot`, which is carried through
+    // rather than re-derived here — the login is passed along too, for the
+    // accounts the forge does not flag.
+    mergedPullRequests: (limit: number) => {
+      const raw = gh([
+        "pr",
+        "list",
+        "--state",
+        "merged",
+        "--json",
+        "body,author",
+        "--limit",
+        String(limit),
+      ]);
       const list = JSON.parse(raw) as unknown;
-      if (!Array.isArray(list)) throw new Error("gh pr list --json body did not return an array");
-      return list
-        .map((item) =>
-          typeof item === "object" && item !== null ? (item as { body?: unknown }).body : undefined,
-        )
-        .filter((body): body is string => typeof body === "string" && body.trim().length > 0);
+      if (!Array.isArray(list)) {
+        throw new Error("gh pr list --json body,author did not return an array");
+      }
+      return list.flatMap((item): MergedPullRequest[] => {
+        if (typeof item !== "object" || item === null) return [];
+        const { body, author } = item as { body?: unknown; author?: unknown };
+        if (typeof body !== "string" || body.trim().length === 0) return [];
+        const who =
+          typeof author === "object" && author !== null
+            ? (author as { login?: unknown; is_bot?: unknown })
+            : {};
+        return [
+          {
+            body,
+            ...(typeof who.login === "string" ? { author: who.login } : {}),
+            ...(typeof who.is_bot === "boolean" ? { authorIsBot: who.is_bot } : {}),
+          },
+        ];
+      });
     },
   };
 }

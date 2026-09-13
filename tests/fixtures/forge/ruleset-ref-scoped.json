@@ -1,0 +1,47 @@
+[
+  {
+    "//": "The ordinary GitHub layout: one ruleset over the release refs, one over everything. Written from GitHub's published REST schema for repository rulesets, not captured from a live server — the only authenticated host available is out of bounds. Do not over-trust this shape.",
+    "id": 30,
+    "name": "release branches",
+    "target": "branch",
+    "enforcement": "active",
+    "conditions": {
+      "ref_name": {
+        "include": ["refs/heads/release/*"],
+        "exclude": []
+      }
+    },
+    "rules": [
+      {
+        "type": "branch_name_pattern",
+        "parameters": {
+          "operator": "regex",
+          "pattern": "^release/[0-9]+\\.[0-9]+$",
+          "negate": false
+        }
+      }
+    ]
+  },
+  {
+    "id": 31,
+    "name": "branch naming",
+    "target": "branch",
+    "enforcement": "active",
+    "conditions": {
+      "ref_name": {
+        "include": ["~ALL"],
+        "exclude": []
+      }
+    },
+    "rules": [
+      {
+        "type": "branch_name_pattern",
+        "parameters": {
+          "operator": "regex",
+          "pattern": "^(feature|bugfix|livebug)/[a-z0-9]+/[0-9]+-[a-z0-9-]+$",
+          "negate": false
+        }
+      }
+    ]
+  }
+]

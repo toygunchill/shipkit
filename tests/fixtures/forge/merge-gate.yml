@@ -1,0 +1,15 @@
+# Written from GitHub's published Actions workflow schema, not captured from a live
+# server — the only authenticated host available is out of bounds. Do not over-trust
+# this shape.
+name: merge gate
+on: [pull_request]
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: block on in test
+        if: contains(github.event.pull_request.labels.*.name, 'in test')
+        run: exit 1
+      - name: block on do not merge
+        if: contains(github.event.pull_request.labels.*.name, 'do not merge')
+        run: exit 1

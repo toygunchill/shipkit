@@ -36,10 +36,21 @@ describe("detectConversion", () => {
     ])).toBeUndefined();
   });
 
+  // Getting this fixture right took two tries, and the failure is instructive.
+  // It must lose every UIKit marker, or the "still UIKit" rule excludes it first
+  // and the hosting-controller check is never reached. The first attempt used
+  // `UIViewControllerRepresentable`, which *contains* the substring
+  // `UIViewController` — so it was excluded by the earlier rule and passed
+  // whether or not this exclusion existed. Assert on the exclusion by removing
+  // every other reason to exclude.
   it("says nothing when a UIHostingController is added, which is bridging, not converting", () => {
     expect(detectConversion([
-      f({ before: "class A: UIViewController {}",
-          after: "class A: UIViewController { let host = UIHostingController(rootView: EmptyView()) }" }),
+      f({ before: "final class A: UIViewController { @IBOutlet var label: UILabel! }",
+          after: "struct AView: View {\n"
+               + "  @State private var shown = false\n"
+               + "  var body: some View { EmptyView() }\n"
+               + "}\n"
+               + "let host = UIHostingController(rootView: AView())" }),
     ])).toBeUndefined();
   });
 

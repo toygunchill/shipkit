@@ -151,12 +151,30 @@ four active sprints shows it tracks the *nature of the work*, not the team:
 | Squad D | Only Digital 22, Kişiselleştirme 18, Loyalty 11, MCP Tool 7 |
 | Squad B | Payment 36, Only Digital 20 |
 
-Two of four teams have no majority at all. So this field is neither a repository
-constant nor reliably derivable, and it is the clearest case in the design for the
-rule the rest of it follows: derive from the developer's own recent issues, require
-a real majority, and where there is none, **refuse and name `--portfolio`**, listing
-what the candidates were. A default here would be wrong roughly half the time on two
-of the four teams, and wrong quietly, inside a field nobody re-reads after creation.
+**Correction.** An earlier draft said two of four teams have no majority. That was
+wrong twice over, and both errors are worth keeping visible.
+
+The arithmetic first: Squad B's 36 of 59 value-carrying issues is 61%, which is a
+majority. Only Squad D lacks one, at 22 of 58.
+
+The second error matters more. Those are *team sprint* distributions, and the
+derivation reads the *developer's own* issues — so the table above is not evidence
+about the input at all. Measured on one real developer's last 60 issues: 68% "Only
+Digital", 28% "Payment". Note that this differs from their own team's modal value,
+which is "Payment". Person and team are not the same distribution, and using one to
+reason about the other is what produced the false claim.
+
+So the threshold is a simple majority of the entries carrying a value. Two thirds
+was considered and rejected: the only real personal sample sits at 68%, so a
+two-thirds rule would decide this developer's case by 1.6 percentage points, and one
+more issue elsewhere would flip it to a refusal. A rule that arbitrary is worse than
+a looser one.
+
+What keeps a loose threshold honest here is that the derived value is not silent: it
+is printed in the advice before anything is created, `--dry-run` shows the whole
+payload, and `--portfolio` overrides it. The rule the rest of the design follows —
+refuse rather than guess — still holds for Squad D' four-way split, which is the
+case it exists for.
 
 ### Deriving the team, and refusing to guess
 

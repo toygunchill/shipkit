@@ -22,6 +22,10 @@ function fakeDeps(seen: SubmitOptions[], calls: string[] = []): ToolDeps {
       calls.push("readRepoState");
       return { branch: "bugfix/x/1-y", changedFiles: [], diffstat: "", commits: [] };
     },
+    readPushChangedFiles: () => {
+      calls.push("readPushChangedFiles");
+      return [];
+    },
     runSubmit: async (options: SubmitOptions) => {
       calls.push("runSubmit");
       seen.push(options);

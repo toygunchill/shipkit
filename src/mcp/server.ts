@@ -12,6 +12,7 @@ import type { SubmitDeps } from "../submit/run.js";
 import {
   currentBranch,
   readHeadSha,
+  readPushChangedFiles,
   readPushDiffstat,
   readRepoRoot,
   readRepoState,
@@ -48,6 +49,9 @@ export function realToolDeps(): ToolDeps {
   return {
     loadConfig,
     readRepoState: (base, cwd) => readRepoState(base, cwd),
+    // No exclusion, as in the CLI's own `brief`: a tool call carries its answer over the
+    // wire, so there is never a response file in the repository to keep out of the commit.
+    readPushChangedFiles: (base, cwd) => readPushChangedFiles(base, [], cwd),
     runSubmit,
     submitDeps: (repo: string): SubmitDeps => ({
       loadConfig,
@@ -56,6 +60,7 @@ export function realToolDeps(): ToolDeps {
       resolveIssue,
       readRepoState: (base) => readRepoState(base, repo),
       readPushDiffstat: (base, exclude) => readPushDiffstat(base, exclude, repo),
+      readPushChangedFiles: (base, exclude) => readPushChangedFiles(base, exclude, repo),
       findPullRequest: (branch) => findPullRequest(branch, repo),
       readUntrackedFiles: () => readUntrackedFiles(repo),
       readRepoRoot: () => readRepoRoot(repo),

@@ -1,4 +1,7 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { observedChangedFiles } from "../advice/observe.js";
+import type { Advice } from "../advice/types.js";
+import { conversionAdvice, detectConversion, type ChangedFile } from "../advice/uikit.js";
 import { changedFields, fingerprint, sortWarnings, type Situation } from "../approval/fingerprint.js";
 import {
   gate,
@@ -39,6 +42,17 @@ export type SubmitResult = {
   code: 0 | 1 | 2;
   findings: Finding[];
   warnings: Warning[];
+  /**
+   * What shipkit noticed and will not insist on. Absent on the two refusals that return
+   * before it is read, and an empty array on every run that had nothing to say.
+   *
+   * Structurally separate from `warnings`, and that separation is the feature: advice
+   * never reaches `shouldRequestApproval`, never reaches `gate`, and never reaches the
+   * fingerprint, so a push carrying a conversion is neither blocked nor sent to a person
+   * under `pr.approval: human`. tests/advice/types.test.ts holds the two types apart at
+   * compile time; this field is where that promise is kept at run time.
+   */
+  advice?: Advice[];
   /** The rendered body, once there is one. Absent when the run failed before rendering. */
   body?: string;
   /** Set when a pull request was opened or updated. */
@@ -91,6 +105,14 @@ export type SubmitDeps = {
    * approves has to be the size of the change that lands.
    */
   readPushDiffstat: (base: string, exclude: string[]) => string;
+  /**
+   * The `.swift`/`.xib`/`.storyboard` files the push will deliver, with the text on both
+   * sides, for `detectConversion`. Takes the same `exclude` as `commitAll` and
+   * `readPushDiffstat` for the same reason: the observation has to be about the change
+   * that lands, and it has to see uncommitted work, since `commitAll` stages after the
+   * gate.
+   */
+  readPushChangedFiles: (base: string, exclude: string[]) => ChangedFile[];
   findPullRequest: (branch: string) => PullRequestState | null;
   readUntrackedFiles: () => string[];
   readRepoRoot: () => string;
@@ -166,6 +188,10 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
   // existed.
   let body: string | undefined;
   let warnings: Warning[] = [];
+  // Hoisted for the same reason, and returned from every exit below that has read it — an
+  // observation the run made and then dropped on the way out is the failure this whole
+  // change exists to close.
+  let advice: Advice[] = [];
 
   try {
     const config = deps.loadConfig(options.config);
@@ -288,8 +314,32 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       }
     }
 
+    // Read after the warnings and before the gate, so `preview` carries it too: preview is
+    // where the agent asks what pushing would do, and an observation it only ever learns
+    // from `apply` arrives after the body it should have shaped is already written.
+    //
+    // The same `exclude` the commit gets, and the same uncommitted-work reading — see
+    // `readPushChangedFiles`. Nothing below this line consults `advice`: it is not in
+    // `gate`, not in `shouldRequestApproval`, not in the `Situation`, and not on the wire
+    // to the approval surface. It is printed and returned, and that is all it does.
+    //
+    // Wrapped in `observedChangedFiles` because the read itself can fail on a repository
+    // where nothing is wrong with the change — see src/advice/observe.ts. An advisory read
+    // that threw here would land in the catch below and return `code: 2` with nothing
+    // committed, which is precisely the thing advice must never do.
+    const conversion = detectConversion(
+      observedChangedFiles(() => deps.readPushChangedFiles(options.base, exclude)),
+    );
+    advice =
+      conversion === undefined
+        ? []
+        : [conversionAdvice(conversion, { ticketKey, epic: config.techTask?.epic })];
+    // `err`, like the warnings above, because `out` is where the pull-request URL goes and
+    // a caller piping stdout is reading that.
+    for (const item of advice) deps.err(item.message);
+
     if (options.mode === "preview") {
-      return { code: 0, findings: [], warnings, body, committed: false, pushed: false };
+      return { code: 0, findings: [], warnings, advice, body, committed: false, pushed: false };
     }
 
     let approval: ApprovalOutcome | undefined;
@@ -408,6 +458,7 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
             code: 2,
             findings: [],
             warnings: freshWarnings,
+            advice,
             body,
             message,
             approval,
@@ -447,6 +498,7 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
         code: 2,
         findings: [],
         warnings,
+        advice,
         body,
         message,
         approval,
@@ -473,6 +525,7 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
         code: 0,
         findings: [],
         warnings,
+        advice,
         body,
         url: existingPr.url,
         updated: true,
@@ -494,6 +547,7 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       code: 0,
       findings: [],
       warnings,
+      advice,
       body,
       url,
       updated: false,
@@ -522,7 +576,7 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
             : "A commit was created locally and has not been pushed. It is yours to keep, amend, or drop.",
         );
       }
-      return { code: 2, findings: [], warnings, body, message: error.message, committed, pushed };
+      return { code: 2, findings: [], warnings, advice, body, message: error.message, committed, pushed };
     }
     throw error;
   }

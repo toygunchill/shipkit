@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../../src/config/load.js";
+import type { ChangedFile } from "../../src/advice/uikit.js";
 import { assembleBrief } from "../../src/brief/assemble.js";
 
 const config = loadConfig("tests/fixtures/valid.shipkit.yml");
@@ -69,5 +70,82 @@ describe("assembleBrief", () => {
 
   it("omits the ticket when none was resolved", () => {
     expect(assembleBrief({ repo, target, config }).ticket).toBeUndefined();
+  });
+});
+
+// The agent is the only party that can read this: judging whether a UIKit-to-SwiftUI
+// conversion was in scope needs the ticket, and the agent is holding it. So it goes into the
+// brief, which is what the agent reads before it writes anything.
+describe("assembleBrief advice", () => {
+  const CONVERTED: ChangedFile[] = [
+    {
+      path: "Scenes/SummaryViewController.swift",
+      status: "modified",
+      before: "import UIKit\nfinal class S: UIViewController { @IBOutlet var l: UILabel! }\n",
+      after: 'import SwiftUI\nstruct S: View { @State var n = 0\n  var body: some View { Text("x") } }\n',
+    },
+  ];
+
+  it("carries the conversion advice, naming the count and the command", () => {
+    const brief = assembleBrief({ repo, target, config, changed: CONVERTED });
+
+    expect(brief.advice?.map((item) => item.topic)).toEqual(["uikit-to-swiftui"]);
+    expect(brief.advice?.[0]?.message).toContain("1 file");
+    expect(brief.advice?.[0]?.message).toContain("shipkit tech-task --subject");
+  });
+
+  it("has no advice key at all when the change carries no conversion", () => {
+    const unconverted: ChangedFile[] = [
+      { path: "Scenes/Other.swift", status: "modified", before: "let a = 1\n", after: "let a = 2\n" },
+    ];
+
+    expect(assembleBrief({ repo, target, config, changed: unconverted }).advice).toBeUndefined();
+  });
+
+  // A caller that cannot read the files gets a brief with no advice, never a wrong
+  // observation standing in for a missing one.
+  it("says nothing when the caller supplied no files to look at", () => {
+    expect(assembleBrief({ repo, target, config }).advice).toBeUndefined();
+  });
+
+  // The half of the measurement that justified building this: half the existing conversion
+  // tickets were never attached to their epic. Naming it is the remedy for that, so the
+  // configured epic has to reach the message.
+  it("names the ticket and the configured epic when the repository has one", () => {
+    const withEpic = {
+      ...config,
+      techTask: {
+        project: "DCP",
+        issueType: "Story",
+        epic: "ABC-12154",
+        summaryPattern: "iOS - {subject} swift ui dönüşümü",
+      },
+    };
+    const issue = { key: "ABC-31087", type: "Story", summary: "Invoice" };
+
+    const message =
+      assembleBrief({ repo, target, config: withEpic, issue, changed: CONVERTED }).advice?.[0]
+        ?.message ?? "";
+
+    expect(message).toContain("ABC-31087");
+    expect(message).toContain("ABC-12154");
+  });
+
+  it("falls back to naming no ticket rather than inventing one", () => {
+    const message =
+      assembleBrief({ repo, target, config, changed: CONVERTED }).advice?.[0]?.message ?? "";
+
+    expect(message).toContain("the ticket");
+    expect(message).not.toMatch(/DCP-\d+/);
+  });
+
+  // Advice is placed before the sections it would be advice about. Placed after them it
+  // would be arriving about a body already written.
+  it("puts the advice ahead of the template in the JSON the agent reads", () => {
+    const brief = assembleBrief({ repo, target, config, changed: CONVERTED });
+    const keys = Object.keys(brief);
+
+    expect(keys.indexOf("advice")).toBeGreaterThan(-1);
+    expect(keys.indexOf("advice")).toBeLessThan(keys.indexOf("template"));
   });
 });

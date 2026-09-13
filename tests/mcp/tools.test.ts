@@ -24,6 +24,7 @@ function makeDeps(over: Partial<ToolDeps> = {}) {
     },
     loadConfig: () => CONFIG,
     readRepoState: () => ({ branch: "bugfix/x/1-y", changedFiles: [], diffstat: "", commits: [] }),
+    readPushChangedFiles: () => [],
     runSubmit: async (options: SubmitOptions) => {
       seen.push(options);
       return {
@@ -103,6 +104,25 @@ describe("handleBrief", () => {
 
     expect(shaped.isError).toBe(true);
     expect(readRepoStateCalled).toBe(false);
+  });
+
+  // A config that cannot be loaded is a real failure and belongs in `isError`. A failed
+  // *advisory* read is not: it is an optional observation, and the brief is complete
+  // without it. Reproduced shapes — a `.gitattributes` clean filter marked `required` whose
+  // binary is missing, one unreadable file — turned the whole tool call into an error.
+  it("returns the brief anyway when the advisory read fails, rather than isError", async () => {
+    const { deps } = makeDeps({
+      readPushChangedFiles: () => {
+        throw new Error("git add --all failed: fatal: asset.bin: clean filter 'lfs' failed");
+      },
+    });
+
+    const shaped = await handleBrief({ repo: "/repo", base: "develop" }, deps);
+
+    expect(shaped.isError).toBe(false);
+    expect(shaped.structuredContent).toHaveProperty("template");
+    // No advice key at all, rather than a wrong observation in place of a missing one.
+    expect(shaped.structuredContent).not.toHaveProperty("advice");
   });
 });
 

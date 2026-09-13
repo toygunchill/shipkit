@@ -11,6 +11,7 @@ import { runSubmit, type SubmitDeps } from "../../src/submit/run.js";
 import {
   currentBranch,
   readHeadSha,
+  readPushChangedFiles,
   readPushDiffstat,
   readRepoRoot,
   readRepoState,
@@ -76,6 +77,7 @@ function realDeps(repo: string, opened: { input?: unknown }): SubmitDeps {
     resolveIssue,
     readRepoState: (base) => readRepoState(base, repo),
     readPushDiffstat: (base, exclude) => readPushDiffstat(base, exclude, repo),
+    readPushChangedFiles: (base, exclude) => readPushChangedFiles(base, exclude, repo),
     // gh cannot be pointed at a local bare repository, so the two adapters that reach it
     // are the only fakes here. Everything else is the real thing.
     findPullRequest: () => null,
@@ -250,6 +252,64 @@ describe("runSubmit end to end", () => {
     expect(
       execFileSync("git", ["status", "--porcelain"], { cwd: repo, encoding: "utf8" }),
     ).toContain("?? swept-0.ts");
+  });
+
+  // The wiring this suite exists to prove reaches the end: `detectConversion` had no caller,
+  // so the advice was built and unreachable. Driven here through the real
+  // `readPushChangedFiles` against a real repository, with the conversion left *entirely
+  // uncommitted* — which is what an agent that has just finished the work leaves, and what a
+  // `base...HEAD` reader would be blind to.
+  it("advises on an uncommitted conversion, and returns the same code as a run without one", async () => {
+    const UIKIT = "import UIKit\nfinal class S: UIViewController { @IBOutlet var l: UILabel! }\n";
+    const SWIFTUI = 'import SwiftUI\nstruct S: View { @State var n = 0\n  var body: some View { Text("x") } }\n';
+
+    /** One apply run against a fresh repository, optionally converting a screen in it. */
+    async function run(convert: boolean) {
+      const { repo } = scratch();
+      const responsePath = join(repo, "response.json");
+      writeFileSync(responsePath, JSON.stringify(RESPONSE), "utf8");
+      if (convert) {
+        // Committed on the base as UIKit, rewritten as SwiftUI in the working tree and left
+        // there. Nothing about the conversion is committed on the branch.
+        git(["checkout", "-q", "develop"], repo);
+        writeFileSync(join(repo, "Summary.swift"), UIKIT, "utf8");
+        git(["add", "Summary.swift"], repo);
+        git(["commit", "-q", "-m", "chore: the screen as it was"], repo);
+        git(["checkout", "-q", "bugfix/squadb/1-invoice"], repo);
+        git(["merge", "-q", "develop"], repo);
+        writeFileSync(join(repo, "Summary.swift"), SWIFTUI, "utf8");
+      }
+
+      // The range that cannot see it, stated so it cannot quietly stop being true.
+      expect(readRepoState("develop", repo).changedFiles).toEqual([]);
+
+      const opened: { input?: unknown } = {};
+      const result = await runSubmit(
+        {
+          base: "develop",
+          config: CONFIG,
+          response: RESPONSE,
+          responsePath,
+          mode: "apply",
+          acknowledge: "all",
+        },
+        realDeps(repo, opened),
+      );
+      return result;
+    }
+
+    const advised = await run(true);
+    const plain = await run(false);
+
+    expect(advised.advice?.map((item) => item.topic)).toEqual(["uikit-to-swiftui"]);
+    expect(advised.advice?.[0]?.message).toContain("1 file");
+    expect(plain.advice).toEqual([]);
+
+    // The point of the whole separate type: the observation costs the run nothing.
+    expect(advised.code).toBe(plain.code);
+    expect(advised.code).toBe(0);
+    expect(advised.committed).toBe(true);
+    expect(advised.pushed).toBe(true);
   });
 
   it("previews the same repository without leaving a trace", async () => {

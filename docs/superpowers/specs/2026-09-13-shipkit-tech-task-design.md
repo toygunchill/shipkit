@@ -75,6 +75,19 @@ gains SwiftUI:
   `.storyboard`
 - gained: `some View`, `@State`, `@ObservedObject`, `var body:`
 
+Gained is per marker — in the after text and not in the before text — rather than
+"the before text held none of them". `PreviewProvider` is declared as `static var
+previews: some View`, so every UIKit screen with an Xcode canvas preview already has
+a SwiftUI marker in it before anything is converted.
+
+A screen whose controller is *deleted* rather than rewritten carries the same
+signal, and is read from three facts together: a deleted `.swift` holding a UIKit
+marker, a deleted interface file, and an added SwiftUI file. The deleted controller
+is what separates tearing out `Main.storyboard` — which comes with the view
+controllers it instantiated — from deleting `LaunchScreen.storyboard`, which
+converts nothing. The count names the added SwiftUI files; a deleted controller is
+not a file that is now SwiftUI.
+
 Detection must be **conservative**, and the reason is written into this project's
 own history: `issue-unverified` fired on every run until it was fixed, and `init`
 banned `N/A` because it recurred. A noisy advisor is one nobody reads, and this one
@@ -149,14 +162,38 @@ four active sprints shows it tracks the *nature of the work*, not the team:
 | Squad C | Only Digital 50/60 |
 | Squad A | Only Digital 55/60 |
 | Squad D | Only Digital 22, Kişiselleştirme 18, Loyalty 11, MCP Tool 7 |
-| Squad B | Payment 36, Only Digital 20 |
+| Squad B | Payment 36, Only Digital 20, MCP Tool 2, Ancillary 1 |
 
-Two of four teams have no majority at all. So this field is neither a repository
-constant nor reliably derivable, and it is the clearest case in the design for the
-rule the rest of it follows: derive from the developer's own recent issues, require
-a real majority, and where there is none, **refuse and name `--portfolio`**, listing
-what the candidates were. A default here would be wrong roughly half the time on two
-of the four teams, and wrong quietly, inside a field nobody re-reads after creation.
+Sixty issues were sampled per team. The two rows broken out by value list every
+value that occurred, so they sum to the entries carrying one — 58 for Squad D, 59
+for Squad B — and the rest of the sixty is blanks. An earlier draft of the
+Squad B row listed only its top two values, so it summed to 56 and contradicted
+the 59 below it; the row is abbreviated, not the denominator.
+
+**Correction.** An earlier draft said two of four teams have no majority. That was
+wrong twice over, and both errors are worth keeping visible.
+
+The arithmetic first: Squad B's 36 of 59 value-carrying issues is 61%, which is a
+majority. Only Squad D lacks one, at 22 of 58.
+
+The second error matters more. Those are *team sprint* distributions, and the
+derivation reads the *developer's own* issues — so the table above is not evidence
+about the input at all. Measured on one real developer's last 60 issues: 68% "Only
+Digital", 28% "Payment". Note that this differs from their own team's modal value,
+which is "Payment". Person and team are not the same distribution, and using one to
+reason about the other is what produced the false claim.
+
+So the threshold is a simple majority of the entries carrying a value. Two thirds
+was considered and rejected: the only real personal sample sits at 68%, so a
+two-thirds rule would decide this developer's case by 1.6 percentage points, and one
+more issue elsewhere would flip it to a refusal. A rule that arbitrary is worse than
+a looser one.
+
+What keeps a loose threshold honest here is that the derived value is not silent: it
+is printed in the advice before anything is created, `--dry-run` shows the whole
+payload, and `--portfolio` overrides it. The rule the rest of the design follows —
+refuse rather than guess — still holds for Squad D' four-way split, which is the
+case it exists for.
 
 ### Deriving the team, and refusing to guess
 

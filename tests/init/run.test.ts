@@ -241,10 +241,36 @@ describe("runInit writes only what loads", () => {
     expect(config.branch.pattern).toBe("^.+$");
   });
 
-  // A host lifted out of prose is not necessarily a URL, and z.string().url()
+  // A host lifted out of prose is not necessarily a URL, and `z.string().url()`
   // rejects all of these — a config holding one is a config `check` cannot load.
-  it.each(["a<b", "a|b", "[bad", "a%20b", "ex.com:notaport"])(
-    "refuses an observed Jira host that is not a URL (%s)",
+  //
+  // Two defences catch them and they catch different inputs, which is why the
+  // cases are split. The link pattern refuses to lift a host containing a
+  // character a URL cannot hold at all, so `a<b` and `[bad` never become a
+  // candidate; the ones it does lift are then checked against the schema before
+  // anything is written. Both paths end at the same place — the placeholder
+  // host, and `jira.baseUrl` named as needing a human — so what separates them
+  // is only whether `init` had to say it rejected something.
+  it.each(["a<b", "[bad"])(
+    "never adopts a host the link pattern will not lift (%s)",
+    (host) => {
+      const body = `## Summary\nx\n## Issues Addressed\nhttps://${host}/browse/ABC-1`;
+      const { deps: d, written } = deps({
+        sources: {
+          rulesets: () => [],
+          mergeGateWorkflow: () => undefined,
+          mergedPullRequests: () => byPeople([body, body]),
+        },
+      });
+      const result = runInit(OPTIONS, d);
+      expect(result.code).toBe(0);
+      expect(result.unresolved).toContain("jira.baseUrl");
+      expect(configSchema.parse(parse(written[0])).jira.baseUrl).toBe("https://jira.example.com");
+    },
+  );
+
+  it.each(["a|b", "a%20b", "ex.com:notaport"])(
+    "refuses an observed Jira host that is lifted but is not a URL (%s)",
     (host) => {
       const body = `## Summary\nx\n## Issues Addressed\nhttps://${host}/browse/ABC-1`;
       const { deps: d, written, out } = deps({

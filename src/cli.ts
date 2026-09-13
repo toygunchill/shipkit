@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { readFileSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { Command, CommanderError } from "commander";
 import { requestApproval } from "./approval/client.js";
 import { assembleBrief } from "./brief/assemble.js";
@@ -12,6 +13,7 @@ import {
   ticketFromBranch,
 } from "./cli-support.js";
 import { ConfigError, loadConfig } from "./config/load.js";
+import { runInit, type InitSources } from "./init/run.js";
 import { fetchIssue, JiraError } from "./jira/client.js";
 import type { IssueFacts } from "./jira/types.js";
 import { jiraToken } from "./secrets/keychain.js";
@@ -27,7 +29,8 @@ import {
   readUntrackedFiles,
   VcsError,
 } from "./vcs/git.js";
-import { baseCandidates, findPullRequest } from "./vcs/github.js";
+import { execRunner } from "./vcs/exec.js";
+import { baseCandidates, findPullRequest, type GhRunner } from "./vcs/github.js";
 import { commitAll, createPullRequest, pushBranch } from "./vcs/mutate.js";
 
 const program = new Command();
@@ -215,6 +218,87 @@ program
       }
       throw error;
     }
+  });
+
+/**
+ * The workflow that gates a merge on a pull-request label, read from the checkout
+ * rather than fetched from the forge: the file is already on disk beside the
+ * caller, so reading it there needs no network round trip and no authentication —
+ * which matters, because the repository most in need of `init` is the one whose
+ * forge this machine cannot reach.
+ *
+ * `InitSources.mergeGateWorkflow` returns one document, so when several workflows
+ * gate on labels the first by name is the one read. Concatenating them is not an
+ * option: two YAML documents joined are not one YAML document, and the parser
+ * would reject the pair after accepting either alone.
+ */
+function mergeGateWorkflow(cwd: string): string | undefined {
+  let root = cwd;
+  try {
+    root = readRepoRoot(cwd);
+  } catch {
+    // Not a git checkout. Look beside the caller rather than giving up: `init` is
+    // for repositories that have not been set up yet.
+  }
+  const dir = join(root, ".github", "workflows");
+  if (!existsSync(dir)) return undefined;
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.endsWith(".yml") && !name.endsWith(".yaml")) continue;
+    const text = readFileSync(join(dir, name), "utf8");
+    if (text.includes("pull_request.labels")) return text;
+  }
+  return undefined;
+}
+
+/**
+ * The real sources, shelling out through the same `GhRunner` seam the rest of the
+ * tool uses rather than a second way to call `gh`. Each one may throw — no remote,
+ * no `gh` on the path, no permission on a private server — and `runInit` is built
+ * to expect exactly that.
+ */
+function realInitSources(cwd: string): InitSources {
+  const gh: GhRunner = execRunner("gh", cwd);
+  return {
+    rulesets: () => JSON.parse(gh(["api", "repos/{owner}/{repo}/rulesets"])) as unknown,
+    mergeGateWorkflow: () => mergeGateWorkflow(cwd),
+    mergedBodies: (limit: number) => {
+      const raw = gh(["pr", "list", "--state", "merged", "--json", "body", "--limit", String(limit)]);
+      const list = JSON.parse(raw) as unknown;
+      if (!Array.isArray(list)) throw new Error("gh pr list --json body did not return an array");
+      return list
+        .map((item) =>
+          typeof item === "object" && item !== null ? (item as { body?: unknown }).body : undefined,
+        )
+        .filter((body): body is string => typeof body === "string" && body.trim().length > 0);
+    },
+  };
+}
+
+program
+  .command("init")
+  .description("Write a starter .shipkit.yml, reading what the forge can prove")
+  .option("--config <path>", "path to write", ".shipkit.yml")
+  .option("--force", "overwrite an existing config", false)
+  .option("--limit <n>", "how many merged pull requests to read", "50")
+  .action((options: { config: string; force: boolean; limit: string }) => {
+    const limit = Number(options.limit);
+    if (!Number.isInteger(limit) || limit < 1) {
+      console.error(`Invalid --limit "${options.limit}": expected a positive whole number`);
+      process.exitCode = 2;
+      return;
+    }
+
+    const result = runInit(
+      { config: options.config, force: options.force, limit },
+      {
+        sources: realInitSources(cwd),
+        exists: (path: string) => existsSync(path),
+        write: (path: string, text: string) => writeFileSync(path, text, "utf8"),
+        out: (line: string) => console.log(line),
+        err: (line: string) => console.error(line),
+      },
+    );
+    process.exitCode = result.code;
   });
 
 program

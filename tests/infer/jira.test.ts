@@ -34,6 +34,14 @@ describe("inferJira", () => {
   it("produces a pattern that is a valid regular expression", () => {
     const got = inferJira(["https://x.example.com/jira/browse/A.B-1"]);
     expect(() => new RegExp(got.value.keyPattern as string)).not.toThrow();
+    // Compiling is the weaker half of the claim, and on its own it proves almost
+    // nothing: `A.B-\d+` is valid regex whether or not the dot was escaped, so a
+    // missing escape passes that check silently. What an unescaped dot actually
+    // does is match any character, quietly accepting keys from projects the team
+    // never had. That is the assertion worth making.
+    const pattern = new RegExp(`^(?:${got.value.keyPattern as string})$`);
+    expect(pattern.test("A.B-1")).toBe(true);
+    expect(pattern.test("AXB-1")).toBe(false);
   });
 
   it("says nothing rather than guessing when no link is present", () => {

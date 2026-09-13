@@ -158,5 +158,125 @@ describe("detectConversion", () => {
       ]);
       expect(got?.files).toEqual(["Trip/Summary.swift"]);
     });
+
+    // Reproduced by running: under the earlier form of this rule — "the before side holds
+    // no SwiftUI marker at all" — every UIKit file carrying an Xcode canvas preview was
+    // silent. `PreviewProvider`'s signature is fixed at `static var previews: some View`,
+    // so the before text of any previewed view controller contains `some View`. Per
+    // marker, the rewrite still gains `var body:` and `@State`.
+    it("still sees a controller whose only SwiftUI was a PreviewProvider block", () => {
+      const got = detectConversion([
+        f({ path: "Trip/TripSummaryViewController.swift",
+            before: "final class TripSummaryViewController: UIViewController {\n"
+                  + "  @IBOutlet var titleLabel: UILabel!\n"
+                  + "}\n"
+                  + "#if DEBUG\n"
+                  + "struct TripSummaryPreviews: PreviewProvider {\n"
+                  + "  static var previews: some View { TripSummaryRepresentable() }\n"
+                  + "}\n"
+                  + "#endif\n",
+            after: "struct TripSummaryView: View {\n"
+                 + "  @State private var trip: Trip?\n"
+                 + "  var body: some View { Text(\"x\") }\n"
+                 + "}\n" }),
+      ]);
+      expect(got?.files).toEqual(["Trip/TripSummaryViewController.swift"]);
+    });
+
+    // The Xcode 15 macro carries none of the four markers, so it was never caught by the
+    // stricter form. Pinned so the per-marker rewrite does not lose the shape that worked.
+    it("still sees a rewrite whose preview is the #Preview macro", () => {
+      const got = detectConversion([
+        f({ path: "Home/HomeViewController.swift",
+            before: "final class HomeViewController: UIViewController { @IBOutlet var l: UILabel! }\n"
+                  + "#Preview { HomeViewController() }\n",
+            after: "struct HomeView: View {\n"
+                 + "  @State private var loaded = false\n"
+                 + "  var body: some View { Text(\"home\") }\n"
+                 + "}\n"
+                 + "#Preview { HomeView() }\n" }),
+      ]);
+      expect(got?.files).toEqual(["Home/HomeViewController.swift"]);
+    });
+  });
+
+  // Deleted `.swift` files were never read, so the Swift half of the name pairing could
+  // only ever be a file that survived the change. A conversion that deletes its old
+  // controller outright — the ordinary way a storyboard screen is replaced — was silent.
+  // The anchor that admits it is the deleted controller itself: a `.swift` deleted with a
+  // UIKit marker in it. That is what `Main.storyboard` has beside it and
+  // `LaunchScreen.storyboard` does not.
+  describe("a conversion whose old controller was deleted rather than modified", () => {
+    it("sees a deleted controller and its xib replaced by a new SwiftUI screen", () => {
+      const got = detectConversion([
+        f({ path: "Trip/TripSummaryViewController.swift", status: "deleted",
+            before: "final class TripSummaryViewController: UIViewController { @IBOutlet var l: UILabel! }" }),
+        f({ path: "Trip/TripSummaryViewController.xib", status: "deleted", before: "<xml/>" }),
+        f({ path: "Trip/TripSummaryScreen.swift", status: "added",
+            after: "struct TripSummaryScreen: View { var body: some View { Text(\"x\") } }" }),
+      ]);
+      // One file, not two: the deleted controller is not a file that is now SwiftUI.
+      expect(got?.files).toEqual(["Trip/TripSummaryScreen.swift"]);
+      expect(got?.deletedInterfaceFiles).toEqual(["Trip/TripSummaryViewController.xib"]);
+    });
+
+    it("sees Main.storyboard torn out with its controllers and replaced by SwiftUI screens", () => {
+      const got = detectConversion([
+        f({ path: "App/Main.storyboard", status: "deleted", before: "<xml/>" }),
+        f({ path: "Home/HomeViewController.swift", status: "deleted",
+            before: "final class HomeViewController: UIViewController { @IBOutlet var l: UILabel! }" }),
+        f({ path: "Settings/SettingsViewController.swift", status: "deleted",
+            before: "final class SettingsViewController: UIViewController {}" }),
+        f({ path: "Home/HomeView.swift", status: "added",
+            after: "struct HomeView: View { var body: some View { Text(\"h\") } }" }),
+        f({ path: "Settings/SettingsView.swift", status: "added",
+            after: "struct SettingsView: View { var body: some View { Text(\"s\") } }" }),
+      ]);
+      // `Main.storyboard` corresponds to neither name, which is why the pairing on this
+      // path is the deleted controllers rather than the file names.
+      expect(got?.files).toEqual(["Home/HomeView.swift", "Settings/SettingsView.swift"]);
+      expect(got?.deletedInterfaceFiles).toEqual(["App/Main.storyboard"]);
+    });
+
+    // The anchor has to be a *UIKit* Swift file, or the LaunchScreen false positive comes
+    // straight back through any pull request that also deletes some unrelated helper.
+    it("says nothing when the deleted Swift file carries no UIKit marker", () => {
+      expect(detectConversion([
+        f({ path: "Resources/LaunchScreen.storyboard", status: "deleted", before: "<xml/>" }),
+        f({ path: "Support/DateFormatting.swift", status: "deleted",
+            before: "enum DateFormatting { static let iso = ISO8601DateFormatter() }" }),
+        f({ path: "Feature/PromoBanner.swift", status: "added",
+            after: "struct PromoBanner: View { var body: some View { Text(\"x\") } }" }),
+      ])).toBeUndefined();
+    });
+
+    // `readPushChangedFiles` runs with `--no-renames`, so moving a screen into another
+    // folder arrives here as a deletion plus an addition — deleted UIKit, a deleted
+    // interface file, and an added `.swift` whose `PreviewProvider` block contains
+    // `some View`. Nothing was converted; the same UIKit landed in a new directory.
+    it("says nothing when a UIKit screen is merely moved to another folder", () => {
+      const uikit = "final class SummaryViewController: UIViewController {\n"
+                  + "  @IBOutlet var l: UILabel!\n"
+                  + "}\n"
+                  + "struct SummaryPreviews: PreviewProvider {\n"
+                  + "  static var previews: some View { SummaryRepresentable() }\n"
+                  + "}\n";
+      expect(detectConversion([
+        f({ path: "Trip/SummaryViewController.swift", status: "deleted", before: uikit }),
+        f({ path: "Trip/Summary.xib", status: "deleted", before: "<xml/>" }),
+        f({ path: "Features/Trip/SummaryViewController.swift", status: "added", after: uikit }),
+        f({ path: "Features/Trip/Summary.xib", status: "added", after: "<xml/>" }),
+      ])).toBeUndefined();
+    });
+
+    // Deleting a UIKit screen is not converting it. Something has to have been written in
+    // SwiftUI, or there is no conversion to count and nothing to name.
+    it("says nothing when a UIKit screen is deleted and nothing SwiftUI is added", () => {
+      expect(detectConversion([
+        f({ path: "Trip/TripSummaryViewController.swift", status: "deleted",
+            before: "final class TripSummaryViewController: UIViewController { @IBOutlet var l: UILabel! }" }),
+        f({ path: "Trip/TripSummaryViewController.xib", status: "deleted", before: "<xml/>" }),
+      ])).toBeUndefined();
+    });
   });
 });

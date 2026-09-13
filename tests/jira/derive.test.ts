@@ -123,7 +123,7 @@ describe("what a refusal hands back", () => {
   });
 });
 
-describe("the Squad B portfolio split, 36/20", () => {
+describe("the Squad B portfolio split, 36 of 59", () => {
   // An earlier draft of the spec narrated this as one of two teams with "no
   // majority at all". The arithmetic said otherwise and the spec now agrees: 36
   // of the 59 that carry a value is 61%, a majority on every denominator the
@@ -133,10 +133,17 @@ describe("the Squad B portfolio split, 36/20", () => {
   // 68%, so a two-thirds rule would decide it by 1.6 points. This is the test
   // that would have to change if that were ever revisited.
   it("resolves under a strictly-more-than-half threshold, as the spec now reads", () => {
+    // The measured distribution entire, not its top two: 36 + 20 + 2 + 1 = 59, which
+    // is the denominator the spec and MAJORITY_THRESHOLD both quote. Built from the
+    // abbreviated 36/20 the sample would be 56, and the test would pin a number that
+    // appears nowhere.
     const sample = [
       ...Array(36).fill({ portfolioChild: "Portfolio B" }),
       ...Array(20).fill({ portfolioChild: "Portfolio A" }),
+      ...Array(2).fill({ portfolioChild: "Portfolio MCP Tool" }),
+      ...Array(1).fill({ portfolioChild: "Portfolio Ancillary" }),
     ];
+    expect(sample).toHaveLength(59);
     expect(derivePortfolioChild(sample)).toEqual({ value: "Portfolio B" });
   });
 });

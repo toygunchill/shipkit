@@ -75,6 +75,19 @@ gains SwiftUI:
   `.storyboard`
 - gained: `some View`, `@State`, `@ObservedObject`, `var body:`
 
+Gained is per marker — in the after text and not in the before text — rather than
+"the before text held none of them". `PreviewProvider` is declared as `static var
+previews: some View`, so every UIKit screen with an Xcode canvas preview already has
+a SwiftUI marker in it before anything is converted.
+
+A screen whose controller is *deleted* rather than rewritten carries the same
+signal, and is read from three facts together: a deleted `.swift` holding a UIKit
+marker, a deleted interface file, and an added SwiftUI file. The deleted controller
+is what separates tearing out `Main.storyboard` — which comes with the view
+controllers it instantiated — from deleting `LaunchScreen.storyboard`, which
+converts nothing. The count names the added SwiftUI files; a deleted controller is
+not a file that is now SwiftUI.
+
 Detection must be **conservative**, and the reason is written into this project's
 own history: `issue-unverified` fired on every run until it was fixed, and `init`
 banned `N/A` because it recurred. A noisy advisor is one nobody reads, and this one
@@ -149,7 +162,13 @@ four active sprints shows it tracks the *nature of the work*, not the team:
 | Squad C | Only Digital 50/60 |
 | Squad A | Only Digital 55/60 |
 | Squad D | Only Digital 22, Kişiselleştirme 18, Loyalty 11, MCP Tool 7 |
-| Squad B | Payment 36, Only Digital 20 |
+| Squad B | Payment 36, Only Digital 20, MCP Tool 2, Ancillary 1 |
+
+Sixty issues were sampled per team. The two rows broken out by value list every
+value that occurred, so they sum to the entries carrying one — 58 for Squad D, 59
+for Squad B — and the rest of the sixty is blanks. An earlier draft of the
+Squad B row listed only its top two values, so it summed to 56 and contradicted
+the 59 below it; the row is abbreviated, not the denominator.
 
 **Correction.** An earlier draft said two of four teams have no majority. That was
 wrong twice over, and both errors are worth keeping visible.

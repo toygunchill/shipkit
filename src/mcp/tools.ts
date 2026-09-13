@@ -1,4 +1,5 @@
 import { isAbsolute, join } from "node:path";
+import type { ChangedFile } from "../advice/uikit.js";
 import { assembleBrief } from "../brief/assemble.js";
 import { isValidBase } from "../cli-support.js";
 import type { ShipkitConfig } from "../config/schema.js";
@@ -12,6 +13,10 @@ export type ToolDeps = {
   submitDeps: (repo: string) => SubmitDeps;
   loadConfig: (path: string) => ShipkitConfig;
   readRepoState: (base: string, cwd: string) => RepoState;
+  /** Both sides of the change's `.swift`/`.xib`/`.storyboard` text, so the brief this tool
+   *  returns carries the same advice the CLI's `brief` prints. `readRepoState.changedFiles`
+   *  cannot serve: it is names only, and detection needs the text. */
+  readPushChangedFiles: (base: string, cwd: string) => ChangedFile[];
   runSubmit: (options: SubmitOptions, deps: SubmitDeps) => Promise<SubmitResult>;
 };
 
@@ -66,6 +71,7 @@ export async function handleBrief(args: BriefArgs, deps: ToolDeps): Promise<Tool
         repo,
         target: { branch: args.base, reason: "given by the caller" },
         config,
+        changed: deps.readPushChangedFiles(args.base, args.repo),
       }),
     );
   } catch (error) {

@@ -24,6 +24,7 @@ function makeDeps(over: Partial<ToolDeps> = {}) {
     },
     loadConfig: () => CONFIG,
     readRepoState: () => ({ branch: "bugfix/x/1-y", changedFiles: [], diffstat: "", commits: [] }),
+    readPushChangedFiles: () => [],
     runSubmit: async (options: SubmitOptions) => {
       seen.push(options);
       return {

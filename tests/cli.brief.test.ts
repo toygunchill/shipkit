@@ -56,7 +56,58 @@ function buildRepo(): string {
   return repo;
 }
 
+/** The same repository, plus a UIKit screen on the base and its SwiftUI rewrite sitting
+ *  uncommitted in the working tree — the state an agent leaves when it has just finished
+ *  the work and has not reached the gate. */
+function buildConvertingRepo(): string {
+  const repo = tempDir("shipkit-brief-convert-");
+  git(["init", "-q", "-b", "main"], repo);
+  git(["config", "user.email", "t@example.com"], repo);
+  git(["config", "user.name", "Test"], repo);
+  writeFileSync(
+    join(repo, "Summary.swift"),
+    "import UIKit\nfinal class S: UIViewController { @IBOutlet var l: UILabel! }\n",
+  );
+  git(["add", "."], repo);
+  git(["commit", "-q", "-m", "base"], repo);
+  git(["checkout", "-q", "-b", "feature/x"], repo);
+  writeFileSync(
+    join(repo, "Summary.swift"),
+    'import SwiftUI\nstruct S: View { @State var n = 0\n  var body: some View { Text("x") } }\n',
+  );
+  return repo;
+}
+
 describe("shipkit brief", () => {
+  // The gap this closes: `detectConversion` existed, was tested, and nothing called it. This
+  // is the assertion that it is reachable from the command a person actually runs — and it
+  // is made against work that is entirely uncommitted, which is where a `base...HEAD` reader
+  // would report nothing.
+  it("carries the conversion advice for work that is not committed yet", () => {
+    const repo = buildConvertingRepo();
+
+    const result = run(["brief", "--base", "main", "--config", CONFIG], { cwd: repo });
+
+    expect(result.status).toBe(0);
+    const brief = JSON.parse(result.stdout) as {
+      change: { files: string[] };
+      advice?: { topic: string; message: string }[];
+    };
+    // Nothing is committed, so the committed range names no files at all.
+    expect(brief.change.files).toEqual([]);
+    expect(brief.advice?.map((item) => item.topic)).toEqual(["uikit-to-swiftui"]);
+    expect(brief.advice?.[0]?.message).toContain("shipkit tech-task --subject");
+  });
+
+  it("emits no advice key for a change that converts nothing", () => {
+    const repo = buildRepo();
+
+    const result = run(["brief", "--base", "main", "--config", CONFIG], { cwd: repo });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).not.toHaveProperty("advice");
+  });
+
   it("exits 2 and lists targets when no base is given and stdin is not a terminal", () => {
     const result = run(["brief", "--config", CONFIG]);
     expect(result.status).toBe(2);

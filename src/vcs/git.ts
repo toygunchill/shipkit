@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ChangedFile } from "../advice/uikit.js";
 import { asVcsError, execRunner } from "./exec.js";
 import { stagingPathspec } from "./mutate.js";
 import { VcsError, type RepoState } from "./types.js";
@@ -109,6 +110,135 @@ export function readPushDiffstat(
       cwd,
       index,
     ).trim();
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The only paths that can carry the UIKit-to-SwiftUI signal. `detectConversion` reads
+ * whole file contents, so the restriction is not cosmetic: without it a four-hundred-file
+ * push would have every blob on both sides read out of the object database to prove that
+ * a `.json` is still not a view controller.
+ *
+ * `glob` makes `**` mean "any number of directories" rather than falling back to git's
+ * default matching, and `top` anchors it at the repository root so the answer does not
+ * depend on which directory shipkit was invoked from. Measured against real git: the
+ * `.swift` entry matches a root-level `Top.swift` as well as `Sub/Deep/Nested.swift`, and
+ * gives the same two answers run from the root and run from `Sub/`.
+ */
+const CONVERTIBLE_PATHSPEC = [".swift", ".xib", ".storyboard"].map(
+  (extension_) => `:(glob,top)**/*${extension_}`,
+);
+
+/** git's one-letter `--name-status` codes, narrowed to what `ChangedFile` models. A
+ *  type-change (`T`) or anything else unexpected reads as a modification, which is the
+ *  answer that makes `detectConversion` look at both sides rather than assume one. */
+function changeStatus(code: string): ChangedFile["status"] {
+  if (code.startsWith("A")) return "added";
+  if (code.startsWith("D")) return "deleted";
+  return "modified";
+}
+
+/**
+ * Reads a blob, or the empty string when there isn't one.
+ *
+ * Never throwing is the contract, not a convenience: an added file has no `before` and a
+ * deleted one has no `after`, and both are the ordinary case rather than an error. This is
+ * the *only* rule that produces an empty side — the caller does not also branch on the
+ * status letter, which would leave this catch unreachable and untested while the code read
+ * as though it were what guaranteed the behaviour.
+ *
+ * The catch is deliberately total. A blob too large for `execFileSync`'s buffer lands here
+ * too, and an empty side makes `detectConversion` say nothing — the direction this whole
+ * feature errs in, by design.
+ */
+function readBlob(spec: string, cwd: string, indexFile: string): string {
+  try {
+    return execFileSync("git", ["cat-file", "blob", spec], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, GIT_INDEX_FILE: indexFile },
+    });
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * The `.swift`, `.xib` and `.storyboard` files this push will deliver, with the text on
+ * both sides, for `detectConversion` to read.
+ *
+ * Measured against the merge base and through the same scratch index `readPushDiffstat`
+ * builds, for the same reason: `commitAll` runs `git add --all` *after* the gate, so the
+ * conversion an agent has just written and not committed is the common case, and a reader
+ * asking `base...HEAD` would see nothing exactly when there is something to see. That is
+ * the diffstat bug — a blank panel while four hundred files were about to be pushed — and
+ * repeating it here would make the advice silent on the run it exists for.
+ *
+ * `--no-renames` is load-bearing rather than tidy. Rename detection is on by default, and
+ * a deleted `Screen.xib` paired with an added `Screen.swift` is precisely the corroborating
+ * evidence `detectConversion` looks for — reported as one `R` entry it is neither a
+ * deletion nor an addition, and the signal disappears.
+ *
+ * `-z` for the same class of reason: `core.quotePath` mangles a non-ASCII path into a
+ * C-quoted string, and this repository's own Jira speaks Turkish.
+ */
+export function readPushChangedFiles(
+  base: string,
+  exclude: string[] = [],
+  cwd: string = process.cwd(),
+): ChangedFile[] {
+  // Only `base` is caller-controlled; `--end-of-options` is what stops a `--output=`
+  // spelling of it from turning this read into a write, as in `readPushDiffstat`.
+  const mergeBase = git(["merge-base", "--end-of-options", base, "HEAD"], cwd).trim();
+  const scratch = mkdtempSync(join(tmpdir(), "shipkit-index-"));
+  const index = join(scratch, "index");
+  try {
+    gitWithIndex(["read-tree", "--end-of-options", mergeBase], cwd, index);
+    // `commitAll`'s own pathspec, so the index holds exactly what the commit would —
+    // .gitignore and core.excludesFile applied by git rather than re-implemented. For the
+    // exclusions specifically this doubles up with the diff pathspec below: measured, either
+    // layer alone keeps an excluded path out of the answer. It is kept because
+    // `readPushDiffstat` stages identically and the two must not drift.
+    gitWithIndex(["add", "--all", ...stagingPathspec(exclude)], cwd, index);
+
+    const pathspec = [
+      "--",
+      ...CONVERTIBLE_PATHSPEC,
+      ...exclude.map((path) => `:(exclude,literal,top)${path}`),
+    ];
+    // `--no-relative` for the reason `readPushDiffstat` records: `diff.relative` makes git
+    // print paths relative to cwd, and a path spelled relative to a subdirectory is not one
+    // `cat-file` can resolve against the repository root.
+    const raw = gitWithIndex(
+      [
+        "diff", "--cached", "--name-status", "-z", "--no-relative", "--no-renames",
+        "--end-of-options", mergeBase, ...pathspec,
+      ],
+      cwd,
+      index,
+    );
+
+    const fields = raw.split("\0").filter((field) => field.length > 0);
+    const files: ChangedFile[] = [];
+    for (let i = 0; i + 1 < fields.length; i += 2) {
+      const status = changeStatus(fields[i] as string);
+      const path = fields[i + 1] as string;
+      files.push({
+        path,
+        status,
+        // `<sha>:<path>` reads the merge base's blob; a bare `:<path>` reads stage 0 of the
+        // scratch index, which is what the commit would carry. Both are root-relative,
+        // which is what `--no-relative` above guarantees the paths are. Asked
+        // unconditionally: an added file simply has no blob at the merge base, and a
+        // deleted one none in the index, and `readBlob` answers "" for exactly that.
+        before: readBlob(`${mergeBase}:${path}`, cwd, index),
+        after: readBlob(`:${path}`, cwd, index),
+      });
+    }
+    return files;
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

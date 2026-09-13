@@ -33,6 +33,7 @@ import { validate } from "./validate/rules.js";
 import {
   currentBranch,
   readHeadSha,
+  readPushChangedFiles,
   readPushDiffstat,
   readRepoRoot,
   readRepoState,
@@ -155,7 +156,9 @@ program
       const repo = readRepoState(base);
       const key = ticketFromBranch(repo.branch, config.jira.keyPattern);
       const issue = await resolveIssue(key, config);
-      const brief = assembleBrief({ repo, target: { branch: base, reason }, config, issue });
+      // No exclusion: `brief` runs before there is a response file to keep out of a commit.
+      const changed = readPushChangedFiles(base);
+      const brief = assembleBrief({ repo, target: { branch: base, reason }, config, issue, changed });
       console.log(JSON.stringify(brief, null, 2));
       process.exitCode = 0;
     } catch (error) {
@@ -177,6 +180,7 @@ const realSubmitDeps: SubmitDeps = {
   resolveIssue,
   readRepoState,
   readPushDiffstat: (base, exclude) => readPushDiffstat(base, exclude, cwd),
+  readPushChangedFiles: (base, exclude) => readPushChangedFiles(base, exclude, cwd),
   findPullRequest: (branch) => findPullRequest(branch, cwd),
   readUntrackedFiles,
   readRepoRoot,

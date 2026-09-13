@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { readPushDiffstat, readRepoState, VcsError } from "../../src/vcs/git.js";
+import { detectConversion } from "../../src/advice/uikit.js";
+import { readPushChangedFiles, readPushDiffstat, readRepoState, VcsError } from "../../src/vcs/git.js";
 
 let repo: string;
 
@@ -243,5 +244,175 @@ describe("readPushDiffstat", () => {
     expect(stat).toContain("sub/a.txt");
     expect(stat).toContain("top.txt");
     expect(stat).toContain("2 files changed");
+  });
+});
+
+// The advice half of this product was built and had no caller. The reader below is the
+// caller, and the property it has to have is the one `readPushDiffstat` above had to be
+// taught: the push carries *uncommitted* work, because `commitAll` runs `git add --all`
+// after the gate. A reader asking `base...HEAD` would see nothing precisely when an agent
+// has just written a conversion and not committed it — silent on the run it exists for.
+describe("readPushChangedFiles", () => {
+  let scratch: string;
+
+  const UIKIT = [
+    "import UIKit",
+    "final class SummaryViewController: UIViewController {",
+    "  @IBOutlet var label: UILabel!",
+    "}",
+    "",
+  ].join("\n");
+
+  const SWIFTUI = [
+    "import SwiftUI",
+    "struct SummaryView: View {",
+    "  @State private var total = 0",
+    "  var body: some View { Text(\"\\(total)\") }",
+    "}",
+    "",
+  ].join("\n");
+
+  beforeEach(() => {
+    scratch = mkdtempSync(join(tmpdir(), "shipkit-changed-"));
+    git(["init", "-q", "-b", "develop"], scratch);
+    git(["config", "user.email", "t@example.com"], scratch);
+    git(["config", "user.name", "Test"], scratch);
+    mkdirSync(join(scratch, "Scenes"), { recursive: true });
+    writeFileSync(join(scratch, "Scenes", "SummaryViewController.swift"), UIKIT);
+    writeFileSync(join(scratch, "Scenes", "Summary.xib"), "<?xml version=\"1.0\"?>\n");
+    writeFileSync(join(scratch, "Scenes", "Helper.swift"), "import Foundation\nenum Helper {}\n");
+    writeFileSync(join(scratch, "notes.md"), "notes\n");
+    git(["add", "."], scratch);
+    git(["commit", "-q", "-m", "base"], scratch);
+    git(["checkout", "-q", "-b", "feature/x"], scratch);
+  });
+
+  afterEach(() => {
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  /** The conversion, written into the working tree and left entirely uncommitted — which is
+   *  what an agent that has just finished the work and not yet reached the gate leaves. */
+  function uncommittedConversion(): void {
+    writeFileSync(join(scratch, "Scenes", "SummaryViewController.swift"), SWIFTUI);
+    rmSync(join(scratch, "Scenes", "Summary.xib"));
+    writeFileSync(join(scratch, "notes.md"), "notes\nmore\n");
+    writeFileSync(join(scratch, "Scenes", "SummaryRow.swift"), SWIFTUI);
+  }
+
+  // The test that matters most. One that only covered committed work would pass against a
+  // `base...HEAD` reader and prove nothing.
+  it("sees a conversion that is entirely uncommitted, which base...HEAD cannot", () => {
+    uncommittedConversion();
+
+    // The range the reader must not use, stated as an assertion so it cannot quietly stop
+    // being true.
+    expect(readRepoState("develop", scratch).changedFiles).toEqual([]);
+
+    const conversion = detectConversion(readPushChangedFiles("develop", [], scratch));
+    expect(conversion).toBeDefined();
+    expect(conversion?.files).toContain("Scenes/SummaryViewController.swift");
+    expect(conversion?.deletedInterfaceFiles).toEqual(["Scenes/Summary.xib"]);
+  });
+
+  it("reads only .swift, .xib and .storyboard, never the rest of the change", () => {
+    uncommittedConversion();
+    writeFileSync(join(scratch, "config.json"), "{}\n");
+
+    const paths = readPushChangedFiles("develop", [], scratch).map((file) => file.path).sort();
+    expect(paths).toEqual([
+      "Scenes/Summary.xib",
+      "Scenes/SummaryRow.swift",
+      "Scenes/SummaryViewController.swift",
+    ]);
+  });
+
+  // A missing blob is ordinary, not an error: an added file has no before-text and a
+  // deleted one has no after-text. Throwing on either would make the advice a crash.
+  it("gives an added file an empty before and a deleted one an empty after", () => {
+    uncommittedConversion();
+
+    const files = readPushChangedFiles("develop", [], scratch);
+    const added = files.find((file) => file.path === "Scenes/SummaryRow.swift");
+    expect(added?.status).toBe("added");
+    expect(added?.before).toBe("");
+    expect(added?.after).toContain("some View");
+
+    const deleted = files.find((file) => file.path === "Scenes/Summary.xib");
+    expect(deleted?.status).toBe("deleted");
+    expect(deleted?.after).toBe("");
+    expect(deleted?.before).toContain("<?xml");
+
+    const modified = files.find((file) => file.path === "Scenes/SummaryViewController.swift");
+    expect(modified?.status).toBe("modified");
+    expect(modified?.before).toContain("UIViewController");
+    expect(modified?.after).toContain("some View");
+  });
+
+  // Rename detection is on by default and `--name-status -z` prints a rename as *three*
+  // NUL-separated fields — `R100`, the old path, the new path — where every other change is
+  // two. A reader pairing fields two at a time desynchronises on the third: measured, one
+  // moved file turns `Support/Helper.swift` into a phantom `modified Scenes/Helper.swift`
+  // and drops the added path off the end of the list entirely. Moving a file while
+  // converting a screen is ordinary, so this is not a hypothetical shape.
+  it("parses a moved .swift file as a deletion and an addition, never a three-field rename", () => {
+    uncommittedConversion();
+    mkdirSync(join(scratch, "Support"), { recursive: true });
+    // Byte-identical at a new path: R100, the strongest rename signal git can produce.
+    const helper = readFileSync(join(scratch, "Scenes", "Helper.swift"), "utf8");
+    rmSync(join(scratch, "Scenes", "Helper.swift"));
+    writeFileSync(join(scratch, "Support", "Helper.swift"), helper);
+
+    const files = readPushChangedFiles("develop", [], scratch);
+    const seen = files.map((file) => `${file.status} ${file.path}`).sort();
+
+    expect(seen).toContain("deleted Scenes/Helper.swift");
+    expect(seen).toContain("added Support/Helper.swift");
+    // The desynchronised parse invents a path out of a status word. Nothing may be named
+    // after one.
+    expect(files.every((file) => !/^[ADMRT]\d*$/.test(file.path))).toBe(true);
+    // And the conversion itself must survive the moved file sharing the stream with it.
+    expect(detectConversion(files)?.deletedInterfaceFiles).toEqual(["Scenes/Summary.xib"]);
+  });
+
+  it("leaves out a path the commit is told to exclude", () => {
+    uncommittedConversion();
+    writeFileSync(join(scratch, "Generated.swift"), SWIFTUI);
+
+    const paths = readPushChangedFiles("develop", ["Generated.swift"], scratch).map((f) => f.path);
+    expect(paths).not.toContain("Generated.swift");
+    expect(paths).toContain("Scenes/SummaryRow.swift");
+  });
+
+  // `:(glob,top)` is what makes the answer about the repository rather than about cwd.
+  // Without `top`, running shipkit from a subdirectory would hide the conversion that
+  // happened one directory over.
+  it("finds the same files run from a subdirectory", () => {
+    uncommittedConversion();
+    writeFileSync(join(scratch, "Root.swift"), SWIFTUI);
+
+    const fromRoot = readPushChangedFiles("develop", [], scratch).map((f) => f.path).sort();
+    const fromSub = readPushChangedFiles("develop", [], join(scratch, "Scenes"))
+      .map((f) => f.path)
+      .sort();
+    expect(fromSub).toEqual(fromRoot);
+    expect(fromSub).toContain("Root.swift");
+  });
+
+  // It runs before anyone has said yes. A `git add` against the real index would leave the
+  // author's tree staged for whatever they do next.
+  it("leaves the real index and working tree exactly as it found them", () => {
+    uncommittedConversion();
+    const before = execFileSync("git", ["status", "--porcelain"], { cwd: scratch, encoding: "utf8" });
+
+    readPushChangedFiles("develop", [], scratch);
+
+    const after = execFileSync("git", ["status", "--porcelain"], { cwd: scratch, encoding: "utf8" });
+    expect(after).toBe(before);
+    expect(after).toContain("?? Scenes/SummaryRow.swift");
+  });
+
+  it("throws VcsError for an unknown base", () => {
+    expect(() => readPushChangedFiles("no-such-branch", [], scratch)).toThrow(VcsError);
   });
 });

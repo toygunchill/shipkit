@@ -14,6 +14,8 @@
  * brand-new SwiftUI file with no deleted interface file next to it all say nothing.
  */
 
+import type { Advice } from "./types.js";
+
 export type ChangedFile = {
   path: string;
   status: "added" | "modified" | "deleted";
@@ -89,5 +91,47 @@ export function detectConversion(files: ChangedFile[]): Conversion | undefined {
   return {
     files: [...new Set([...converted, ...addedSwiftUI].map((file) => file.path))],
     deletedInterfaceFiles: deletedInterfaceFiles.map((file) => file.path),
+  };
+}
+
+/** "1 file" / "3 files" — the only prose this module has to get right. */
+const plural = (count: number, noun: string): string =>
+  `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+/**
+ * The observation, worded for whoever reads it next.
+ *
+ * Every clause is hedged on purpose. `detectConversion` returns a signal, and whether the
+ * conversion was in scope depends on the ticket, which is not in the diff — so this says
+ * "if the ticket did not ask for it" rather than asserting that it didn't, and it names a
+ * command to run rather than running one. The `Advice` type is what keeps that promise
+ * structurally: it cannot reach `shouldRequestApproval`, so nothing here can gate a push.
+ *
+ * The count of files, not the list. A conversion sweeping thirty files would bury the
+ * sentence that matters under thirty paths, and the paths are already in the diffstat.
+ */
+export function conversionAdvice(
+  conversion: Conversion,
+  context: { ticketKey?: string; epic?: string } = {},
+): Advice {
+  const deleted =
+    conversion.deletedInterfaceFiles.length === 0
+      ? ""
+      : `, and deletes ${plural(conversion.deletedInterfaceFiles.length, "interface file")}`;
+  const ticket = context.ticketKey ?? "the ticket";
+  const epic = context.epic === undefined ? "" : ` under ${context.epic}`;
+
+  return {
+    topic: "uikit-to-swiftui",
+    message: [
+      `This change converts UIKit to SwiftUI in ${plural(conversion.files.length, "file")}${deleted}.`,
+      `If ${ticket} did not ask for that, work like this gets its own technical item${epic} —`,
+      "half of the existing ones were never attached to their epic.",
+      "",
+      '  shipkit tech-task --subject "<what was converted>"',
+      "",
+      "Nothing is created until you run it. shipkit cannot tell whether this was in scope;",
+      "you hold the ticket, so the reading is yours.",
+    ].join("\n"),
   };
 }

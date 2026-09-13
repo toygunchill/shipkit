@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import type { ChangedFile } from "../../src/advice/uikit.js";
 import { fingerprint } from "../../src/approval/fingerprint.js";
 import type { ApprovalRequest } from "../../src/approval/protocol.js";
 import { ConfigError, loadConfig } from "../../src/config/load.js";
@@ -80,6 +81,7 @@ function makeDeps(
         resolveIssue: poisoned("resolveIssue"),
         readRepoState: poisoned("readRepoState"),
         readPushDiffstat: poisoned("readPushDiffstat"),
+        readPushChangedFiles: poisoned("readPushChangedFiles"),
         findPullRequest: poisoned("findPullRequest"),
         readUntrackedFiles: poisoned("readUntrackedFiles"),
         readRepoRoot: poisoned("readRepoRoot"),
@@ -107,6 +109,8 @@ function makeDeps(
         // returns here, so a run that fell back to the committed-work diffstat
         // would be visible rather than indistinguishable.
         readPushDiffstat: () => " a.ts | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)",
+        // No conversion by default, so `advice` is empty unless a test asks for one.
+        readPushChangedFiles: () => [],
         findPullRequest: () => NO_PR,
         readUntrackedFiles: () => [],
         readRepoRoot: () => "/repo",
@@ -129,6 +133,7 @@ function makeDeps(
     resolveIssue: record("resolveIssue", merged.resolveIssue),
     readRepoState: record("readRepoState", merged.readRepoState),
     readPushDiffstat: record("readPushDiffstat", merged.readPushDiffstat),
+    readPushChangedFiles: record("readPushChangedFiles", merged.readPushChangedFiles),
     findPullRequest: record("findPullRequest", merged.findPullRequest),
     readUntrackedFiles: record("readUntrackedFiles", merged.readUntrackedFiles),
     readRepoRoot: record("readRepoRoot", merged.readRepoRoot),
@@ -152,6 +157,7 @@ const DOMAIN_DEPS = [
   "resolveIssue",
   "readRepoState",
   "readPushDiffstat",
+  "readPushChangedFiles",
   "findPullRequest",
   "readUntrackedFiles",
   "readRepoRoot",
@@ -1182,5 +1188,148 @@ describe("the human policy", () => {
     const { deps, err } = makeDeps({ ...warned, requestApproval: async () => ({ outcome: "no-surface" as const }) /* extra args ignored */ });
     await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
     expect(err.join("\n")).toContain("scripts/app.sh");
+  });
+});
+
+// `detectConversion` had no caller at all until this wiring: the advice half of the feature
+// was built, tested and unreachable. These drive it through `runSubmit`, and the property
+// every one of them protects is the same — advice is carried, printed and returned, and it
+// changes nothing else about the run.
+describe("advice", () => {
+  // A file that loses every UIKit marker and gains a SwiftUI one, which is what
+  // detectConversion calls a conversion. Two of them, so the message has a count to name.
+  const CONVERTED: ChangedFile[] = [
+    {
+      path: "Scenes/SummaryViewController.swift",
+      status: "modified",
+      before: "import UIKit\nfinal class S: UIViewController { @IBOutlet var l: UILabel! }\n",
+      after: 'import SwiftUI\nstruct S: View { @State var n = 0\n  var body: some View { Text("x") } }\n',
+    },
+    {
+      path: "Scenes/DetailViewController.swift",
+      status: "modified",
+      before: "import UIKit\nfinal class D: UIViewController { }\n",
+      after: 'import SwiftUI\nstruct D: View { var body: some View { Text("y") } }\n',
+    },
+  ];
+
+  const converting = { readPushChangedFiles: () => CONVERTED };
+
+  it("returns the advice and prints it, naming the count of files and the command", async () => {
+    const { deps, err } = makeDeps(converting);
+
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
+
+    expect(result.advice?.map((item) => item.topic)).toEqual(["uikit-to-swiftui"]);
+    const message = result.advice?.[0]?.message ?? "";
+    expect(message).toContain("2 files");
+    expect(message).toContain("shipkit tech-task --subject");
+    // The count, not the list — a thirty-file conversion would bury the sentence that
+    // matters, and the paths are in the diffstat already.
+    expect(message).not.toContain("Scenes/SummaryViewController.swift");
+    // Printed, not merely returned: the CLI has no other way to show it.
+    expect(err.join("\n")).toContain("shipkit tech-task --subject");
+  });
+
+  it("says nothing at all when the change carries no conversion", async () => {
+    const { deps, err } = makeDeps({});
+
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
+
+    expect(result.advice).toEqual([]);
+    expect(err.join("\n")).not.toContain("tech-task");
+  });
+
+  // The assertion the whole design rests on, made end to end rather than about the types:
+  // two runs identical but for the conversion must agree on the exit code. `Advice` being a
+  // separate type from `Warning` is what makes this true, and this is where it is checked.
+  it("returns the same exit code as the identical run without it", async () => {
+    const plain = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, makeDeps({}).deps);
+    const advised = await runSubmit(
+      { ...OPTIONS, mode: "apply", acknowledge: "all" },
+      makeDeps(converting).deps,
+    );
+
+    expect(advised.code).toBe(plain.code);
+    expect(advised.code).toBe(0);
+    // And it really was the advised run — otherwise this compares two identical runs.
+    expect(advised.advice).toHaveLength(1);
+    expect(plain.advice).toEqual([]);
+  });
+
+  // Under `pr.approval: human` any unacknowledged warning asks a person every time. Advice
+  // routed as a warning would therefore gate every push carrying a conversion, which is the
+  // opposite of what this feature is for. Poisoned rather than merely unasserted: this proves
+  // the surface was never reached, not that nobody looked.
+  it("never reaches the approval surface, even under pr.approval: human", async () => {
+    const { deps, calls } = makeDeps({
+      ...converting,
+      loadConfig: () => loadConfig("tests/fixtures/human-approval.shipkit.yml"),
+      requestApproval: () => {
+        throw new Error("advice must never ask a person");
+      },
+    });
+
+    const result = await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: [] }, deps);
+
+    expect(result.code).toBe(0);
+    expect(calls.some((c) => c.fn === "requestApproval")).toBe(false);
+    expect(result.advice).toHaveLength(1);
+  });
+
+  // A field on the approval panel has to be bound into the fingerprint, and advice is not a
+  // decision. So it is neither: the request carries no advice, and the hash of a situation
+  // with a conversion equals the hash of the same situation without one.
+  //
+  // Measured, so the two halves are not credited equally: the request-key assertion is the
+  // discriminating one — adding `advice` to the request object fails this test. The
+  // fingerprint assertion does not discriminate on its own, because `Situation` is a closed
+  // record that `canonical` hashes field by field, so an extra property cannot reach the
+  // hash however carelessly it is attached. It is kept as the guard for the day someone
+  // widens `Situation` itself.
+  it("stays off the approval request and out of the fingerprint", async () => {
+    const warned = { readUntrackedFiles: () => [".env.local"] };
+    const seen: ApprovalRequest[] = [];
+    const capture = async (request: ApprovalRequest) => {
+      seen.push(request);
+      return { outcome: "denied" as const };
+    };
+
+    const plain = await runSubmit(
+      { ...OPTIONS, mode: "apply", acknowledge: [] },
+      makeDeps({ ...warned, requestApproval: capture }).deps,
+    );
+    const advised = await runSubmit(
+      { ...OPTIONS, mode: "apply", acknowledge: [] },
+      makeDeps({ ...warned, ...converting, requestApproval: capture }).deps,
+    );
+
+    expect(seen).toHaveLength(2);
+    expect(Object.keys(seen[1] as object)).not.toContain("advice");
+    expect(JSON.stringify(seen[1])).not.toContain("tech-task");
+    expect(advised.approvalFingerprint).toBe(plain.approvalFingerprint);
+    expect(advised.advice).toHaveLength(1);
+  });
+
+  // preview is where the agent asks what pushing would do, and it is the only chance the
+  // observation has to shape the body before it is written.
+  it("reaches preview, not only apply", async () => {
+    const { deps } = makeDeps(converting);
+
+    const result = await runSubmit({ ...OPTIONS, mode: "preview" }, deps);
+
+    expect(result.code).toBe(0);
+    expect(result.advice).toHaveLength(1);
+  });
+
+  // Same `exclude` as the commit and the diffstat: an observation about a file the commit
+  // will leave out is an observation about a change that is not being made.
+  it("asks for the same paths the commit will carry", async () => {
+    const { deps, calls } = makeDeps(converting);
+
+    await runSubmit({ ...OPTIONS, mode: "apply", acknowledge: "all" }, deps);
+
+    const read = calls.find((c) => c.fn === "readPushChangedFiles");
+    expect(read?.args).toEqual(["develop", ["scratch/response.json"]]);
   });
 });

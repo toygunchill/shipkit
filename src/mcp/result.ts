@@ -39,6 +39,24 @@ function structuredWarnings(result: SubmitResult): { check: string; message: str
   return result.warnings.map((warning) => ({ check: warning.check, message: warning.message }));
 }
 
+/**
+ * Advice, for the one caller that cannot hear it any other way. The MCP server discards
+ * `out` and `err` — stdout is the protocol channel — so an observation printed by
+ * `runSubmit` and not carried here reaches nobody, which is the whole failure this wiring
+ * exists to close.
+ *
+ * Kept out of `warnings` in the structured content as firmly as it is kept out of the type:
+ * an agent reading `warnings` and echoing the ids back in `acknowledge` must never find a
+ * topic there that no gate ever asked about.
+ */
+function structuredAdvice(result: SubmitResult): { topic: string; message: string }[] {
+  return (result.advice ?? []).map((item) => ({ topic: item.topic, message: item.message }));
+}
+
+function adviceLines(result: SubmitResult): string[] {
+  return (result.advice ?? []).map((item) => item.message);
+}
+
 function findingLines(result: SubmitResult): string[] {
   return result.findings.map((finding) => `${finding.rule}: ${finding.message}`);
 }
@@ -51,6 +69,7 @@ export function previewContent(result: SubmitResult): ToolContent {
   const structured = {
     findings: findingLines(result),
     warnings: structuredWarnings(result),
+    advice: structuredAdvice(result),
     body: result.body ?? "",
   };
 
@@ -80,6 +99,7 @@ export function previewContent(result: SubmitResult): ToolContent {
         ? "Ready to apply. No warnings."
         : "Ready to apply, with warnings. Pass these ids to shipkit_apply as acknowledge:",
       ...warningLines(result),
+      ...adviceLines(result),
     ],
     structured,
     false,
@@ -90,6 +110,7 @@ export function applyContent(result: SubmitResult): ToolContent {
   const structured: Record<string, unknown> = {
     findings: findingLines(result),
     warnings: structuredWarnings(result),
+    advice: structuredAdvice(result),
     committed: result.committed,
     pushed: result.pushed,
   };
@@ -99,7 +120,10 @@ export function applyContent(result: SubmitResult): ToolContent {
 
   if (result.code === 0) {
     return text(
-      [result.updated === true ? `Updated ${result.url}` : `Opened ${result.url}`],
+      [
+        result.updated === true ? `Updated ${result.url}` : `Opened ${result.url}`,
+        ...adviceLines(result),
+      ],
       structured,
       false,
     );

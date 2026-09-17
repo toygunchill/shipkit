@@ -566,3 +566,18 @@ export function readRepoRoot(cwd: string = process.cwd()): string {
 export function readHeadSha(cwd: string = process.cwd()): string {
   return git(["rev-parse", "HEAD"], cwd).trim();
 }
+
+/**
+ * Every path git tracks, root-relative.
+ *
+ * `git ls-files` rather than a directory walk: it is what decides the question anyway —
+ * `.gitignore` is the repository's own statement about which files are its code — and it
+ * costs one process instead of descending through `node_modules`, `Pods` and `DerivedData`.
+ *
+ * `-z` because a filename may contain a newline, and `core.quotePath=false` so a path with
+ * non-ASCII characters comes back as itself rather than as escape sequences.
+ */
+export function readTrackedFiles(cwd: string = process.cwd()): string[] {
+  const out = git(["-c", "core.quotePath=false", "ls-files", "-z"], cwd);
+  return out.split("\0").filter((path) => path.length > 0);
+}

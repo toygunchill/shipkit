@@ -32,6 +32,8 @@ import {
 import type { IssueFacts } from "./jira/types.js";
 import { applicable, observedPaths } from "./readiness/apply.js";
 import { loadReadiness, loadReadinessFiles } from "./readiness/load.js";
+import { runRules } from "./rules/run.js";
+import { surveyRepository } from "./rules/survey.js";
 import type { ReadinessRule } from "./readiness/types.js";
 import { jiraToken } from "./secrets/keychain.js";
 import {
@@ -57,6 +59,7 @@ import {
   readPushDiffstat,
   readRepoRoot,
   readRepoState,
+  readTrackedFiles,
   readUntrackedFiles,
   VcsError,
 } from "./vcs/git.js";
@@ -376,7 +379,19 @@ function realReviewDeps(cwd: string, configPath: string, rules: string[] | undef
     renderBody,
     currentBranch: () => currentBranch(cwd),
     resolveIssue,
-    loadReadiness: () => readinessRules(configPath, loadConfig(configPath), rules),
+    loadReadiness: () => {
+      const applied = readinessRules(configPath, loadConfig(configPath), rules);
+      if (applied === undefined) {
+        // Said on the page rather than left as an absence. A review with no checklist looks
+        // exactly like a review whose checklist had nothing to say, and the difference
+        // decides whether a person goes looking for one.
+        notes.push(
+          "No readiness checklist applied to this change — this repository configures none, " +
+            "and none was given with --rules. `shipkit rules` can propose one from the code.",
+        );
+      }
+      return applied;
+    },
     readRepoState: (base) => readRepoState(base, cwd),
     readPushDiffstat: (base, exclude) => readPushDiffstat(base, exclude, cwd),
     readPushAddedLines: (base, exclude) => readPushAddedLines(base, exclude, cwd),
@@ -892,6 +907,51 @@ program
       }
     },
   );
+
+program
+  .command("rules")
+  .description("Propose a readiness ruleset from the code, for a repository that has none")
+  .option("--repo <path>", "the repository to read", ".")
+  .option("--out <path>", "write here instead of printing")
+  .option("--force", "overwrite an existing --out", false)
+  .action((options: { repo: string; out?: string; force: boolean }) => {
+    try {
+      const root = repoOf(options);
+      const result = runRules(
+        { out: options.out, force: options.force },
+        {
+          // `git ls-files` decides which files are this repository's code, so a repository
+          // that is not a checkout gets git's own refusal rather than a walk of whatever
+          // happens to be in the directory.
+          survey: () =>
+            surveyRepository({
+              trackedPaths: () => readTrackedFiles(root),
+              read: (path: string) => {
+                try {
+                  return readFileSync(join(root, path), "utf8");
+                } catch {
+                  // A git-lfs pointer with no filter installed, a symlink into a directory
+                  // that is not checked out. Skipped by the survey, never fatal.
+                  return undefined;
+                }
+              },
+            }),
+          exists: (path: string) => existsSync(path),
+          write: (path: string, text: string) => writeFileSync(path, text, "utf8"),
+          out: (line: string) => console.log(line),
+          err: (line: string) => console.error(line),
+        },
+      );
+      process.exitCode = result.code;
+    } catch (error) {
+      if (error instanceof ConfigError || error instanceof VcsError) {
+        console.error(error.message);
+        process.exitCode = 2;
+        return;
+      }
+      throw error;
+    }
+  });
 
 program
   .command("mcp")

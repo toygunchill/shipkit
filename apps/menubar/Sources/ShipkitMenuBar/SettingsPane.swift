@@ -2,9 +2,22 @@ import SwiftUI
 
 struct SettingsPane: View {
     @ObservedObject var model: AppModel
+    /// How to get back to the inbox. This pane is no longer what the panel
+    /// opens on, so it needs a way out.
+    let back: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Button(action: back) {
+                    Label("Pull requests", systemImage: "chevron.left")
+                        .labelStyle(.titleAndIcon)
+                        .font(.callout)
+                }
+                .buttonStyle(.link)
+                Spacer()
+            }
+
             Text("Jira token").font(.headline)
             Text("shipkit reads this from the login keychain. Without it, the "
                  + "issue-level check cannot run and every pull request is warned about.")
@@ -34,17 +47,10 @@ struct SettingsPane: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if let listenerError = model.listenerError {
-                Divider()
-                Text("The approval socket failed to start.")
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                Text(listenerError)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-            }
+            // The listener error used to be shown here because this pane was
+            // the whole panel. It now lives on the inbox, which is what the
+            // panel opens on: a socket that failed to start must not be
+            // reachable only by someone who went looking for the token.
         }
         .padding(18)
         .frame(width: 380)

@@ -14,7 +14,11 @@ struct ShipkitMenuBarApp: App {
                     actionsEnabled: model.actionsEnabled
                 ) { model.decide($0) }
             } else {
-                SettingsPane(model: model)
+                // Not the settings pane: a pending decision outranks
+                // everything, and when there is none the panel's subject is
+                // the pull requests waiting on this person — the Jira token is
+                // a setting, reached from in there.
+                InboxPane(model: model)
             }
         } label: {
             // The silhouette carries the state: a menu-bar icon is tinted by the

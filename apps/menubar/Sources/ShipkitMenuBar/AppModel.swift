@@ -17,11 +17,32 @@ final class AppModel: ObservableObject {
     @Published private(set) var tokenError: String?
     @Published private(set) var listenerError: String?
 
+    /// The last answer a refresh produced, or `nil` before the first one has
+    /// finished. `nil` and `.undetermined` are drawn the same way — an em dash
+    /// — but they are not the same thing, and conflating them would mean the
+    /// panel could not tell "not asked yet" from "asked and could not find
+    /// out".
+    @Published private(set) var inbox: InboxOutcome?
+    /// True while a refresh is in flight. The previous answer stays on screen
+    /// dimmed rather than blanking: a number that disappears and comes back
+    /// every five minutes is harder to read than one that fades.
+    @Published private(set) var inboxRefreshing: Bool = false
+
     private let keychain = Keychain()
     private let journal = Journal()
     private let queue = ApprovalQueue()
+    private let pullRequests = PullRequestInbox.live()
     private var listener: Listener?
     private var reArmTask: Task<Void, Never>?
+    private var inboxTask: Task<Void, Never>?
+    private var inboxTimer: Task<Void, Never>?
+
+    /// How often the inbox re-asks while the panel is open. Long enough that
+    /// leaving the panel up is not a stream of `gh` processes, short enough
+    /// that a review request arriving while it is open is noticed without a
+    /// click. The refresh on appearance is what covers the common case; this
+    /// only covers a panel left open.
+    private static let inboxRefreshInterval: Duration = .seconds(300)
 
     /// How long the approve/deny buttons stay disabled right after a
     /// promotion swaps a new request into the panel. Defends against a
@@ -136,6 +157,47 @@ final class AppModel: ObservableObject {
             try? await Task.sleep(for: Self.promotionGuardDuration)
             guard Task.isCancelled == false else { return }
             self?.actionsEnabled = true
+        }
+    }
+
+    /// Called when the inbox becomes visible: refresh once, then keep a timer
+    /// running for as long as it stays visible. The timer is cancelled on
+    /// disappearance rather than left running, because every tick is two
+    /// processes spawned to answer a question nobody is looking at.
+    func inboxAppeared() {
+        refreshInbox()
+        inboxTimer?.cancel()
+        inboxTimer = Task { [weak self] in
+            while Task.isCancelled == false {
+                try? await Task.sleep(for: Self.inboxRefreshInterval)
+                guard Task.isCancelled == false else { return }
+                self?.refreshInbox()
+            }
+        }
+    }
+
+    func inboxDisappeared() {
+        inboxTimer?.cancel()
+        inboxTimer = nil
+    }
+
+    /// Asks `gh` again. A second call while one is already in flight is
+    /// ignored rather than queued: the manual refresh control and the timer
+    /// can land together, and two overlapping refreshes would race to publish
+    /// two answers to the same question.
+    func refreshInbox() {
+        guard inboxRefreshing == false else { return }
+        inboxRefreshing = true
+        let source = pullRequests
+        inboxTask = Task { [weak self] in
+            let outcome = await source.load()
+            guard Task.isCancelled == false else { return }
+            // Replaced wholesale, including when the answer is `undetermined`:
+            // keeping the previous numbers on a failed refresh would present
+            // stale counts as current ones, which is the one thing this inbox
+            // must never do.
+            self?.inbox = outcome
+            self?.inboxRefreshing = false
         }
     }
 

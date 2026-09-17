@@ -21,6 +21,16 @@ export function briefContent(brief: Brief): ToolContent {
       `Target: ${brief.target.branch} (${brief.target.reason})`,
       `Sections to fill: ${brief.template.sections.map((s) => s.name).join(", ")}`,
       `Title must match: ${brief.rules.titlePattern}`,
+      // The rules ride along in structuredContent as part of the brief; this line is what
+      // makes an agent reading only the prose notice that answers are required at all.
+      // Ids, not questions — the questions are long, and the whole of each is in
+      // `readiness[]`, where it can be read without being truncated into nonsense.
+      ...(brief.readiness === undefined
+        ? []
+        : [
+            "Readiness rules to answer, each pass/fail/n-a with a note — see readiness[]: " +
+              brief.readiness.map((item) => item.id).join(", "),
+          ]),
     ],
     brief as unknown as Record<string, unknown>,
     false,

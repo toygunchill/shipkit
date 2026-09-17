@@ -5,6 +5,7 @@ import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { requestApproval } from "../approval/client.js";
 import { loadConfig } from "../config/load.js";
+import { loadReadiness as loadReadinessRules } from "../readiness/load.js";
 import { resolveIssue } from "../cli-support.js";
 import { renderBody } from "../submit/response.js";
 import { runSubmit } from "../submit/run.js";
@@ -13,6 +14,7 @@ import {
   currentBranch,
   readHeadSha,
   readPushChangedFiles,
+  readPushChangedPaths,
   readPushAddedLines,
   readPushDiffstat,
   readRepoRoot,
@@ -38,6 +40,30 @@ const repoAndBase = {
   config: z.string().optional().describe("Path to .shipkit.yml; defaults to <repo>/.shipkit.yml"),
 };
 
+/**
+ * The readiness answers, one per rule the brief listed.
+ *
+ * Declared on `shipkit_preview` as well as `shipkit_apply`: preview is where an agent
+ * learns what is wrong while it can still fix it, and a preview that never saw the answers
+ * would report every rule unanswered and teach the agent nothing about the rest.
+ */
+const readinessAnswer = {
+  readiness: z
+    .array(
+      z.object({
+        id: z.string().describe("The rule id, exactly as the brief spells it"),
+        status: z
+          .enum(["pass", "fail", "n/a"])
+          .describe(
+            "pass: the rule holds. fail: it does not, and note says how. n/a: it does not apply, and note says why.",
+          ),
+        note: z.string().optional().describe("Required for n/a; what makes a fail mean anything"),
+      }),
+    )
+    .optional()
+    .describe("One answer per readiness rule in the brief. Every rule listed must be answered."),
+};
+
 const answer = {
   title: z.string().describe("Pull-request title, matching the brief's titlePattern"),
   commitMessage: z.string().describe("Commit message: subject, then an optional body"),
@@ -53,8 +79,18 @@ export function realToolDeps(): ToolDeps {
     // No exclusion, as in the CLI's own `brief`: a tool call carries its answer over the
     // wire, so there is never a response file in the repository to keep out of the commit.
     readPushChangedFiles: (base, cwd) => readPushChangedFiles(base, [], cwd),
+    readPushChangedPaths: (base, cwd) => readPushChangedPaths(base, [], cwd),
+    // Resolved against the realpath of the config that named it — see
+    // src/readiness/load.ts. A configured-but-broken rules file throws `ConfigError` from
+    // here, which the tool reports as a failure; it never degrades into an empty checklist.
+    loadReadiness: (configPath: string) => {
+      const config = loadConfig(configPath);
+      return config.readiness === undefined
+        ? undefined
+        : loadReadinessRules(configPath, config.readiness);
+    },
     runSubmit,
-    submitDeps: (repo: string): SubmitDeps => ({
+    submitDeps: (repo: string, configPath: string): SubmitDeps => ({
       loadConfig,
       renderBody,
       currentBranch: () => currentBranch(repo),
@@ -63,6 +99,13 @@ export function realToolDeps(): ToolDeps {
       readPushDiffstat: (base, exclude) => readPushDiffstat(base, exclude, repo),
       readPushAddedLines: (base, exclude) => readPushAddedLines(base, exclude, repo),
       readPushChangedFiles: (base, exclude) => readPushChangedFiles(base, exclude, repo),
+      readPushChangedPaths: (base, exclude) => readPushChangedPaths(base, exclude, repo),
+      loadReadiness: () => {
+        const config = loadConfig(configPath);
+        return config.readiness === undefined
+          ? undefined
+          : loadReadinessRules(configPath, config.readiness);
+      },
       findPullRequest: (branch) => findPullRequest(branch, repo),
       readUntrackedFiles: () => readUntrackedFiles(repo),
       readRepoRoot: () => readRepoRoot(repo),
@@ -104,7 +147,7 @@ export function createServer(deps: ToolDeps): McpServer {
         "Check a drafted pull-request title, commit message and sections against this " +
         "repository's conventions. Returns what is wrong, what is risky, and the body " +
         "that would be posted. Changes nothing. Run this before shipkit_apply.",
-      inputSchema: { ...repoAndBase, ...answer },
+      inputSchema: { ...repoAndBase, ...answer, ...readinessAnswer },
     },
     async (args) => handlePreview(args, deps),
   );
@@ -120,6 +163,7 @@ export function createServer(deps: ToolDeps): McpServer {
       inputSchema: {
         ...repoAndBase,
         ...answer,
+        ...readinessAnswer,
         acknowledge: z
           .array(z.string())
           .optional()

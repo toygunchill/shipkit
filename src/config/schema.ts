@@ -39,6 +39,12 @@ export const configSchema = z.object({
     // than asking a new one.
     approvalTimeoutSeconds: z.number().int().positive().default(120),
   }),
+  // Where this repository's PR-readiness rules live, relative to the **realpath** of this
+  // file — see src/readiness/load.ts for why the realpath and not the apparent location.
+  // Absent from every `.shipkit.yml` that exists today, and one of those must keep loading
+  // and behaving exactly as it does now: absent means the channel is off entirely, no
+  // question is carried and no answer is required.
+  readiness: z.string().min(1).optional(),
   branch: z.object({ pattern: regexPatternSchema }),
   jira: z.object({
     baseUrl: z.string().url(),

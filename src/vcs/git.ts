@@ -299,6 +299,57 @@ export function readPushChangedFiles(
 }
 
 /**
+ * Every path this push will deliver — names only, and every file type.
+ *
+ * `readPushChangedFiles` above cannot serve this: it is deliberately narrowed to
+ * `.swift`/`.xib`/`.storyboard` and reads both sides of every blob it returns, which is
+ * right for conversion detection and wrong twice over here. A readiness rule can be about
+ * an asset catalog, a plist, a storyboard or a Podfile, and none of them would appear; and
+ * nothing here needs a byte of content, only whether a path was touched.
+ *
+ * The same scratch-index recipe as `readPushDiffstat`, for the same reason, which this
+ * project has already paid for once: `commitAll` stages *after* the gate, so an agent's
+ * whole change is typically uncommitted when this is asked. A reader asking
+ * `base...HEAD` would answer "nothing changed" on precisely the run that has everything to
+ * check — the blank-diffstat bug, re-created as an `appliesTo` filter that quietly excuses
+ * every rule.
+ *
+ * `-z` because `core.quotePath` mangles a non-ASCII path into a C-quoted string, and a
+ * mangled path silently matches no glob. `--no-renames` so a moved file is reported as both
+ * the path that went and the path that arrived, which is what a rule about either one wants.
+ */
+export function readPushChangedPaths(
+  base: string,
+  exclude: string[] = [],
+  cwd: string = process.cwd(),
+): string[] {
+  // `--end-of-options` for the reason the reads above record: only `base` is
+  // caller-controlled, and it must not be able to spell itself as an option.
+  const mergeBase = git(["merge-base", "--end-of-options", base, "HEAD"], cwd).trim();
+  const pathspec = stagingPathspec(exclude);
+  const scratch = mkdtempSync(join(tmpdir(), "shipkit-index-"));
+  const index = join(scratch, "index");
+  try {
+    gitWithIndex(["read-tree", "--end-of-options", mergeBase], cwd, index);
+    gitWithIndex(["add", "--all", ...pathspec], cwd, index);
+    // `--no-relative` for the reason `readPushDiffstat` records: `diff.relative` prints
+    // paths relative to cwd, and a glob written against the repository root would then
+    // match or miss depending on which directory shipkit happened to be invoked from.
+    const raw = gitWithIndex(
+      [
+        "diff", "--cached", "--name-only", "-z", "--no-relative", "--no-renames",
+        "--end-of-options", mergeBase, ...pathspec,
+      ],
+      cwd,
+      index,
+    );
+    return raw.split("\0").filter((path) => path.length > 0);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+/**
  * The files `git add --all` would bring into the commit that are not tracked yet —
  * scratch notes, local env files, and the agent's own response file. `--exclude-standard`
  * keeps ignored paths out, so what comes back is only what would really be committed.

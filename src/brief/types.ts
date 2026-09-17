@@ -1,5 +1,6 @@
 import type { Advice } from "../advice/types.js";
 import type { ShipkitConfig } from "../config/schema.js";
+import type { ReadinessAsk } from "../readiness/types.js";
 
 export type BriefSection = {
   name: string;
@@ -21,6 +22,19 @@ export type Brief = {
    * reaches `shouldRequestApproval` or changes an exit code.
    */
   advice?: Advice[];
+  /**
+   * The team's PR-readiness rules the agent must answer, and only the ones this change is
+   * about: a rule whose `appliesTo` matched nothing in the push is never carried, because
+   * asking about files nobody touched is noise, and a checklist of noise is one that gets
+   * skimmed rather than read.
+   *
+   * Absent when the repository configures no rules, and when none of them apply. Present
+   * means every id here must come back in the response's `readiness`, with a status.
+   *
+   * Only the question and its stakes travel; `appliesTo` stays behind. The agent is being
+   * asked whether the work is ready, not asked to re-derive why it was asked.
+   */
+  readiness?: ReadinessAsk[];
   ticket?: {
     key: string;
     type: string;

@@ -4,10 +4,25 @@ import type { ShipkitConfig } from "../config/schema.js";
 
 export class ResponseError extends Error {}
 
+/**
+ * One rule's answer. Optional as a block, because a repository with no `readiness:` key has
+ * no rules to answer — and required in practice by `runSubmit` the moment there are any: an
+ * applicable rule with no answer here is a finding, not a shrug.
+ *
+ * A malformed shape refuses like everything else in this file rather than being repaired or
+ * dropped. An answer shipkit had to guess at is not an answer.
+ */
+const readinessAnswerSchema = z.object({
+  id: z.string().min(1),
+  status: z.enum(["pass", "fail", "n/a"]),
+  note: z.string().optional(),
+});
+
 const responseSchema = z.object({
   title: z.string().min(1),
   commitMessage: z.string().min(1),
   sections: z.record(z.string(), z.string()),
+  readiness: z.array(readinessAnswerSchema).optional(),
 });
 
 export type SubmitResponse = z.infer<typeof responseSchema>;

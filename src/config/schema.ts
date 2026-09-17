@@ -44,7 +44,10 @@ export const configSchema = z.object({
   // Absent from every `.shipkit.yml` that exists today, and one of those must keep loading
   // and behaving exactly as it does now: absent means the channel is off entirely, no
   // question is carried and no answer is required.
-  readiness: z.string().min(1).optional(),
+  // One path, or several read as one checklist — a team ruleset plus a platform ruleset is
+  // the case this exists for. An id appearing in two of them is refused; see
+  // src/readiness/load.ts.
+  readiness: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
   branch: z.object({ pattern: regexPatternSchema }),
   jira: z.object({
     baseUrl: z.string().url(),

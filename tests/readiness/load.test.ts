@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { ConfigError, loadConfig } from "../../src/config/load.js";
-import { loadReadiness, readinessPath } from "../../src/readiness/load.js";
+import { loadReadiness, loadReadinessFiles, readinessPath } from "../../src/readiness/load.js";
 
 const tempDirs: string[] = [];
 function tempDir(prefix: string): string {
@@ -156,5 +156,91 @@ describe("loadReadiness", () => {
     it("refuses an empty rule list", () => {
       expect(failing("version: 1\nrules: []\n")).toThrow(/Invalid readiness rules/);
     });
+  });
+});
+
+const TEAM = `version: 1
+rules:
+  - id: design-tokens
+    ask: "Did you use the tokens?"
+    severity: advise
+`;
+const PLATFORM = `version: 1
+rules:
+  - id: accessibility-ids
+    ask: "Do the new views carry identifiers?"
+    severity: advise
+`;
+const CLASH = `version: 1
+rules:
+  - id: design-tokens
+    ask: "The same id, said differently."
+    severity: warn
+`;
+
+describe("several rulesets read as one checklist", () => {
+  // A team ruleset plus a platform ruleset is the case this exists for. shipkit is installed
+  // once and pointed at many repositories; which checklist applies is a decision at the point
+  // of use, not a property baked into one repository's config.
+  it("keeps every rule, in the order the files were named", () => {
+    const dir = tempDir("shipkit-multi-");
+    writeFileSync(join(dir, "team.yml"), TEAM, "utf8");
+    writeFileSync(join(dir, "platform.yml"), PLATFORM, "utf8");
+
+    const rules = loadReadinessFiles([
+      { path: join(dir, "team.yml"), named: "--rules team.yml" },
+      { path: join(dir, "platform.yml"), named: "--rules platform.yml" },
+    ]);
+
+    expect(rules.map((rule) => rule.id)).toEqual(["design-tokens", "accessibility-ids"]);
+  });
+
+  // Already refused within one file, for a reason that does not weaken across files: one
+  // answer satisfies both, so which rule applies would depend on the order they were listed.
+  it("refuses an id defined in two files, naming both", () => {
+    const dir = tempDir("shipkit-multi-");
+    writeFileSync(join(dir, "team.yml"), TEAM, "utf8");
+    writeFileSync(join(dir, "clash.yml"), CLASH, "utf8");
+
+    let thrown: unknown;
+    try {
+      loadReadinessFiles([
+        { path: join(dir, "team.yml"), named: "a" },
+        { path: join(dir, "clash.yml"), named: "b" },
+      ]);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(ConfigError);
+    expect((thrown as Error).message).toContain(join(dir, "team.yml"));
+    expect((thrown as Error).message).toContain(join(dir, "clash.yml"));
+  });
+
+  it("names how the path was asked for, so a person can find what to fix", () => {
+    const dir = tempDir("shipkit-multi-");
+
+    expect(() =>
+      loadReadinessFiles([{ path: join(dir, "gone.yml"), named: "--rules ../rules/gone.yml" }]),
+    ).toThrow("--rules ../rules/gone.yml");
+  });
+
+  it("takes a list under readiness:, resolved like a single path is", () => {
+    const dir = tempDir("shipkit-multi-");
+    writeFileSync(join(dir, "team.yml"), TEAM, "utf8");
+    writeFileSync(join(dir, "platform.yml"), PLATFORM, "utf8");
+    writeFileSync(join(dir, ".shipkit.yml"), "unused by this call\n", "utf8");
+
+    const rules = loadReadiness(join(dir, ".shipkit.yml"), ["./team.yml", "./platform.yml"]);
+
+    expect(rules.map((rule) => rule.id)).toEqual(["design-tokens", "accessibility-ids"]);
+  });
+
+  it("still takes a single path, exactly as before", () => {
+    const dir = tempDir("shipkit-multi-");
+    writeFileSync(join(dir, "r.yml"), MINIMAL, "utf8");
+    writeFileSync(join(dir, ".shipkit.yml"), "unused by this call\n", "utf8");
+
+    expect(loadReadiness(join(dir, ".shipkit.yml"), "./r.yml").map((rule) => rule.id)).toEqual(["only"]);
   });
 });

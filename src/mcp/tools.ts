@@ -2,7 +2,11 @@ import { isAbsolute, join } from "node:path";
 import { observedChangedFiles } from "../advice/observe.js";
 import type { ChangedFile } from "../advice/uikit.js";
 import { assembleBrief } from "../brief/assemble.js";
-import { isValidBase } from "../cli-support.js";
+import { configPath, isValidBase } from "../cli-support.js";
+
+// Re-exported so the MCP tools keep one import for everything they hand a caller, and so
+// the CLI and this surface cannot resolve a config differently. See src/cli-support.ts.
+export { configPath };
 import type { ShipkitConfig } from "../config/schema.js";
 import { applicable, observedPaths } from "../readiness/apply.js";
 import type { ReadinessAnswer, ReadinessRule } from "../readiness/types.js";
@@ -58,15 +62,6 @@ export type SubmitArgs = {
   acknowledge?: string[];
   readiness?: ReadinessAnswer[];
 };
-
-export function configPath(args: { repo: string; config?: string }): string {
-  // "" is absent too — `??` alone would read it as an explicit path and fail open.
-  if (!args.config) return join(args.repo, ".shipkit.yml");
-  // A relative config is relative to the caller's repository, not the server process's cwd —
-  // a long-lived server serves several repositories from one process. An absolute path is
-  // left exactly as given.
-  return isAbsolute(args.config) ? args.config : join(args.repo, args.config);
-}
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

@@ -1,5 +1,14 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
@@ -97,17 +106,36 @@ export function readFixRequest(root: string): FixRequest | undefined {
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
-  } catch {
-    return undefined;
+  } catch (error) {
+    // Only "there is no file" means there is no selection. A bare `catch` here said the
+    // opposite of the paragraph above it: an unreadable file, a `.shipkit/fix-request.json`
+    // that is a directory, a permission this user does not have, all came back as `undefined`
+    // and the brief went out as though nobody had reviewed anything. Worse, `submit` uses
+    // `existsSync` for its exclusion and its archive, so the selection was moved aside having
+    // never reached the agent — the person's ten minutes vanished with no trace anywhere.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new FixRequestError(`Cannot read the review selection at ${path}: ${detail}`);
   }
   return parseFixRequest(raw, path);
 }
 
-/** Writes the selection, creating `.shipkit/` if this is the first review. Returns the path. */
+/**
+ * Writes the selection, creating `.shipkit/` if this is the first review. Returns the path.
+ *
+ * Failures are wrapped, because the raw `fs` error is not one any caller catches: it passed
+ * through `runReview`'s typed catch and through the CLI's, and surfaced as an uncaught stack
+ * trace *after* the page had already told the person their selection was sent.
+ */
 export function writeFixRequest(root: string, request: FixRequest): string {
   const path = join(root, FIX_REQUEST_PATH);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(request, null, 2)}\n`, "utf8");
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(request, null, 2)}\n`, "utf8");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new FixRequestError(`Cannot write the review selection to ${path}: ${detail}`);
+  }
   return path;
 }
 
@@ -160,36 +188,82 @@ export function archiveDirectory(root: string): string {
 }
 
 /**
- * Moves a consumed selection aside, timestamped. Returns where it went, or `undefined` when
- * there was nothing to move.
+ * What became of a selection that was moved aside.
+ *
+ * Three outcomes rather than `string | undefined`, because two of them were indistinguishable
+ * and one of them is permanent: a repository on a volume other than the home volume can never
+ * be archived by `rename` at all (`EXDEV`), and the old signature reported that identically to
+ * "there was nothing to archive". Every submit failed, silently, forever, and every following
+ * brief re-issued instructions the agent had already carried out.
+ */
+export type ArchiveOutcome =
+  | { kind: "none" }
+  | { kind: "moved"; path: string }
+  | { kind: "failed"; detail: string };
+
+/**
+ * Moves a consumed selection aside, timestamped.
  *
  * Moved rather than deleted. The notes are a person's own words about this change, and the
  * archive is the only place left to answer "did the agent actually do what was ticked?"
  * after the push — the brief that carried them is gone with the agent's context. It lands
  * outside the repository (see `archiveDirectory`), so keeping it costs the commit nothing.
+ *
+ * `rename` first and a copy as the fallback: rename is atomic and cannot half-move a file,
+ * but it cannot cross a filesystem, and a checkout on an external disk or a mounted image is
+ * exactly that case. Measured on an HFS+ RAM disk: `rename` gave `EXDEV`, the copy succeeded.
  */
 export function archiveFixRequest(
   root: string,
   now: Date,
   /** Injected by tests, which must not write into the real Application Support. */
   directory: string = archiveDirectory(root),
-): string | undefined {
+  /**
+   * Injected by tests too, for the one failure this fallback exists for: `EXDEV` needs two
+   * filesystems, and a test suite cannot mount one. Everything else about the fallback —
+   * that the copy lands, that the source goes, that the outcome says `moved` — is real.
+   */
+  rename: (from: string, to: string) => void = renameSync,
+): ArchiveOutcome {
   const from = join(root, FIX_REQUEST_PATH);
   // Checked before anything is created: the ordinary case is that there is nothing to
   // archive, and creating a directory to hold a file that will never arrive litters every
   // repository that has never been reviewed.
-  if (!existsSync(from)) return undefined;
+  if (!existsSync(from)) return { kind: "none" };
 
   const to = join(directory, `fix-request-${stamp(now)}.json`);
   try {
     mkdirSync(directory, { recursive: true });
-    renameSync(from, to);
-  } catch {
-    // No selection to archive is the ordinary case — every submit that was never reviewed.
-    // A rename that fails for any other reason is not worth failing a completed push over:
-    // the push has already landed, and the worst outcome is a stale selection the next
-    // `brief` carries again, which a person can see and delete.
-    return undefined;
+  } catch (error) {
+    return { kind: "failed", detail: error instanceof Error ? error.message : String(error) };
   }
-  return to;
+  try {
+    rename(from, to);
+    return { kind: "moved", path: to };
+  } catch {
+    // Fall through to the copy. The rename's own error is not reported: on the one failure
+    // that matters it says `EXDEV`, which describes a limit of the call rather than anything
+    // a person can act on, and the copy below either succeeds or produces the real reason.
+  }
+  try {
+    copyFileSync(from, to);
+    unlinkSync(from);
+    return { kind: "moved", path: to };
+  } catch (error) {
+    // The copy may have landed before the unlink failed. Remove it, so a half-archived
+    // selection is not left looking like a completed one beside the live file.
+    try {
+      if (existsSync(to) && existsSync(from)) unlinkSync(to);
+    } catch {
+      // Nothing left to try, and the outcome below already says the archive failed.
+    }
+    // `rmdir` only succeeds on an empty directory, so this removes the directory this call
+    // just created and never one holding earlier archives.
+    try {
+      rmdirSync(directory);
+    } catch {
+      // It holds earlier archives, or it was never created. Either way, leave it.
+    }
+    return { kind: "failed", detail: error instanceof Error ? error.message : String(error) };
+  }
 }

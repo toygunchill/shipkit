@@ -3,6 +3,8 @@ import { configPath, handleApply, handleBrief, handlePreview } from "../../src/m
 import type { ToolDeps } from "../../src/mcp/tools.js";
 import { loadConfig } from "../../src/config/load.js";
 import type { SubmitOptions, SubmitResult, SubmitDeps } from "../../src/submit/run.js";
+import type { FixRequest } from "../../src/review/fixrequest.js";
+import type { Brief } from "../../src/brief/types.js";
 
 const CONFIG = loadConfig("tests/fixtures/valid.shipkit.yml");
 
@@ -200,5 +202,66 @@ describe("handleApply", () => {
       runSubmit: () => Promise.reject(new Error("gh exploded")),
     });
     await expect(handleApply(ARGS, deps)).resolves.toMatchObject({ isError: true });
+  });
+});
+
+const SELECTION: FixRequest = {
+  version: 1,
+  createdAt: "2026-09-17T10:00:00.000Z",
+  base: "develop",
+  branch: "bugfix/x/1-y",
+  items: [{ kind: "warning", id: "untracked-files", message: "m", note: "delete the scratch file" }],
+};
+
+describe("the MCP brief and the review selection", () => {
+  // This surface knew nothing about `shipkit review` at all: a person could tick fourteen
+  // boxes, send them, tell the agent to go, and — for any agent driven through `shipkit mcp`,
+  // which is the interface this project tells agents to use — the agent was handed nothing,
+  // with no way for either of them to see it.
+  it("carries the selection the person made, first, like the CLI does", async () => {
+    const { deps } = makeDeps({ readFixRequest: () => SELECTION });
+
+    const shaped = await handleBrief({ repo: "/repo", base: "develop" }, deps);
+    const brief = shaped.structuredContent as Brief;
+
+    expect(brief.fixRequest?.items).toEqual(SELECTION.items);
+    expect(Object.keys(brief)[0]).toBe("fixRequest");
+  });
+
+  it("reads it from the repository the caller named", async () => {
+    const seen: string[] = [];
+    const { deps } = makeDeps({
+      readFixRequest: (repo: string) => {
+        seen.push(repo);
+        return undefined;
+      },
+    });
+
+    await handleBrief({ repo: "/elsewhere", base: "develop" }, deps);
+
+    expect(seen).toEqual(["/elsewhere"]);
+  });
+
+  // Unguarded on purpose, unlike the advice and readiness reads beside it: a brief that
+  // silently omits what a person chose is a brief that lies about having been reviewed.
+  it("reports a selection it cannot read rather than pretending there is none", async () => {
+    const { deps } = makeDeps({
+      readFixRequest: () => {
+        throw new Error("Cannot read the review selection at /repo/.shipkit/fix-request.json: EACCES");
+      },
+    });
+
+    const shaped = await handleBrief({ repo: "/repo", base: "develop" }, deps);
+
+    expect(shaped.isError).toBe(true);
+    expect(JSON.stringify(shaped.content)).toContain("EACCES");
+  });
+
+  it("is absent, as before, in a repository nobody has reviewed", async () => {
+    const { deps } = makeDeps();
+
+    const shaped = await handleBrief({ repo: "/repo", base: "develop" }, deps);
+
+    expect((shaped.structuredContent as Brief).fixRequest).toBeUndefined();
   });
 });

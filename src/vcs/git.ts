@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChangedFile } from "../advice/uikit.js";
-import { asVcsError, execRunner } from "./exec.js";
+import { asVcsError, execRunner, MAX_OUTPUT_BYTES } from "./exec.js";
 import { stagingPathspec } from "./mutate.js";
 import { VcsError, type AddedLine, type RepoState } from "./types.js";
 
@@ -26,6 +26,10 @@ function gitWithIndex(args: string[], cwd: string, indexFile: string): string {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      // The scratch-index reads include `readPushDiff`, which returns the whole patch. See
+      // MAX_OUTPUT_BYTES: the default cap turned a large change into an exit 2 with no
+      // reason printed.
+      maxBuffer: MAX_OUTPUT_BYTES,
       env: { ...process.env, GIT_INDEX_FILE: indexFile },
     }),
   );
@@ -213,6 +217,10 @@ function readBlob(spec: string, cwd: string, indexFile: string): string {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      // The scratch-index reads include `readPushDiff`, which returns the whole patch. See
+      // MAX_OUTPUT_BYTES: the default cap turned a large change into an exit 2 with no
+      // reason printed.
+      maxBuffer: MAX_OUTPUT_BYTES,
       env: { ...process.env, GIT_INDEX_FILE: indexFile },
     });
   } catch {

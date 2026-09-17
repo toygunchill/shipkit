@@ -16,7 +16,13 @@ import { VcsError } from "../vcs/git.js";
 import type { PushFileDiff } from "../vcs/git.js";
 import type { AddedLine, PullRequestState, RepoState } from "../vcs/types.js";
 import type { ChangedFile } from "../advice/uikit.js";
-import { FixRequestError, type FixRequest, type FixRequestItem } from "./fixrequest.js";
+import {
+  FIX_REQUEST_PATH,
+  FixRequestError,
+  type ArchiveOutcome,
+  type FixRequest,
+  type FixRequestItem,
+} from "./fixrequest.js";
 import { reviewItems, type ReviewItem } from "./items.js";
 import { renderPage } from "./page.js";
 import { createHandler, type Listening, type ReviewHandler } from "./server.js";
@@ -74,6 +80,16 @@ export type ReviewDeps = {
   /** Root-relative paths of selection files already lying in the repository. */
   fixRequestExclusions: () => string[];
   writeFixRequest: (request: FixRequest) => string;
+  /**
+   * Moves aside the selection already lying in the repository, if there is one.
+   *
+   * Reached when a person ticks nothing and presses send — which is how they say "I have
+   * read this and it is fine now". Without it the previous selection stayed armed, and the
+   * message said "No fix request was written", which is true and reads as "nothing is
+   * pending": the next brief re-issued instructions the person had just decided were done,
+   * under a header saying a person chose them.
+   */
+  clearFixRequest?: (() => ArchiveOutcome) | undefined;
   /** Anything worth telling the reader that is not a finding — read after the assessment. */
   notes?: (() => string[]) | undefined;
   /** Binds the handler to a loopback socket. Injected so no test opens a port. */
@@ -206,6 +222,10 @@ export async function runReview(
     });
 
     let answered: FixRequestItem[] | undefined;
+    let written: string | undefined;
+    // Left uninitialised on purpose: a declaration with a value narrows to that value, and
+    // TypeScript keeps the narrowing across the assignment the closure below makes.
+    let cleared: ArchiveOutcome | undefined;
     let resolveAnswer: () => void = () => undefined;
     const answer = new Promise<void>((resolve) => {
       resolveAnswer = resolve;
@@ -214,7 +234,23 @@ export async function runReview(
     const handler = createHandler({
       token,
       page,
+      // The disk work happens here, inside the request, rather than after the wait returns.
+      // It used to happen after, which meant the page's "Sent to shipkit. You can close this
+      // tab." was printed before anything had been written — and when the write failed the
+      // person had already closed the tab. A throw from here reaches the handler, which
+      // answers 500 with the reason and leaves the review answerable.
       submit: (selection) => {
+        if (selection.length > 0) {
+          written = deps.writeFixRequest({
+            version: 1,
+            createdAt: deps.now().toISOString(),
+            base: options.base,
+            branch,
+            items: selection,
+          });
+        } else {
+          cleared = deps.clearFixRequest?.() ?? { kind: "none" };
+        }
         answered = selection;
         resolveAnswer();
       },
@@ -237,17 +273,32 @@ export async function runReview(
     }
 
     if (answered === undefined) {
+      // A wait that ran out is not a person saying "this is fine" — nobody said anything —
+      // so a selection already lying here is left exactly as it was. Named, though: silence
+      // plus "nothing was written" reads as "nothing is pending", and the next brief would
+      // then carry instructions this run gave no hint about.
+      const pending = deps.fixRequestExclusions().includes(FIX_REQUEST_PATH);
       const message =
-        "No answer arrived before the wait ran out. Nothing was written; run shipkit review again.";
+        "No answer arrived before the wait ran out. Nothing was written; run shipkit review again." +
+        (pending
+          ? ` An earlier selection is still waiting in ${FIX_REQUEST_PATH} and the next shipkit brief will carry it.`
+          : "");
       deps.err(message);
       return { ...empty, code: 2, findings: allFindings, warnings: allWarnings, advice: allAdvice, items, message };
     }
 
     if (answered.length === 0) {
       // Writing an empty selection was rejected: `brief` would then carry a `fixRequest`
-      // saying a person chose nothing, which is noise dressed as instruction, and the file
-      // would sit there until the next successful submit archived it.
-      const message = "Nothing was selected. No fix request was written.";
+      // saying a person chose nothing, which is noise dressed as instruction. What an empty
+      // selection *does* mean is that whatever was asked for before is settled, so any
+      // earlier selection is cleared here rather than left armed.
+      const message =
+        cleared?.kind === "moved"
+          ? `Nothing was selected. The earlier selection was cleared and kept at ${cleared.path}.`
+          : cleared?.kind === "failed"
+            ? `Nothing was selected, and the earlier selection could not be cleared: ${cleared.detail}. ` +
+              `Delete ${FIX_REQUEST_PATH}, or the next shipkit brief will carry it anyway.`
+            : "Nothing was selected. No fix request was written.";
       deps.err(message);
       return {
         ...empty,
@@ -261,14 +312,9 @@ export async function runReview(
       };
     }
 
-    const request: FixRequest = {
-      version: 1,
-      createdAt: deps.now().toISOString(),
-      base: options.base,
-      branch,
-      items: answered,
-    };
-    const path = deps.writeFixRequest(request);
+    // Written inside `submit`, above, so the page's confirmation follows the write rather
+    // than preceding it. `answered.length > 0` here is exactly the branch that wrote.
+    const path = written as string;
     deps.out(path);
     deps.err(
       `${answered.length} item${answered.length === 1 ? "" : "s"} written. ` +

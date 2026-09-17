@@ -3,7 +3,12 @@ import { loadConfig } from "../../src/config/load.js";
 import type { ShipkitConfig } from "../../src/config/schema.js";
 import type { IssueFacts } from "../../src/jira/types.js";
 import type { ReadinessRule } from "../../src/readiness/types.js";
-import type { FixRequest, FixRequestItem } from "../../src/review/fixrequest.js";
+import {
+  FIX_REQUEST_PATH,
+  type ArchiveOutcome,
+  type FixRequest,
+  type FixRequestItem,
+} from "../../src/review/fixrequest.js";
 import { runReview, type ReviewDeps, type ReviewOptions } from "../../src/review/run.js";
 import type { Listening, ReviewHandler } from "../../src/review/server.js";
 import { renderBody, type SubmitResponse } from "../../src/submit/response.js";
@@ -466,5 +471,97 @@ describe("runReview has no way to change the repository", () => {
     // No approval is requested, no gate is consulted: the selection is simply written.
     expect(result.code).toBe(0);
     expect(harness.written).toHaveLength(1);
+  });
+});
+
+describe("an empty selection, when an earlier one is still lying there", () => {
+  // Ticking nothing and pressing send is how a person says "I have read this and it is fine
+  // now". The earlier selection used to stay armed, and the message — "No fix request was
+  // written" — was true and read as "nothing is pending": the next brief re-issued
+  // instructions the person had just decided were done, under a header saying a person chose
+  // them.
+  it("clears the earlier one and says where it went", async () => {
+    let cleared = 0;
+    const harness = makeDeps({
+      fixRequestExclusions: () => [FIX_REQUEST_PATH],
+      clearFixRequest: (): ArchiveOutcome => {
+        cleared += 1;
+        return { kind: "moved", path: "/archive/fix-request-2026-09-17T10-00-00-000Z.json" };
+      },
+    });
+
+    const result = await review(harness, (h) => h.answer([]));
+
+    expect(result.code).toBe(0);
+    expect(cleared).toBe(1);
+    expect(harness.written).toEqual([]);
+    expect(harness.err.join("\n")).toContain("/archive/fix-request-2026-09-17T10-00-00-000Z.json");
+  });
+
+  it("names the file to delete by hand when it could not be cleared", async () => {
+    const harness = makeDeps({
+      fixRequestExclusions: () => [FIX_REQUEST_PATH],
+      clearFixRequest: (): ArchiveOutcome => ({ kind: "failed", detail: "EACCES" }),
+    });
+
+    await review(harness, (h) => h.answer([]));
+
+    expect(harness.err.join("\n")).toContain("EACCES");
+    expect(harness.err.join("\n")).toContain(FIX_REQUEST_PATH);
+  });
+
+  it("still says the plain thing when there was nothing to clear", async () => {
+    const harness = makeDeps();
+
+    await review(harness, (h) => h.answer([]));
+
+    expect(harness.err.join("\n")).toContain("No fix request was written");
+  });
+});
+
+describe("a wait that runs out with a selection still pending", () => {
+  // Nobody said anything, so the selection stays exactly as it was — but silence plus
+  // "nothing was written" reads as "nothing is pending", and the next brief would carry
+  // instructions this run gave no hint about.
+  it("names the selection the next brief will carry", async () => {
+    const harness = makeDeps({ fixRequestExclusions: () => [FIX_REQUEST_PATH] });
+
+    const result = await review(harness, (h) => h.abandon());
+
+    expect(result.code).toBe(2);
+    expect(result.message).toContain(FIX_REQUEST_PATH);
+  });
+
+  it("says nothing extra when there is nothing pending", async () => {
+    const harness = makeDeps();
+
+    const result = await review(harness, (h) => h.abandon());
+
+    expect(result.message).not.toContain(FIX_REQUEST_PATH);
+  });
+});
+
+describe("a selection that cannot be written", () => {
+  // The write happens inside the POST now, so the page learns about the failure instead of
+  // being told "Sent to shipkit. You can close this tab." while the write was still to come.
+  // The review stays open, which is what makes pressing send again worth anything.
+  it("keeps the review open, and takes the same selection once the disk lets it", async () => {
+    let failing = true;
+    const harness = makeDeps({
+      writeFixRequest: (request) => {
+        if (failing) throw new Error("EROFS: read-only file system");
+        return `/repo/${FIX_REQUEST_PATH}`;
+      },
+    });
+
+    const result = await review(harness, (h) => {
+      h.answer([ITEM]);
+      failing = false;
+      h.answer([ITEM]);
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.selected).toEqual([ITEM]);
+    expect(result.path).toBe(`/repo/${FIX_REQUEST_PATH}`);
   });
 });

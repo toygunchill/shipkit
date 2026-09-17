@@ -115,8 +115,30 @@ footer .count { font-weight:600; }
 footer .wait { color:var(--muted); font-size:12px; }
 `;
 
+/**
+ * How much of one file's patch the page will draw.
+ *
+ * The buffer the patch is read through was raised to 256 MiB so that a large change can be
+ * reviewed at all — before that, `shipkit review` simply exited 2 on one. Raising it without
+ * this would have moved the failure rather than fixed it: the same change that used to throw
+ * would instead be rendered, one `<span>` per line, into a page that locks the tab.
+ *
+ * A quarter of a mebibyte is roughly three thousand lines of source — past any hunk a person
+ * reads in a browser, and far short of what a browser struggles with. Beyond it the file
+ * keeps its row, its status and its Open button, and the patch is named rather than drawn:
+ * the editor is the right place to read three thousand lines, and the page says so.
+ */
+const MAX_PATCH_CHARS = 256 * 1024;
+
 /** One `<span>` per diff line, classed by its marker so a hunk reads at a glance. */
 function renderPatch(patch: string): string {
+  if (patch.length > MAX_PATCH_CHARS) {
+    const lines = patch.split("\n").length;
+    return (
+      `<pre class="diff"><span class="h">  ${lines.toLocaleString("en-US")} lines of diff — too much to ` +
+      `draw here. Open the file to read it; everything else on this page still covers it.</span></pre>`
+    );
+  }
   if (patch.length === 0) {
     return `<pre class="diff"><span class="h">  No textual diff — a binary file, or a mode change only.</span></pre>`;
   }

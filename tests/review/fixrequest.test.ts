@@ -1,5 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -134,7 +143,8 @@ describe("keeping the selection out of the commit", () => {
     writeFixRequest(root, REQUEST);
     const archived = archiveFixRequest(root, new Date("2026-09-17T10:00:00.000Z"), elsewhere);
 
-    expect(archived?.startsWith(root)).toBe(false);
+    expect(archived.kind).toBe("moved");
+    expect(archived.kind === "moved" && archived.path.startsWith(root)).toBe(false);
     git(["add", "--all", ...stagingPathspec(fixRequestExclusions(root))], root);
     const staged = git(["diff", "--cached", "--name-only"], root).split("\n").filter(Boolean);
     expect(staged.filter((path) => path.startsWith(".shipkit/"))).toEqual([]);
@@ -149,12 +159,100 @@ describe("archiving a consumed selection", () => {
     const elsewhere = join(scratch(), "archives");
     const archived = archiveFixRequest(root, new Date("2026-09-17T10:00:00.000Z"), elsewhere);
 
-    expect(archived).toBe(join(elsewhere, "fix-request-2026-09-17T10-00-00-000Z.json"));
+    expect(archived).toEqual({
+      kind: "moved",
+      path: join(elsewhere, "fix-request-2026-09-17T10-00-00-000Z.json"),
+    });
     expect(readFixRequest(root)).toBeUndefined();
-    expect(JSON.parse(readFileSync(archived as string, "utf8"))).toEqual(REQUEST);
+    expect(JSON.parse(readFileSync(join(elsewhere, "fix-request-2026-09-17T10-00-00-000Z.json"), "utf8"))).toEqual(
+      REQUEST,
+    );
   });
 
   it("says nothing was moved when nobody reviewed anything", () => {
-    expect(archiveFixRequest(scratch(), new Date())).toBeUndefined();
+    expect(archiveFixRequest(scratch(), new Date())).toEqual({ kind: "none" });
+  });
+});
+
+describe("a selection that cannot simply be read", () => {
+  // The comment above `readFixRequest` says a file that exists but cannot be read must
+  // throw, because proceeding as though nobody reviewed anything is the one failure this
+  // feature cannot have. A bare `catch` said the opposite for every case but ENOENT.
+  it("throws when the path exists but is not a readable file", () => {
+    const root = scratch();
+    mkdirSync(join(root, ".shipkit", "fix-request.json"), { recursive: true });
+
+    expect(() => readFixRequest(root)).toThrow(FixRequestError);
+  });
+
+  it("still says nothing is there when nothing is there", () => {
+    expect(readFixRequest(scratch())).toBeUndefined();
+  });
+
+  // The write used to throw a raw fs error, which passed through every typed catch in the
+  // product and surfaced as a stack trace after the page had said "Sent to shipkit".
+  it("reports a write it cannot make as a FixRequestError", () => {
+    const root = scratch();
+    writeFileSync(join(root, ".shipkit"), "not a directory\n", "utf8");
+
+    expect(() => writeFixRequest(root, REQUEST)).toThrow(FixRequestError);
+  });
+});
+
+describe("archiving across a filesystem boundary", () => {
+  // A checkout on an external disk or a mounted image cannot be archived by rename at all:
+  // rename is confined to one filesystem. That used to be indistinguishable from "there was
+  // nothing to archive", so every submit failed to consume the selection, silently, forever.
+  it("copies the selection when the move cannot cross the boundary", () => {
+    const root = scratch();
+    const elsewhere = join(scratch(), "archives");
+    writeFixRequest(root, REQUEST);
+
+    const archived = archiveFixRequest(root, new Date("2026-09-17T10:00:00.000Z"), elsewhere, () => {
+      const error = new Error("cross-device link not permitted") as NodeJS.ErrnoException;
+      error.code = "EXDEV";
+      throw error;
+    });
+
+    expect(archived).toEqual({
+      kind: "moved",
+      path: join(elsewhere, "fix-request-2026-09-17T10-00-00-000Z.json"),
+    });
+    expect(readFixRequest(root)).toBeUndefined();
+    expect(JSON.parse(readFileSync(join(elsewhere, "fix-request-2026-09-17T10-00-00-000Z.json"), "utf8"))).toEqual(
+      REQUEST,
+    );
+  });
+
+  it("says why when neither the move nor the copy can be made, and leaves no empty archive", () => {
+    const root = scratch();
+    const parent = scratch();
+    // A file where the archive directory would go, so even mkdir cannot proceed.
+    writeFileSync(join(parent, "archives"), "in the way\n", "utf8");
+    writeFixRequest(root, REQUEST);
+
+    const archived = archiveFixRequest(root, new Date(), join(parent, "archives"));
+
+    expect(archived.kind).toBe("failed");
+    // The selection is still where the person left it — the one thing that must not be lost.
+    expect(readFixRequest(root)).toEqual(REQUEST);
+  });
+
+  it("leaves no empty archive directory behind when the copy itself fails", () => {
+    const root = scratch();
+    const elsewhere = join(scratch(), "archives");
+    writeFixRequest(root, REQUEST);
+
+    const archived = archiveFixRequest(root, new Date("2026-09-17T10:00:00.000Z"), elsewhere, () => {
+      // The rename fails, and the directory it would have written into is made read-only, so
+      // the copy fails too. Without the rmdir this left an empty directory in Application
+      // Support on every failed archive.
+      chmodSync(elsewhere, 0o500);
+      throw new Error("no");
+    });
+
+    expect(archived.kind).toBe("failed");
+    expect(readFixRequest(root)).toEqual(REQUEST);
+    expect(existsSync(elsewhere)).toBe(false);
   });
 });

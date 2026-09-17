@@ -141,7 +141,7 @@ function makeDeps(overrides: Partial<SubmitDeps> = {}): {
     fixRequestExclusions: () => [".shipkit/fix-request.json"],
     archiveFixRequest: () => {
       counter.archived += 1;
-      return "/repo/.shipkit/fix-request-2026-09-17T10-00-00-000Z.json";
+      return { kind: "moved" as const, path: "/repo/.shipkit/fix-request-2026-09-17T10-00-00-000Z.json" };
     },
     readRepoRoot: () => "/repo",
     realpath: (path: string) => path,

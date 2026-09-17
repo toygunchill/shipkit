@@ -6,6 +6,7 @@ import { isValidBase } from "../cli-support.js";
 import type { ShipkitConfig } from "../config/schema.js";
 import { applicable, observedPaths } from "../readiness/apply.js";
 import type { ReadinessAnswer, ReadinessRule } from "../readiness/types.js";
+import type { FixRequest } from "../review/fixrequest.js";
 import { briefContent, failureContent, applyContent, previewContent } from "./result.js";
 import type { ToolContent } from "./result.js";
 import type { SubmitDeps, SubmitOptions, SubmitResult } from "../submit/run.js";
@@ -19,6 +20,16 @@ export type ToolDeps = {
    */
   submitDeps: (repo: string, configPath: string) => SubmitDeps;
   loadConfig: (path: string) => ShipkitConfig;
+  /**
+   * The selection `shipkit review` left in this repository, when there is one.
+   *
+   * Optional only so a test may leave it out. Without it `shipkit_brief` returned a brief
+   * with no `fixRequest` key at all — so for an agent driven through `shipkit mcp`, which is
+   * the interface this project tells agents to use, a person could tick fourteen boxes, send
+   * them, tell the agent to go, and the agent would be handed nothing. Neither of them had
+   * any way to see it. A read that fails is reported, never degraded: see `readFixRequest`.
+   */
+  readFixRequest?: (repo: string) => FixRequest | undefined;
   readRepoState: (base: string, cwd: string) => RepoState;
   /** Both sides of the change's `.swift`/`.xib`/`.storyboard` text, so the brief this tool
    *  returns carries the same advice the CLI's `brief` prints. `readRepoState.changedFiles`
@@ -111,6 +122,7 @@ export async function handleBrief(args: BriefArgs, deps: ToolDeps): Promise<Tool
     // failed read carries every rule rather than none, because a question about a file
     // nobody touched is answered `n/a` with a note, while a rule nobody was asked is
     // indistinguishable from a rule nobody broke.
+    const fixRequest = deps.readFixRequest?.(args.repo);
     const readiness =
       rules === undefined
         ? undefined
@@ -130,6 +142,10 @@ export async function handleBrief(args: BriefArgs, deps: ToolDeps): Promise<Tool
         // is wrong with the change — see src/advice/observe.ts. Unguarded, a missing
         // clean-filter binary turns the whole brief into `isError: true`.
         changed: observedChangedFiles(() => deps.readPushChangedFiles(args.base, args.repo)),
+        // Unguarded on purpose, unlike the two reads above. Those degrade because a brief
+        // without advice is still a correct brief; this one cannot, because a brief that
+        // silently omits what a person chose is a brief that lies about having been reviewed.
+        ...(fixRequest === undefined ? {} : { fixRequest }),
       }),
     );
   } catch (error) {

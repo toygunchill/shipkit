@@ -20,6 +20,21 @@ const FIX_REQUEST_INSTRUCTION =
   "opinion and not a heuristic — someone looked at the diff and ticked them. Address every " +
   "one, and read each note as the instruction it is, before you draft anything below.";
 
+/**
+ * Said when the selection was made somewhere other than where the agent is standing.
+ *
+ * Deliberately a description and not a verdict: shipkit cannot tell a rebase from a rename
+ * from genuinely stale work, and the person who ticked the boxes is not here to ask.
+ */
+function mismatchNote(fixRequest: FixRequest, branch: string, base: string): string {
+  return (
+    `This selection was made on branch "${fixRequest.branch}" against base "${fixRequest.base}", ` +
+    `and this change is on "${branch}" against "${base}". It is carried here rather than ` +
+    "dropped, because a person chose it. Decide for yourself whether each item still applies " +
+    "to the diff in front of you, and say which ones you skipped and why."
+  );
+}
+
 export type AssembleInput = {
   repo: RepoState;
   target: { branch: string; reason: string };
@@ -77,6 +92,10 @@ export function assembleBrief({
           fixRequest: {
             instruction: FIX_REQUEST_INSTRUCTION,
             createdAt: fixRequest.createdAt,
+            madeOn: { branch: fixRequest.branch, base: fixRequest.base },
+            ...(fixRequest.branch === repo.branch && fixRequest.base === target.branch
+              ? {}
+              : { note: mismatchNote(fixRequest, repo.branch, target.branch) }),
             items: fixRequest.items,
           },
         }

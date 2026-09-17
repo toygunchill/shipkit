@@ -358,6 +358,9 @@ function realReviewDeps(configPath: string, notes: string[]): ReviewDeps {
     },
     fixRequestExclusions: () => fixRequestExclusions(readRepoRoot(cwd)),
     writeFixRequest: (request: FixRequest) => writeFixRequest(readRepoRoot(cwd), request),
+    // The same call `submit` makes once it has pushed: a selection that is finished with is
+    // kept, not deleted. Ticking nothing is a person saying the earlier list is done.
+    clearFixRequest: () => archiveFixRequest(readRepoRoot(cwd), new Date()),
     notes: () => notes,
     listen,
     // `open` is what macOS uses to hand a URL to the default browser. Detached and ignored:
@@ -375,10 +378,18 @@ function realReviewDeps(configPath: string, notes: string[]): ReviewDeps {
     // `--` and a root-relative path resolved against the repository root: the path can only
     // ever be one the diff named (see src/review/server.ts), and this makes that explicit at
     // the point the process is actually started.
+    //
+    // Absolute path and a timeout, both for the same reason: this call is synchronous and
+    // blocks the event loop, so a binary that does not return takes the review's ten-minute
+    // timer down with it — the timer cannot fire while the loop is blocked. Resolving `xed`
+    // through the inherited PATH would also have made "which program opens the file" depend
+    // on the shell the agent happened to launch shipkit from.
     openEditor: (path: string, line: number) => {
-      execFileSync("xed", ["--line", String(line), "--", join(readRepoRoot(cwd), path)], {
-        stdio: "ignore",
-      });
+      execFileSync(
+        "/usr/bin/xed",
+        ["--line", String(line), "--", join(readRepoRoot(cwd), path)],
+        { stdio: "ignore", timeout: 10_000 },
+      );
     },
     now: () => new Date(),
     wait: (ms: number) =>

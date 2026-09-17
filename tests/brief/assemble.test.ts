@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../../src/config/load.js";
 import type { ChangedFile } from "../../src/advice/uikit.js";
 import { assembleBrief } from "../../src/brief/assemble.js";
+import type { FixRequest } from "../../src/review/fixrequest.js";
 
 const config = loadConfig("tests/fixtures/valid.shipkit.yml");
 const repo = {
@@ -147,5 +148,69 @@ describe("assembleBrief advice", () => {
 
     expect(keys.indexOf("advice")).toBeGreaterThan(-1);
     expect(keys.indexOf("advice")).toBeLessThan(keys.indexOf("template"));
+  });
+});
+
+const SELECTION: FixRequest = {
+  version: 1,
+  createdAt: "2026-09-17T10:00:00.000Z",
+  base: target.branch,
+  branch: repo.branch,
+  items: [{ kind: "warning", id: "untracked-files", message: "m", note: "delete the scratch file" }],
+};
+
+describe("a selection made somewhere other than here", () => {
+  // The file is per-checkout, not per-branch: a person reviews one branch, gets pulled onto
+  // another, and the selection is still lying there. `createdAt` cannot show that — a
+  // timestamp says when, never against what — and the two names that could were recorded in
+  // the file and then thrown away on the way into the brief.
+  it("says which branch and base the person was actually looking at", () => {
+    const brief = assembleBrief({ repo, target, config, fixRequest: SELECTION });
+
+    expect(brief.fixRequest?.madeOn).toEqual({ branch: repo.branch, base: target.branch });
+  });
+
+  it("adds no note when the selection describes this very change", () => {
+    const brief = assembleBrief({ repo, target, config, fixRequest: SELECTION });
+
+    expect(brief.fixRequest?.note).toBeUndefined();
+  });
+
+  it("carries the items anyway when the branch has moved on, and names the discrepancy", () => {
+    const brief = assembleBrief({
+      repo,
+      target,
+      config,
+      fixRequest: { ...SELECTION, branch: "bugfix/squadb/31087-invoice-first-attempt" },
+    });
+
+    expect(brief.fixRequest?.items).toEqual(SELECTION.items);
+    expect(brief.fixRequest?.note).toContain("bugfix/squadb/31087-invoice-first-attempt");
+    expect(brief.fixRequest?.note).toContain(repo.branch);
+  });
+
+  it("notices a base that has moved too, not only a branch", () => {
+    const brief = assembleBrief({
+      repo,
+      target,
+      config,
+      fixRequest: { ...SELECTION, base: "release/3.75.0" },
+    });
+
+    expect(brief.fixRequest?.note).toContain("release/3.75.0");
+    expect(brief.fixRequest?.note).toContain(target.branch);
+  });
+
+  // The instruction is what tells the agent these are a person's words and not shipkit's.
+  // A mismatched selection is still a person's words, so it keeps it.
+  it("keeps the instruction that says a person chose these", () => {
+    const brief = assembleBrief({
+      repo,
+      target,
+      config,
+      fixRequest: { ...SELECTION, branch: "somewhere-else" },
+    });
+
+    expect(brief.fixRequest?.instruction).toContain("A person read this change");
   });
 });

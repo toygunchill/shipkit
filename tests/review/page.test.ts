@@ -190,3 +190,27 @@ describe("the file headers", () => {
     );
   });
 });
+
+describe("a file too large to draw", () => {
+  // The buffer that reads the patch was raised so a large change can be reviewed at all.
+  // Rendering one `<span>` per line for a patch that size would have moved the failure from
+  // "exits 2" to "serves a page that locks the tab", which is not a fix.
+  it("names the size and keeps the file's row and its Open button", () => {
+    const patch = `@@ -1 +1 @@\n${Array.from({ length: 40_000 }, (_u, i) => `+line ${i}`).join("\n")}`;
+    const html = page({ files: [{ path: "Generated.swift", status: "added", patch, line: 1 }] });
+
+    expect(html).toContain("too much to");
+    expect(html).toContain("40,001 lines of diff");
+    expect(html).toContain('data-open="Generated.swift"');
+    expect(html).not.toContain("+line 39999");
+    expect(html.length).toBeLessThan(200_000);
+  });
+
+  it("still draws a patch that a person could actually read", () => {
+    const patch = `@@ -1 +1 @@\n${Array.from({ length: 200 }, (_u, i) => `+line ${i}`).join("\n")}`;
+    const html = page({ files: [{ path: "Small.swift", status: "added", patch, line: 1 }] });
+
+    expect(html).toContain("+line 199");
+    expect(html).not.toContain("too much to");
+  });
+});

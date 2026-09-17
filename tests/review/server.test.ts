@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { createHandler, isLoopback, type ReviewHttpRequest } from "../../src/review/server.js";
+import { createHandler, isLoopback, listen, type ReviewHttpRequest } from "../../src/review/server.js";
 import type { FixRequestItem } from "../../src/review/fixrequest.js";
 
 const TOKEN = "a".repeat(64);
 
 function make(
-  over: { openEditor?: (path: string, line: number) => void; openable?: string[] } = {},
+  over: {
+    openEditor?: (path: string, line: number) => void;
+    openable?: string[];
+    submit?: (items: FixRequestItem[]) => void;
+  } = {},
 ): {
   handle: (request: Partial<ReviewHttpRequest>) => ReturnType<ReturnType<typeof createHandler>>;
   submitted: FixRequestItem[][];
@@ -16,7 +20,10 @@ function make(
   const handler = createHandler({
     token: TOKEN,
     page: "<!doctype html><title>page</title>",
-    submit: (items) => submitted.push(items),
+    submit: (items) => {
+      over.submit?.(items);
+      submitted.push(items);
+    },
     openEditor:
       over.openEditor ?? ((path, line) => {
         opened.push({ path, line });
@@ -241,5 +248,89 @@ describe("everything else", () => {
   it("is a 404, even with the right token", () => {
     expect(make().handle({ url: `/secrets?token=${TOKEN}` }).status).toBe(404);
     expect(make().handle({ method: "DELETE", url: `/?token=${TOKEN}` }).status).toBe(404);
+  });
+});
+
+describe("a request target the URL parser will not take", () => {
+  // Node's HTTP parser hands these through intact; the WHATWG URL parser refuses them. The
+  // parse runs before the token check, so no token is needed — and unguarded the throw landed
+  // in a callback nothing catches and killed the process. A person eight minutes into a
+  // review with fourteen boxes ticked lost all of it to anything else on the machine
+  // touching the port, including a browser tab on another origin.
+  it.each(["//%", "//[", "//]", "//a%2", "//%C0", "//:@/", "/\\"])("answers %s with a 400", (target) => {
+    const { handle } = make();
+
+    const response = handle({ url: target });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("does not take a malformed target as an answer to the review", () => {
+    const { handle, submitted } = make();
+
+    handle({ method: "POST", url: "//%", body: selection([]) });
+
+    expect(submitted).toEqual([]);
+  });
+});
+
+describe("a selection that cannot be saved", () => {
+  // The 200 used to be written before anything was on disk, so the page said "Sent to
+  // shipkit. You can close this tab." while the write was still to come — and when it failed,
+  // it failed after the person had closed the tab.
+  it("says so instead of claiming the selection was sent", () => {
+    const { handle } = make({
+      submit: () => {
+        throw new Error("Cannot write the review selection to /repo/.shipkit/fix-request.json: EACCES");
+      },
+    });
+
+    const response = handle({
+      method: "POST",
+      url: `/submit?token=${TOKEN}`,
+      body: selection([{ kind: "warning", id: "untracked-files", message: "m", note: "" }]),
+    });
+
+    expect(response.status).toBe(500);
+    expect(response.body).toContain("EACCES");
+  });
+
+  it("leaves the review answerable, so pressing send again can work", () => {
+    let failing = true;
+    const { handle, submitted } = make({
+      submit: () => {
+        if (failing) throw new Error("disk full");
+      },
+    });
+    const body = selection([{ kind: "warning", id: "untracked-files", message: "m", note: "" }]);
+
+    expect(handle({ method: "POST", url: `/submit?token=${TOKEN}`, body }).status).toBe(500);
+    failing = false;
+    const second = handle({ method: "POST", url: `/submit?token=${TOKEN}`, body });
+
+    expect(second.status).toBe(200);
+    expect(submitted).toHaveLength(1);
+  });
+});
+
+// The one test here that binds a real port. It has to: the bug this guards was not in the
+// handler at all, it was that an exception from the handler had no `catch` anywhere above it
+// and took the process down. Loopback, port 0, closed in `finally` — nothing leaves the
+// machine and nothing is left listening.
+describe("a handler that throws", () => {
+  it("costs one request, not the whole review", async () => {
+    const server = await listen(() => {
+      throw new Error("something nobody anticipated");
+    }, 0);
+    try {
+      const first = await fetch(`${server.origin}/?token=${TOKEN}`);
+      expect(first.status).toBe(500);
+      expect(await first.text()).toContain("something nobody anticipated");
+
+      // Still answering, which is the whole point: the process is alive.
+      expect((await fetch(`${server.origin}/?token=${TOKEN}`)).status).toBe(500);
+    } finally {
+      await server.close();
+    }
   });
 });

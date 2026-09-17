@@ -195,3 +195,29 @@ describe("readPushDiff", () => {
     expect(execFileSync("git", ["status", "--porcelain"], { cwd: repo, encoding: "utf8" })).toBe(before);
   });
 });
+
+describe("a change too big for the default buffer", () => {
+  // `execFileSync` gives up at one mebibyte by default and throws `ENOBUFS` — an error
+  // carrying no stderr at all, so the failure reached the person as `git ... failed:` with
+  // nothing after the colon and an exit code of 2. Every other read in this module produces
+  // small output; `readPushDiff` reads the whole patch, so it was the first to hit it.
+  //
+  // Measured before the cap was raised: 12,000 added lines came back, 16,000 threw. 24,000
+  // is comfortably past the old limit and still under a second to generate. It is also
+  // exactly the shape of change this feature exists for — the four hundred files an agent
+  // writes in one go — and it was the one change `shipkit review` could not open at all.
+  it("reads a patch several times larger than a mebibyte", () => {
+    const repo = scratch();
+    const lines = Array.from(
+      { length: 24_000 },
+      (_unused, i) => `  const value${i} = compute(${i}, "a string of roughly typical length");`,
+    );
+    writeFileSync(join(repo, "generated.ts"), `${lines.join("\n")}\n`, "utf8");
+
+    const files = byPath(repo);
+
+    const generated = files.get("generated.ts");
+    expect(generated?.status).toBe("added");
+    expect(generated?.patch.length).toBeGreaterThan(1_000_000);
+  });
+});

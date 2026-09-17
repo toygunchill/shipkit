@@ -13,8 +13,24 @@ import type { FixRequestItem } from "../review/fixrequest.js";
  */
 export type BriefFixRequest = {
   instruction: string;
-  /** When the person made the selection, so a stale one is visible as stale. */
+  /** When the person made the selection. */
   createdAt: string;
+  /**
+   * The branch and base the person was looking at when they ticked these.
+   *
+   * Carried because the file is per-checkout, not per-branch: a person reviews one branch,
+   * gets pulled onto another, and the selection is still lying there. A timestamp does not
+   * show that — only these two names do, read against `change.branch` and `target.branch`.
+   */
+  madeOn: { branch: string; base: string };
+  /**
+   * Present only when `madeOn` does not describe the change this brief is about.
+   *
+   * The selection is carried anyway rather than dropped. Silently ignoring it would throw
+   * away the one part of a brief a person actually chose, on a guess about what a branch
+   * rename meant; the note hands the agent the discrepancy and lets it decide.
+   */
+  note?: string;
   items: FixRequestItem[];
 };
 

@@ -25,6 +25,7 @@ import { validate } from "../validate/rules.js";
 import type { Finding } from "../validate/types.js";
 import { VcsError, type RepoState } from "../vcs/git.js";
 import type { AddedLine, PullRequestState } from "../vcs/types.js";
+import type { ArchiveOutcome } from "../review/fixrequest.js";
 import { ResponseError, type SubmitResponse } from "./response.js";
 
 export type Acknowledgement = "all" | string[];
@@ -164,7 +165,7 @@ export type SubmitDeps = {
    * once the push has landed — a submit that refuses must leave the selection where it is,
    * because the work it asks for has not been done yet.
    */
-  archiveFixRequest?: () => string | undefined;
+  archiveFixRequest?: () => ArchiveOutcome;
   readRepoRoot: () => string;
   readHeadSha: () => string;
   realpath: (path: string) => string;
@@ -617,9 +618,18 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
     //
     // Every refusal above returns before `commitAll`, so a submit that refuses leaves the
     // selection exactly where `shipkit review` put it.
-    const archived = deps.archiveFixRequest?.();
-    if (archived !== undefined) {
-      deps.err(`The review selection was acted on and moved to ${archived}.`);
+    const archived = deps.archiveFixRequest?.() ?? { kind: "none" as const };
+    if (archived.kind === "moved") {
+      deps.err(`The review selection was acted on and moved to ${archived.path}.`);
+    } else if (archived.kind === "failed") {
+      // Said out loud rather than swallowed. The push has landed, so this cannot fail the
+      // run — but the selection is still sitting in the repository, and the next `brief`
+      // will carry it again and ask the agent to redo work it has already done. A person
+      // who is told can delete the file; a person who is not told cannot even see the loop.
+      deps.err(
+        `The push landed, but the review selection could not be moved aside: ${archived.detail}. ` +
+          "Delete .shipkit/fix-request.json, or the next shipkit brief will ask for these fixes again.",
+      );
     }
 
     // `gh pr create` refuses outright when an open pull request already exists for this head

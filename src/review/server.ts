@@ -129,7 +129,18 @@ export function createHandler(deps: HandlerDeps): ReviewHandler {
 
     // A base is required by the URL parser and is never used: only the path and the query
     // of the request target matter, and the Host header is not to be trusted for either.
-    const url = new URL(request.url, "http://127.0.0.1");
+    //
+    // Guarded because Node's HTTP parser hands over request targets the WHATWG URL parser
+    // refuses — `//%`, `//[`, `//a%2`, a bare `/\` — and none of them needs a token, since
+    // the parse happens before the token check. Unguarded, the throw landed in the `end`
+    // callback in `listen`, which nothing catches, and the process died: anything at all on
+    // the machine could end a review a person was eight minutes and fourteen ticks into.
+    let url: URL;
+    try {
+      url = new URL(request.url, "http://127.0.0.1");
+    } catch {
+      return text(400, "Not a request this page makes.");
+    }
     if (!tokenMatches(url.searchParams.get("token"), deps.token)) {
       return text(403, "Wrong or missing token.");
     }
@@ -146,8 +157,17 @@ export function createHandler(deps: HandlerDeps): ReviewHandler {
       }
       const selection = parseSelection(request.body);
       if (selection === undefined) return text(400, "Not a selection.");
+      try {
+        // Before the 200, and before the door closes on a second attempt. `submit` is what
+        // writes the selection to disk, and a page that says "Sent to shipkit" while the
+        // write failed is the one lie this feature cannot tell: the person closes the tab
+        // believing their ten minutes are saved. A failure leaves the review answerable,
+        // so pressing the button again after fixing the disk works.
+        deps.submit(selection);
+      } catch (error) {
+        return text(500, error instanceof Error ? error.message : "The selection was not saved.");
+      }
       submitted = true;
-      deps.submit(selection);
       return { status: 200, contentType: "application/json", body: '{"ok":true}' };
     }
 
@@ -212,12 +232,25 @@ export function listen(handler: ReviewHandler, port: number): Promise<Listening>
     });
     request.on("end", () => {
       if (aborted) return;
-      const answer = handler({
-        method: request.method ?? "GET",
-        url: request.url ?? "/",
-        remoteAddress: request.socket.remoteAddress ?? undefined,
-        body: Buffer.concat(chunks).toString("utf8"),
-      });
+      // The second half of the guard above: the handler is the only thing running inside
+      // this callback, and an exception here has no `catch` anywhere above it — it ends the
+      // process. Every handler path that can fail reports its own status; this exists so
+      // that a path nobody anticipated costs one request rather than the whole review.
+      let answer: ReviewHttpResponse;
+      try {
+        answer = handler({
+          method: request.method ?? "GET",
+          url: request.url ?? "/",
+          remoteAddress: request.socket.remoteAddress ?? undefined,
+          body: Buffer.concat(chunks).toString("utf8"),
+        });
+      } catch (error) {
+        answer = {
+          status: 500,
+          contentType: "text/plain; charset=utf-8",
+          body: error instanceof Error ? error.message : "shipkit review could not answer.",
+        };
+      }
       response.writeHead(answer.status, {
         "content-type": answer.contentType,
         // The page loads nothing and talks to nowhere but its own origin. Saying so costs

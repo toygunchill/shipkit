@@ -14,6 +14,7 @@ import {
   ticketFromBranch,
 } from "./cli-support.js";
 import { ConfigError, loadConfig } from "./config/load.js";
+import type { ShipkitConfig } from "./config/schema.js";
 import { blockingLabelsFromWorkflow } from "./infer/forge.js";
 import { runInit, type InitSources, type MergedPullRequest } from "./init/run.js";
 import { fetchIssue, JiraError } from "./jira/client.js";
@@ -27,6 +28,9 @@ import {
   teamFrom,
 } from "./jira/techtask.js";
 import type { IssueFacts } from "./jira/types.js";
+import { applicable, observedPaths } from "./readiness/apply.js";
+import { loadReadiness } from "./readiness/load.js";
+import type { ReadinessRule } from "./readiness/types.js";
 import { jiraToken } from "./secrets/keychain.js";
 import { loadResponse, renderBody, ResponseError } from "./submit/response.js";
 import { runSubmit, type SubmitDeps } from "./submit/run.js";
@@ -35,6 +39,7 @@ import {
   currentBranch,
   readHeadSha,
   readPushChangedFiles,
+  readPushChangedPaths,
   readPushAddedLines,
   readPushDiffstat,
   readRepoRoot,
@@ -48,6 +53,18 @@ import { commitAll, createPullRequest, pushBranch } from "./vcs/mutate.js";
 
 const program = new Command();
 program.name("shipkit").version("0.1.0").exitOverride();
+
+/**
+ * This repository's readiness rules, or `undefined` when it configures none.
+ *
+ * The path is resolved against the realpath of the config that named it — see
+ * src/readiness/load.ts — and every failure from here is a `ConfigError`, which each
+ * command below already reports and exits 2 on. That is deliberate: a repository whose
+ * rules file is missing or malformed must stop, not quietly proceed with nothing asked.
+ */
+function readinessRules(configPath: string, config: ShipkitConfig): ReadinessRule[] | undefined {
+  return config.readiness === undefined ? undefined : loadReadiness(configPath, config.readiness);
+}
 
 program
   .command("check")
@@ -101,6 +118,10 @@ program
         issues = await Promise.all(keys.map((key) => fetchIssue(config.jira.baseUrl, key, token)));
       }
 
+      // No readiness here, and not by omission: `check` is given a title and a body file
+      // and nothing else. There is no response to read answers from, so there is nothing to
+      // enforce and no honest way to ask. Readiness lives in `brief` (which carries the
+      // questions) and `submit` (which requires the answers) — see src/submit/run.ts.
       const result = validate({ title: options.title, body, config, branch, issues });
       if (result.ok) {
         console.log("ok");
@@ -164,7 +185,24 @@ program
       // wrong with the change — see src/advice/observe.ts. Unguarded, a missing clean-filter
       // binary means no brief is printed at all, which is a gate in everything but name.
       const changed = observedChangedFiles(() => readPushChangedFiles(base));
-      const brief = assembleBrief({ repo, target: { branch: base, reason }, config, issue, changed });
+      const rules = readinessRules(options.config, config);
+      // Guarded exactly like the advice observation above, and for the same reason: the
+      // scratch-index read fails on repositories where nothing is wrong with the change, and
+      // an unguarded call here means no brief is printed at all. The difference is what a
+      // failure means. No changed files is no advice; no changed paths is *every* rule
+      // carried rather than none — over-asking degrades politely, silence does not.
+      const readiness =
+        rules === undefined
+          ? undefined
+          : applicable(rules, observedPaths(() => readPushChangedPaths(base)));
+      const brief = assembleBrief({
+        repo,
+        target: { branch: base, reason },
+        config,
+        issue,
+        changed,
+        ...(readiness === undefined ? {} : { readiness }),
+      });
       console.log(JSON.stringify(brief, null, 2));
       process.exitCode = 0;
     } catch (error) {
@@ -188,6 +226,7 @@ const realSubmitDeps: SubmitDeps = {
   readPushDiffstat: (base, exclude) => readPushDiffstat(base, exclude, cwd),
   readPushAddedLines: (base, exclude) => readPushAddedLines(base, exclude, cwd),
   readPushChangedFiles: (base, exclude) => readPushChangedFiles(base, exclude, cwd),
+  readPushChangedPaths: (base, exclude) => readPushChangedPaths(base, exclude, cwd),
   findPullRequest: (branch) => findPullRequest(branch, cwd),
   readUntrackedFiles,
   readRepoRoot,
@@ -220,7 +259,13 @@ program
           mode: "apply",
           acknowledge: options.yes ? "all" : [],
         },
-        realSubmitDeps,
+        {
+          ...realSubmitDeps,
+          // Built here and not in `realSubmitDeps`, which is module-level and cannot know
+          // --config. The config is read a second time to learn one optional key; that is
+          // cheaper than giving the pure core a path to resolve and a file to open.
+          loadReadiness: () => readinessRules(options.config, loadConfig(options.config)),
+        },
       );
       // cliRemedy (src/cli-support.ts) is this interface's own after-the-fact remedy,
       // kept out of the core and testable without a subprocess — the core's own message

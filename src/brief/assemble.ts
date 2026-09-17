@@ -2,6 +2,8 @@ import type { Advice } from "../advice/types.js";
 import { conversionAdvice, detectConversion, type ChangedFile } from "../advice/uikit.js";
 import type { ShipkitConfig } from "../config/schema.js";
 import { citeTarget } from "../jira/level.js";
+import { asks } from "../readiness/apply.js";
+import type { ReadinessRule } from "../readiness/types.js";
 import type { IssueFacts } from "../jira/types.js";
 import type { RepoState } from "../vcs/types.js";
 import type { Brief } from "./types.js";
@@ -22,9 +24,27 @@ export type AssembleInput = {
    * of the text.
    */
   changed?: ChangedFile[];
+  /**
+   * The readiness rules that apply to this change — already filtered by the caller, which
+   * is the only party that can read the changed paths. Omitted when the repository
+   * configures none, or when none apply.
+   *
+   * Filtering happens outside because it needs the filesystem and this function has no
+   * business touching one. What the caller must not do is pass an unfiltered list silently:
+   * `applicable` (src/readiness/apply.ts) holds the one exception, where the paths could
+   * not be read at all and every rule is carried on purpose.
+   */
+  readiness?: ReadinessRule[];
 };
 
-export function assembleBrief({ repo, target, config, issue, changed }: AssembleInput): Brief {
+export function assembleBrief({
+  repo,
+  target,
+  config,
+  issue,
+  changed,
+  readiness,
+}: AssembleInput): Brief {
   const conversion = changed === undefined ? undefined : detectConversion(changed);
   const advice: Advice[] =
     conversion === undefined
@@ -41,6 +61,9 @@ export function assembleBrief({ repo, target, config, issue, changed }: Assemble
     // Conditional rather than an always-present empty array: a brief with nothing to advise
     // should not carry a key inviting the agent to look for one.
     ...(advice.length > 0 ? { advice } : {}),
+    // Conditional for the same reason as `advice`: a brief with nothing to ask should not
+    // carry an empty key inviting the agent to answer something.
+    ...(readiness !== undefined && readiness.length > 0 ? { readiness: asks(readiness) } : {}),
     target,
     template: {
       sections: config.pr.sections.map((section) => ({

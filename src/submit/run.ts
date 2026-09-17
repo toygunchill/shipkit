@@ -19,6 +19,8 @@ import { JiraError } from "../jira/client.js";
 import type { IssueFacts } from "../jira/types.js";
 import { preflight } from "../preflight/checks.js";
 import type { Warning } from "../preflight/types.js";
+import { applicable, evaluate, observedPaths } from "../readiness/apply.js";
+import type { ReadinessRule } from "../readiness/types.js";
 import { validate } from "../validate/rules.js";
 import type { Finding } from "../validate/types.js";
 import { VcsError, type RepoState } from "../vcs/git.js";
@@ -51,6 +53,9 @@ export type SubmitResult = {
    * fingerprint, so a push carrying a conversion is neither blocked nor sent to a person
    * under `pr.approval: human`. tests/advice/types.test.ts holds the two types apart at
    * compile time; this field is where that promise is kept at run time.
+   *
+   * A readiness rule of severity `advise` whose answer was `fail` arrives here too, by the
+   * same route and with the same guarantees.
    */
   advice?: Advice[];
   /** The rendered body, once there is one. Absent when the run failed before rendering. */
@@ -119,6 +124,27 @@ export type SubmitDeps = {
    * has to see uncommitted work because `commitAll` stages after the gate.
    */
   readPushAddedLines: (base: string, exclude: string[]) => AddedLine[];
+  /**
+   * Every path this push will deliver, of every type, for filtering readiness rules by
+   * `appliesTo`. Same `exclude`, and the same uncommitted-work reading, as the three reads
+   * above — a filter that cannot see uncommitted work excuses every rule on exactly the
+   * run that has everything to check.
+   *
+   * Optional, like `loadReadiness` below, and for the same reason: a caller that supplies
+   * neither is a caller with no readiness rules, and every `.shipkit.yml` in existence
+   * before this feature is such a caller. A caller that supplies rules but not this read
+   * is not silently excused — `applicable` then carries every rule rather than none.
+   */
+  readPushChangedPaths?: (base: string, exclude: string[]) => string[];
+  /**
+   * This repository's readiness rules, or `undefined` when it configures none.
+   *
+   * A closure rather than a path, so the pure core never touches the filesystem: src/cli.ts
+   * and src/mcp/server.ts each build it from the config path they already hold, and a
+   * broken rules file throws `ConfigError` out of it — caught below and reported like any
+   * other bad input, never quietly turning enforcement off.
+   */
+  loadReadiness?: () => ReadinessRule[] | undefined;
   findPullRequest: (branch: string) => PullRequestState | null;
   readUntrackedFiles: () => string[];
   readRepoRoot: () => string;
@@ -252,11 +278,6 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
     const ticketKey =
       firstIssueKey(response.title, config.jira.keyPattern) ?? citedKeys[0];
 
-    const repo = deps.readRepoState(options.base);
-    // Reassigned below when a re-derivation runs and the situation is unchanged: the
-    // open-or-update decision at the end of this function must act on the pull request
-    // as it stands now, not as it stood when the person was first asked.
-    let existingPr = deps.findPullRequest(branch);
     // The response file is shipkit's own input, never part of the change, so it is excluded
     // from staging rather than merely reported — and dropped from the warning too, since a
     // warning that fires on every single run is one nobody reads. Everything else untracked
@@ -300,22 +321,84 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       !relativeToRoot.startsWith("..") &&
       !isAbsolute(relativeToRoot);
     const exclude = responseInRepo ? [relativeToRoot as string] : [];
+
+    // The team's readiness rules, carried to the agent by `brief` and answered in the
+    // response. Read here — as soon as `exclude` exists, and before the repository state or
+    // the forge is consulted — so that all three of its channels land where they belong:
+    // findings refuse alongside validation's, and for the same reason they refuse *here*,
+    // which is that a refusal about the form of an answer has no business waiting on
+    // `gh pr list` to succeed; warnings join pre-flight's below, before
+    // `shouldRequestApproval` and before the situation the fingerprint is taken over; and
+    // advice joins the advisory channel further down.
+    // In preview as well as apply: a rule the agent only learns about from `apply` arrives
+    // after the body it should have shaped is already written.
+    //
+    // `check` has no part in this on purpose. It validates a title and a body file and
+    // there is no response file for it to read an answer from, so it stays form-only — a
+    // reader looking for readiness enforcement there is looking in the one command that
+    // structurally cannot have it.
+    const rules = deps.loadReadiness?.();
+    let readinessWarnings: Warning[] = [];
+    let readinessAdvice: Advice[] = [];
+    if (rules !== undefined) {
+      const readPaths = deps.readPushChangedPaths;
+      // `undefined` means "could not be read", which `applicable` answers by carrying every
+      // rule. Distinct from `[]`, which means the push delivers nothing and legitimately
+      // excuses every `appliesTo` rule — see src/readiness/apply.ts.
+      const changedPaths =
+        readPaths === undefined
+          ? undefined
+          : observedPaths(() => readPaths(options.base, exclude));
+      const applying = applicable(rules, changedPaths);
+      // The whole rule set as the third argument, so an answer to a rule that exists but did
+      // not apply here costs nothing, while a misspelled id is still caught.
+      const readiness = evaluate(applying, response.readiness, rules);
+      readinessWarnings = readiness.warnings;
+      readinessAdvice = readiness.advice;
+
+      // Merged with validation's findings because the two refuse alike. In practice
+      // `result.findings` is empty by the time control reaches here — a failing `validate`
+      // returns above, before the repository is touched at all — and the merge is written
+      // out anyway so that the two channels cannot drift into being handled differently.
+      const findings = [...result.findings, ...readiness.findings];
+      if (findings.length > 0) {
+        for (const finding of findings) {
+          deps.err(`${finding.rule}: ${finding.message}`);
+        }
+        return { code: 1, findings, warnings: [], body, committed: false, pushed: false };
+      }
+    }
+
+
+    const repo = deps.readRepoState(options.base);
+    // Reassigned below when a re-derivation runs and the situation is unchanged: the
+    // open-or-update decision at the end of this function must act on the pull request
+    // as it stands now, not as it stood when the person was first asked.
+    let existingPr = deps.findPullRequest(branch);
     const untrackedFiles = deps
       .readUntrackedFiles()
       .filter((file) => !responseInRepo || file !== relativeToRoot);
-    warnings = preflight({
-      branch,
-      base: options.base,
-      commits: repo.commits,
-      ticketKey,
-      issueVerified,
-      pullRequest: existingPr,
-      untrackedFiles,
-      // Read through the advisory guard: a repository where the scratch-index read fails is
-      // one where shipkit still has to run, and no observation is the honest answer.
-      addedLines: observedAddedLines(() => deps.readPushAddedLines(options.base, exclude)),
-      config,
-    }).warnings;
+
+    warnings = [
+      ...preflight({
+        branch,
+        base: options.base,
+        commits: repo.commits,
+        ticketKey,
+        issueVerified,
+        pullRequest: existingPr,
+        untrackedFiles,
+        // Read through the advisory guard: a repository where the scratch-index read fails
+        // is one where shipkit still has to run, and no observation is the honest answer.
+        addedLines: observedAddedLines(() => deps.readPushAddedLines(options.base, exclude)),
+        config,
+      }).warnings,
+      // Appended rather than interleaved: `sortWarnings` puts them in canonical order for
+      // the fingerprint and the panel, so position here decides only the order they are
+      // printed in — pre-flight's findings about the push first, then the answers about the
+      // work.
+      ...readinessWarnings,
+    ];
 
     if (warnings.length > 0) {
       for (const warning of warnings) {
@@ -339,10 +422,12 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
     const conversion = detectConversion(
       observedChangedFiles(() => deps.readPushChangedFiles(options.base, exclude)),
     );
-    advice =
-      conversion === undefined
+    advice = [
+      ...(conversion === undefined
         ? []
-        : [conversionAdvice(conversion, { ticketKey, epic: config.techTask?.epic })];
+        : [conversionAdvice(conversion, { ticketKey, epic: config.techTask?.epic })]),
+      ...readinessAdvice,
+    ];
     // `err`, like the warnings above, because `out` is where the pull-request URL goes and
     // a caller piping stdout is reading that.
     for (const item of advice) deps.err(item.message);
@@ -426,21 +511,31 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
         const freshHead = deps.readHeadSha();
         const freshPr = deps.findPullRequest(branch);
         const freshRepo = deps.readRepoState(options.base);
-        const freshWarnings = preflight({
-          branch,
-          base: options.base,
-          commits: freshRepo.commits,
-          ticketKey,
-          issueVerified,
-          pullRequest: freshPr,
-          untrackedFiles: deps
-            .readUntrackedFiles()
-            .filter((file) => !responseInRepo || file !== relativeToRoot),
-          addedLines: observedAddedLines(() =>
-            deps.readPushAddedLines(options.base, exclude),
-          ),
-          config,
-        }).warnings;
+        const freshWarnings = [
+          ...preflight({
+            branch,
+            base: options.base,
+            commits: freshRepo.commits,
+            ticketKey,
+            issueVerified,
+            pullRequest: freshPr,
+            untrackedFiles: deps
+              .readUntrackedFiles()
+              .filter((file) => !responseInRepo || file !== relativeToRoot),
+            addedLines: observedAddedLines(() =>
+              deps.readPushAddedLines(options.base, exclude),
+            ),
+            config,
+          }).warnings,
+          // The same readiness warnings, not a second evaluation. Everything else here is
+          // deliberately re-read, because a situation that changed underneath an approval no
+          // longer satisfies it — but the readiness answers are fixed input from the
+          // response, and re-deriving which rules apply could surface a newly-applicable
+          // rule whose answer is missing. That is a finding, and a finding after a person
+          // has approved has nowhere to go: the run is past the point where it can refuse
+          // for form. A change to the tree still moves `diffstat` and is caught there.
+          ...readinessWarnings,
+        ];
 
         const freshSituation = situationOf({
           head: freshHead,

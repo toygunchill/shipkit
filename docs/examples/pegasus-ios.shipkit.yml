@@ -42,6 +42,12 @@ pr:
       hint: "Link at Story/Bug level, not the Development sub-task"
     - name: Analysis JIRA Issue
       required: false
+# The team's PR-readiness rules, measured from five weeks of their own review comments.
+# The path is sibling-relative and resolved against the **realpath** of this file, which is
+# what makes the deployment model work: a product repository carries `.shipkit.yml` as a
+# symbolic link into the conventions repository, and the rules are found next to the link's
+# target rather than looked for in the product repository, where they do not exist.
+readiness: ./example-app.readiness.yml
 branch:
   pattern: '^(feature|bugfix|livebug)/[a-z0-9]+/[0-9]+-[a-z0-9]+(-[a-z0-9]+)*$'
 jira:

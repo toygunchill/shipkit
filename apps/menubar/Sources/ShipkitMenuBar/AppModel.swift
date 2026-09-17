@@ -17,11 +17,33 @@ final class AppModel: ObservableObject {
     @Published private(set) var tokenError: String?
     @Published private(set) var listenerError: String?
 
+    /// The last answer a refresh produced, or `nil` before the first one has
+    /// finished. `nil` and `.undetermined` are drawn the same way — an em dash
+    /// — but they are not the same thing, and conflating them would mean the
+    /// panel could not tell "not asked yet" from "asked and could not find
+    /// out".
+    @Published private(set) var inbox: InboxOutcome?
+    /// True while a refresh is in flight. The previous answer stays on screen
+    /// dimmed rather than blanking: a number that disappears and comes back
+    /// every five minutes is harder to read than one that fades.
+    @Published private(set) var inboxRefreshing: Bool = false
+    private var inboxLastCompleted: Date?
+
     private let keychain = Keychain()
     private let journal = Journal()
     private let queue = ApprovalQueue()
+    private let pullRequests = PullRequestInbox.live()
     private var listener: Listener?
     private var reArmTask: Task<Void, Never>?
+    private var inboxTask: Task<Void, Never>?
+    private var inboxTimer: Task<Void, Never>?
+
+    /// How often the inbox re-asks while the panel is open. Long enough that
+    /// leaving the panel up is not a stream of `gh` processes, short enough
+    /// that a review request arriving while it is open is noticed without a
+    /// click. The refresh on appearance is what covers the common case; this
+    /// only covers a panel left open.
+    private static let inboxRefreshInterval: Duration = .seconds(300)
 
     /// How long the approve/deny buttons stay disabled right after a
     /// promotion swaps a new request into the panel. Defends against a
@@ -75,7 +97,11 @@ final class AppModel: ObservableObject {
                 await MainActor.run { self?.listenerError = "\(error)" }
             }
         }
-        refreshTokenStatus()
+        // NOT refreshTokenStatus() here: it reads the keychain synchronously,
+        // and under ad-hoc signing every rebuild makes that read block on a
+        // SecurityAgent prompt -- on the main thread, at launch, before the
+        // listener exists. The pane refreshes it on appear instead, where a
+        // person is looking at the dialog they are being asked to answer.
     }
 
     /// Puts the request on screen and suspends until a button is pressed. If
@@ -139,6 +165,57 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Called when the inbox becomes visible: refresh once, then keep a timer
+    /// running for as long as it stays visible. The timer is cancelled on
+    /// disappearance rather than left running, because every tick is two
+    /// processes spawned to answer a question nobody is looking at.
+    func inboxAppeared() {
+        refreshInbox()
+        inboxTimer?.cancel()
+        inboxTimer = Task { [weak self] in
+            while Task.isCancelled == false {
+                try? await Task.sleep(for: Self.inboxRefreshInterval)
+                guard Task.isCancelled == false else { return }
+                self?.refreshInbox()
+            }
+        }
+    }
+
+    func inboxDisappeared() {
+        inboxTimer?.cancel()
+        inboxTimer = nil
+    }
+
+    /// Asks `gh` again. A second call while one is already in flight is
+    /// ignored rather than queued: the manual refresh control and the timer
+    /// can land together, and two overlapping refreshes would race to publish
+    /// two answers to the same question.
+    func refreshInbox(ignoringInterval: Bool = false) {
+        guard inboxRefreshing == false else { return }
+        // Also spaced against the last *completed* refresh, not only against
+        // overlap: hopping inbox -> list -> inbox re-fires onAppear, and
+        // without this each hop is a fresh pair of gh spawns. Fifteen seconds
+        // is far under the five-minute cadence and far over a navigation.
+        // The manual refresh control passes `ignoringInterval` -- a person
+        // asking again explicitly is not a navigation echo.
+        if !ignoringInterval, let done = inboxLastCompleted, Date().timeIntervalSince(done) < 15 {
+            return
+        }
+        inboxRefreshing = true
+        let source = pullRequests
+        inboxTask = Task { [weak self] in
+            let outcome = await source.load()
+            guard Task.isCancelled == false else { return }
+            // Replaced wholesale, including when the answer is `undetermined`:
+            // keeping the previous numbers on a failed refresh would present
+            // stale counts as current ones, which is the one thing this inbox
+            // must never do.
+            self?.inbox = outcome
+            self?.inboxRefreshing = false
+            self?.inboxLastCompleted = Date()
+        }
+    }
+
     func saveToken() {
         guard tokenDraft.isEmpty == false else { return }
         do {
@@ -169,6 +246,21 @@ final class AppModel: ObservableObject {
     /// `body`: a view's body is a description of the current state, not a
     /// place to go read one.
     func refreshTokenStatus() {
-        tokenSaved = (try? keychain.read(account: "jira")) != nil
+        // The read happens here and nowhere else -- launch must never touch
+        // the keychain, because under ad-hoc signing every rebuild makes
+        // `SecItemCopyMatching` block on a SecurityAgent prompt. Here a person
+        // is looking at the pane the prompt belongs to. But it still cannot
+        // run on the main actor: the same prompt would freeze the whole app
+        // behind a dialog, which is the launch bug relocated, not fixed.
+        //
+        // (A review caught the previous version of this function setting
+        // `tokenSaved = false` unconditionally -- the pane always said
+        // "Not set" and the delete button became unreachable. The comment
+        // above had deferred to a function that no longer read anything.)
+        let keychain = self.keychain
+        Task.detached {
+            let saved = (try? keychain.read(account: "jira")) != nil
+            await MainActor.run { self.tokenSaved = saved }
+        }
     }
 }

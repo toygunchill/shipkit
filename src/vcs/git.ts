@@ -5,10 +5,10 @@ import { join } from "node:path";
 import type { ChangedFile } from "../advice/uikit.js";
 import { asVcsError, execRunner } from "./exec.js";
 import { stagingPathspec } from "./mutate.js";
-import { VcsError, type RepoState } from "./types.js";
+import { VcsError, type AddedLine, type RepoState } from "./types.js";
 
 export { VcsError };
-export type { RepoState };
+export type { AddedLine, RepoState };
 
 function git(args: string[], cwd: string): string {
   return execRunner("git", cwd)(args);
@@ -110,6 +110,60 @@ export function readPushDiffstat(
       cwd,
       index,
     ).trim();
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Every line this push adds, paired with the file it lands in.
+ *
+ * Staged into a scratch index for the reason `readPushDiffstat` records: the answer has to
+ * be about the change that lands, and `commitAll` stages after the gate, so a read against
+ * HEAD alone would miss the working tree entirely.
+ *
+ * `-U0` because context lines are noise here — the question is only what is new. The `+++`
+ * header names the file for the run of `+` lines beneath it; `/dev/null` appears there for
+ * a deletion, whose hunk contributes no added lines anyway. A bare `+++` line of the diff's
+ * own making is impossible: git escapes a literal one in content as part of the hunk body,
+ * which always carries the leading `+` marker this strips.
+ */
+export function readPushAddedLines(
+  base: string,
+  exclude: string[] = [],
+  cwd: string = process.cwd(),
+): AddedLine[] {
+  // `--end-of-options` for the reason the reads above record: only `base` is
+  // caller-controlled, and it must not be able to spell itself as an option.
+  const mergeBase = git(["merge-base", "--end-of-options", base, "HEAD"], cwd).trim();
+  const pathspec = stagingPathspec(exclude);
+  const scratch = mkdtempSync(join(tmpdir(), "shipkit-index-"));
+  const index = join(scratch, "index");
+  try {
+    gitWithIndex(["read-tree", "--end-of-options", mergeBase], cwd, index);
+    gitWithIndex(["add", "--all", ...pathspec], cwd, index);
+    const raw = gitWithIndex(
+      [
+        "diff", "--cached", "-U0", "--no-color", "--no-relative", "--no-renames",
+        "--end-of-options", mergeBase, ...pathspec,
+      ],
+      cwd,
+      index,
+    );
+
+    const lines: AddedLine[] = [];
+    let path = "";
+    for (const line of raw.split("\n")) {
+      if (line.startsWith("+++ ")) {
+        const target = line.slice(4);
+        path = target === "/dev/null" ? "" : target.replace(/^b\//, "");
+        continue;
+      }
+      if (line.startsWith("+") && path.length > 0) {
+        lines.push({ path, text: line.slice(1) });
+      }
+    }
+    return lines;
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

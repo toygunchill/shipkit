@@ -1,5 +1,5 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { observedChangedFiles } from "../advice/observe.js";
+import { observedAddedLines, observedChangedFiles } from "../advice/observe.js";
 import type { Advice } from "../advice/types.js";
 import { conversionAdvice, detectConversion, type ChangedFile } from "../advice/uikit.js";
 import { changedFields, fingerprint, sortWarnings, type Situation } from "../approval/fingerprint.js";
@@ -22,7 +22,7 @@ import type { Warning } from "../preflight/types.js";
 import { validate } from "../validate/rules.js";
 import type { Finding } from "../validate/types.js";
 import { VcsError, type RepoState } from "../vcs/git.js";
-import type { PullRequestState } from "../vcs/types.js";
+import type { AddedLine, PullRequestState } from "../vcs/types.js";
 import { ResponseError, type SubmitResponse } from "./response.js";
 
 export type Acknowledgement = "all" | string[];
@@ -113,6 +113,12 @@ export type SubmitDeps = {
    * gate.
    */
   readPushChangedFiles: (base: string, exclude: string[]) => ChangedFile[];
+  /**
+   * Every line the push will add, for the `comment-lines` check. Same `exclude`, and same
+   * reason, as the two reads above: the question is about the change that lands, and it
+   * has to see uncommitted work because `commitAll` stages after the gate.
+   */
+  readPushAddedLines: (base: string, exclude: string[]) => AddedLine[];
   findPullRequest: (branch: string) => PullRequestState | null;
   readUntrackedFiles: () => string[];
   readRepoRoot: () => string;
@@ -305,6 +311,9 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       issueVerified,
       pullRequest: existingPr,
       untrackedFiles,
+      // Read through the advisory guard: a repository where the scratch-index read fails is
+      // one where shipkit still has to run, and no observation is the honest answer.
+      addedLines: observedAddedLines(() => deps.readPushAddedLines(options.base, exclude)),
       config,
     }).warnings;
 
@@ -427,6 +436,9 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
           untrackedFiles: deps
             .readUntrackedFiles()
             .filter((file) => !responseInRepo || file !== relativeToRoot),
+          addedLines: observedAddedLines(() =>
+            deps.readPushAddedLines(options.base, exclude),
+          ),
           config,
         }).warnings;
 

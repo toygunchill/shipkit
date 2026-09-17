@@ -47,11 +47,14 @@ level — a Development sub-task where the parent Story belongs.
 
 ## What it warns about
 
-Six pre-flight checks, each for a failure that actually happened while the tool
-was being designed: a push that will dismiss existing approvals; a branch
+Seven pre-flight checks, each for a failure that actually happened while the
+tool was being designed: a push that will dismiss existing approvals; a branch
 carrying another ticket's commits; a base that disagrees with the open pull
 request; a label that blocks the merge gate; a cited issue that could not be
-verified; and untracked files that staging would sweep into the commit.
+verified; untracked files that staging would sweep into the commit; and
+the comment lines the push adds, which are asked about rather than
+forbidden. Only the licence header is exempt: a plain comment counts when it is
+indented, and a `///` counts wherever it sits.
 
 Pre-flight reports. The human decides.
 

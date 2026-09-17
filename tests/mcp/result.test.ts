@@ -156,6 +156,7 @@ describe("applyContent", () => {
       }),
       readPushDiffstat: () => " .env.local | 1 +\n 1 file changed, 1 insertion(+)",
       readPushChangedFiles: () => [],
+      readPushAddedLines: () => [],
       findPullRequest: () => null,
       readUntrackedFiles: () => [".env.local"],
       readRepoRoot: () => "/repo",

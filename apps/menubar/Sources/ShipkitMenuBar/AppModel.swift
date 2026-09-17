@@ -96,7 +96,11 @@ final class AppModel: ObservableObject {
                 await MainActor.run { self?.listenerError = "\(error)" }
             }
         }
-        refreshTokenStatus()
+        // NOT refreshTokenStatus() here: it reads the keychain synchronously,
+        // and under ad-hoc signing every rebuild makes that read block on a
+        // SecurityAgent prompt -- on the main thread, at launch, before the
+        // listener exists. The pane refreshes it on appear instead, where a
+        // person is looking at the dialog they are being asked to answer.
     }
 
     /// Puts the request on screen and suspends until a button is pressed. If
@@ -231,6 +235,14 @@ final class AppModel: ObservableObject {
     /// `body`: a view's body is a description of the current state, not a
     /// place to go read one.
     func refreshTokenStatus() {
-        tokenSaved = (try? keychain.read(account: "jira")) != nil
+        // Deliberately NOT read here. `SecItemCopyMatching` blocks on a
+        // SecurityAgent prompt whenever the binary's signature no longer
+        // matches the item's ACL -- which is every rebuild, under ad-hoc
+        // signing -- and this runs on the main thread at launch. Measured
+        // with `sample`: the whole app, listener included, sat inside
+        // Keychain.read under AppModel.start while a hidden dialog waited.
+        // `tokenSaved` is display-only and the settings pane refreshes it
+        // on appear, where a prompt has a person in front of it.
+        tokenSaved = false
     }
 }

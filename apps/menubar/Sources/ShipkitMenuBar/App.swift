@@ -3,7 +3,21 @@ import ShipkitKit
 
 @main
 struct ShipkitMenuBarApp: App {
-    @StateObject private var model = AppModel()
+    @StateObject private var model: AppModel
+
+    /// The model is built here, eagerly, and only handed to `@StateObject` —
+    /// never created by its lazy default. `AppModel.init` is what starts the
+    /// socket listener, and the default's autoclosure runs whenever SwiftUI
+    /// first *evaluates a view that reads the model*. With the old drawn-view
+    /// label that happened at launch; the rasterised `Image` label is lazier,
+    /// and the listener silently did not exist until the first click on the
+    /// icon — every push before that click was refused with `no-surface`.
+    /// Measured both ways with `lsof` and the real Node client, no clicks
+    /// anywhere: lazy default → zero sockets at 25s; this → bound at launch.
+    init() {
+        let started = AppModel()
+        _model = StateObject(wrappedValue: started)
+    }
 
     var body: some Scene {
         MenuBarExtra {

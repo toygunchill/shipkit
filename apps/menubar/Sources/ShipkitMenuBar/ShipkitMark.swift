@@ -85,3 +85,29 @@ struct ShipkitMark: View {
     }
     .padding(32)
 }
+
+extension ShipkitMark {
+    /// The mark rasterised for the menu bar, because drawing it live there does
+    /// not work: `MenuBarExtra` renders only `Text` and `Image` labels reliably,
+    /// and a composed `Path` view comes up as an empty — but still clickable —
+    /// stretch of menu bar. That was this project's one claim no human had
+    /// verified, and it was false: the socket answered while the icon never drew.
+    ///
+    /// `isTemplate` is what makes the raster behave like the drawing meant to:
+    /// the system tints the alpha mask for light and dark menu bars and dims it
+    /// when the item is disabled, so the hue used to draw is irrelevant.
+    ///
+    /// Rendered at 2× and sized back down so Retina bars get real pixels.
+    @MainActor
+    static func statusImage(isPending: Bool) -> NSImage {
+        let side: CGFloat = 18
+        let renderer = ImageRenderer(
+            content: ShipkitMark(isPending: isPending).frame(width: side, height: side),
+        )
+        renderer.scale = 2
+        let image = renderer.nsImage ?? NSImage(size: NSSize(width: side, height: side))
+        image.size = NSSize(width: side, height: side)
+        image.isTemplate = true
+        return image
+    }
+}

@@ -20,8 +20,11 @@ struct ShipkitMenuBarApp: App {
             // The silhouette carries the state: a menu-bar icon is tinted by the
             // system and cannot signal with colour, and at 16pt a small addition
             // is not a state anyone notices.
-            ShipkitMark(isPending: model.pending != nil)
-                .frame(width: 18, height: 18)
+            //
+            // Rasterised, not drawn live: `MenuBarExtra` reliably renders only
+            // `Text` and `Image` labels, and the composed-`Path` view this used
+            // to be came up blank — see `ShipkitMark.statusImage`.
+            Image(nsImage: ShipkitMark.statusImage(isPending: model.pending != nil))
         }
         .menuBarExtraStyle(.window)
     }

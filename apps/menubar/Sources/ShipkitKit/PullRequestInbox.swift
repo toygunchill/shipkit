@@ -491,10 +491,17 @@ public func newsOnMyPullRequest(
         switch state {
         case "APPROVED": approvals += 1
         case "CHANGES_REQUESTED": changesRequested += 1
-        // `COMMENTED`, and `DISMISSED` too: a dismissal is somebody acting on
-        // my pull request after my last touch, which is news to me even
-        // though it is not news to a reviewer of someone else's.
-        default: comment += 1
+        // `DISMISSED` counts too: a dismissal is somebody acting on my pull
+        // request after my last touch, which is news to me even though it is
+        // not news to a reviewer of someone else's.
+        case "COMMENTED", "DISMISSED": comment += 1
+        // A whitelist, exactly as bucket 2's filter is, and for the same
+        // reason: a state string this code does not know -- a GHE-version
+        // variant, a future enum member -- is not affirmative evidence of
+        // anything, and only affirmative evidence counts as news. A review
+        // found the previous `default: comment += 1` quietly counting
+        // "SOME_FUTURE_STATE" as a comment.
+        default: continue
         }
     }
 

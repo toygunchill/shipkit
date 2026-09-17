@@ -764,3 +764,46 @@ private actor RunSpy {
     // found" has to be an answer the panel can show rather than a crash.
     #expect(GhCommand.resolvePath { _ in false } == nil)
 }
+
+@Test func aReviewStateThisCodeDoesNotKnowIsNotNews() {
+    // The whitelist, pinned. A review found the previous `default:` branch
+    // counting any unknown state string — a GHE-version variant, a future
+    // enum member — as a comment on my own pull request. An unknown state is
+    // a non-null field, but it is not affirmative evidence of anything, and
+    // only affirmative evidence counts as news.
+    let news = newsOnMyPullRequest(
+        myLogin: "me",
+        createdAt: at("2026-09-10T09:00:00Z"),
+        latestCommitAt: myAnchor,
+        reviews: [
+            ReviewEvent(
+                authorLogin: "other",
+                state: "SOME_FUTURE_STATE",
+                submittedAt: at("2026-09-15T09:00:00Z"),
+                commitOid: nil
+            ),
+        ],
+        comments: []
+    )
+    #expect(news == .none)
+}
+
+@Test func aDismissalOnMyOwnPullRequestStillCountsAsAComment() {
+    // The deliberate half of the old `default:` branch, kept by name now
+    // that the accidental half is gone.
+    let news = newsOnMyPullRequest(
+        myLogin: "me",
+        createdAt: at("2026-09-10T09:00:00Z"),
+        latestCommitAt: myAnchor,
+        reviews: [
+            ReviewEvent(
+                authorLogin: "other",
+                state: "DISMISSED",
+                submittedAt: at("2026-09-15T09:00:00Z"),
+                commitOid: nil
+            ),
+        ],
+        comments: []
+    )
+    #expect(news.comments == 1)
+}

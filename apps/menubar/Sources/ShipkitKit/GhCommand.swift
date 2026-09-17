@@ -161,12 +161,25 @@ public struct GhCommand: Sendable {
 
         if exited.wait(timeout: .now() + timeoutSeconds) == .timedOut {
             process.terminate()
-            // SIGTERM, then a short grace period, then give up waiting on it.
-            // The readers end when the process's ends of the pipes close; if
-            // `gh` ignores SIGTERM this returns anyway rather than holding the
-            // refresh open forever.
-            _ = exited.wait(timeout: .now() + 2)
+            // SIGTERM, a short grace, then SIGKILL. Without the escalation a
+            // child that ignores SIGTERM kept both pipe write ends open, the
+            // two reader blocks above never returned, and every timed-out
+            // refresh leaked two global-queue threads and one orphan process
+            // -- measured at +2 threads per timeout, none ever reclaimed, on
+            // the same pool the approval listener's recv/send hop to. A
+            // long-lived menu-bar app with a five-minute timer would starve
+            // its own reason for existing.
+            if exited.wait(timeout: .now() + 2) == .timedOut {
+                kill(process.processIdentifier, SIGKILL)
+                _ = exited.wait(timeout: .now() + 2)
+            }
+            // Belt to the braces: closing our read ends unblocks the readers
+            // even if something still holds the write side open.
+            try? output.fileHandleForReading.close()
+            try? errorOutput.fileHandleForReading.close()
             _ = readers.wait(timeout: .now() + 2)
+            // The nominal figure, though the walk to get here can take up to
+            // four seconds longer; the caller shows an em dash either way.
             return .failure(.timedOut(seconds: timeoutSeconds))
         }
         _ = readers.wait(timeout: .now() + 5)

@@ -27,6 +27,7 @@ final class AppModel: ObservableObject {
     /// dimmed rather than blanking: a number that disappears and comes back
     /// every five minutes is harder to read than one that fades.
     @Published private(set) var inboxRefreshing: Bool = false
+    private var inboxLastCompleted: Date?
 
     private let keychain = Keychain()
     private let journal = Journal()
@@ -189,8 +190,17 @@ final class AppModel: ObservableObject {
     /// ignored rather than queued: the manual refresh control and the timer
     /// can land together, and two overlapping refreshes would race to publish
     /// two answers to the same question.
-    func refreshInbox() {
+    func refreshInbox(ignoringInterval: Bool = false) {
         guard inboxRefreshing == false else { return }
+        // Also spaced against the last *completed* refresh, not only against
+        // overlap: hopping inbox -> list -> inbox re-fires onAppear, and
+        // without this each hop is a fresh pair of gh spawns. Fifteen seconds
+        // is far under the five-minute cadence and far over a navigation.
+        // The manual refresh control passes `ignoringInterval` -- a person
+        // asking again explicitly is not a navigation echo.
+        if !ignoringInterval, let done = inboxLastCompleted, Date().timeIntervalSince(done) < 15 {
+            return
+        }
         inboxRefreshing = true
         let source = pullRequests
         inboxTask = Task { [weak self] in
@@ -202,6 +212,7 @@ final class AppModel: ObservableObject {
             // must never do.
             self?.inbox = outcome
             self?.inboxRefreshing = false
+            self?.inboxLastCompleted = Date()
         }
     }
 
@@ -235,14 +246,21 @@ final class AppModel: ObservableObject {
     /// `body`: a view's body is a description of the current state, not a
     /// place to go read one.
     func refreshTokenStatus() {
-        // Deliberately NOT read here. `SecItemCopyMatching` blocks on a
-        // SecurityAgent prompt whenever the binary's signature no longer
-        // matches the item's ACL -- which is every rebuild, under ad-hoc
-        // signing -- and this runs on the main thread at launch. Measured
-        // with `sample`: the whole app, listener included, sat inside
-        // Keychain.read under AppModel.start while a hidden dialog waited.
-        // `tokenSaved` is display-only and the settings pane refreshes it
-        // on appear, where a prompt has a person in front of it.
-        tokenSaved = false
+        // The read happens here and nowhere else -- launch must never touch
+        // the keychain, because under ad-hoc signing every rebuild makes
+        // `SecItemCopyMatching` block on a SecurityAgent prompt. Here a person
+        // is looking at the pane the prompt belongs to. But it still cannot
+        // run on the main actor: the same prompt would freeze the whole app
+        // behind a dialog, which is the launch bug relocated, not fixed.
+        //
+        // (A review caught the previous version of this function setting
+        // `tokenSaved = false` unconditionally -- the pane always said
+        // "Not set" and the delete button became unreachable. The comment
+        // above had deferred to a function that no longer read anything.)
+        let keychain = self.keychain
+        Task.detached {
+            let saved = (try? keychain.read(account: "jira")) != nil
+            await MainActor.run { self.tokenSaved = saved }
+        }
     }
 }

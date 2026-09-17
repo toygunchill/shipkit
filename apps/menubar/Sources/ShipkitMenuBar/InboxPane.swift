@@ -30,7 +30,16 @@ struct InboxPane: View {
         Group {
             switch route {
             case .inbox:
+                // The lifecycle hooks sit on this branch, not on the Group:
+                // on the container they straddle a _ConditionalContent, where
+                // whether a route flip re-fires them is not behaviour SwiftUI
+                // promises -- one reading spawned a gh pair per list visit,
+                // the other left the timer ticking under the token pane. On
+                // the branch, appearing means exactly "the inbox is what is
+                // on screen".
                 inbox
+                    .onAppear { model.inboxAppeared() }
+                    .onDisappear { model.inboxDisappeared() }
             case .list(let bucket):
                 // My own pull requests list differently from the other two:
                 // all of them, not only the ones with news, each with what
@@ -47,8 +56,6 @@ struct InboxPane: View {
                 SettingsPane(model: model) { route = .inbox }
             }
         }
-        .onAppear { model.inboxAppeared() }
-        .onDisappear { model.inboxDisappeared() }
     }
 
     private var inbox: some View {
@@ -61,7 +68,7 @@ struct InboxPane: View {
                         .controlSize(.small)
                 } else {
                     Button {
-                        model.refreshInbox()
+                        model.refreshInbox(ignoringInterval: true)
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }

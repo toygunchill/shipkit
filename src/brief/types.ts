@@ -1,6 +1,22 @@
 import type { Advice } from "../advice/types.js";
 import type { ShipkitConfig } from "../config/schema.js";
 import type { ReadinessAsk } from "../readiness/types.js";
+import type { FixRequestItem } from "../review/fixrequest.js";
+
+/**
+ * What a person ticked in `shipkit review`, on its way to the agent.
+ *
+ * `instruction` is carried as text rather than left for the agent to infer, because the
+ * framing is the whole point of the feature: everything else in a brief is shipkit's
+ * opinion, and this is not. An agent that reads these as one more automated suggestion will
+ * weigh them like one.
+ */
+export type BriefFixRequest = {
+  instruction: string;
+  /** When the person made the selection, so a stale one is visible as stale. */
+  createdAt: string;
+  items: FixRequestItem[];
+};
 
 export type BriefSection = {
   name: string;
@@ -10,6 +26,16 @@ export type BriefSection = {
 };
 
 export type Brief = {
+  /**
+   * First in the type and first in the JSON, so the agent meets it before anything else.
+   *
+   * Absent when nobody has reviewed this change — which is most briefs. Present means a
+   * person looked at the diff and the findings and chose these, and they come before the
+   * change, the template and the rules because they outrank all three: the rest of the brief
+   * says what a good pull request looks like here, and this says what is wrong with this one
+   * according to someone who read it.
+   */
+  fixRequest?: BriefFixRequest;
   change: { branch: string; files: string[]; diffstat: string; commits: string[] };
   /**
    * What shipkit noticed and will not insist on. Absent when there was nothing to say.

@@ -30,6 +30,7 @@ rather than repairs — a silent repair hides that the rules were ignored.
 ```
 shipkit check    Validate a title and body against .shipkit.yml. No side effects.
 shipkit brief    Emit the JSON brief an agent fills in.
+shipkit review   Show the change and the findings on a local page, and take one answer.
 shipkit submit   Validate, warn, then commit, push and open the pull request.
 shipkit mcp      Serve the same three as MCP tools over stdio.
 ```
@@ -37,6 +38,27 @@ shipkit mcp      Serve the same three as MCP tools over stdio.
 `check` is the one to run in CI. Instructions are advisory and an agent can
 ignore them; CI cannot be ignored, and it is the layer that moves the number
 above.
+
+## The way back
+
+Everything above is shipkit talking. `shipkit review` is the way back.
+
+It computes exactly what `submit` would compute — the same base, the same
+uncommitted-work reads, the same pre-flight, the same readiness evaluation —
+and pushes nothing. It serves one page on loopback, behind a single-use token,
+showing the diff (including the work that is not committed yet, because that is
+what the push will carry) and every finding, warning and piece of advice as a
+card with a checkbox and a note field. It waits for one answer, writes it to
+`.shipkit/fix-request.json`, and exits.
+
+The next `shipkit brief` carries that file first, before the change and before
+the rules, saying in so many words that a person chose it. A successful
+`submit` moves it aside with a timestamp so a stale selection cannot haunt the
+next run; a `submit` that refuses leaves it exactly where it was. The file is
+excluded from staging everywhere the response file is, so it can never reach a
+commit.
+
+shipkit speaks, the human chooses, the agent fixes.
 
 ## What it refuses
 

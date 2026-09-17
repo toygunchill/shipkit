@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFile, execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Command, CommanderError } from "commander";
@@ -32,6 +33,16 @@ import { applicable, observedPaths } from "./readiness/apply.js";
 import { loadReadiness } from "./readiness/load.js";
 import type { ReadinessRule } from "./readiness/types.js";
 import { jiraToken } from "./secrets/keychain.js";
+import {
+  archiveFixRequest,
+  fixRequestExclusions,
+  readFixRequest,
+  writeFixRequest,
+  FixRequestError,
+  type FixRequest,
+} from "./review/fixrequest.js";
+import { runReview, type ReviewDeps } from "./review/run.js";
+import { listen } from "./review/server.js";
 import { loadResponse, renderBody, ResponseError } from "./submit/response.js";
 import { runSubmit, type SubmitDeps } from "./submit/run.js";
 import { validate } from "./validate/rules.js";
@@ -41,6 +52,7 @@ import {
   readPushChangedFiles,
   readPushChangedPaths,
   readPushAddedLines,
+  readPushDiff,
   readPushDiffstat,
   readRepoRoot,
   readRepoState,
@@ -195,6 +207,12 @@ program
         rules === undefined
           ? undefined
           : applicable(rules, observedPaths(() => readPushChangedPaths(base)));
+      // What a person chose in `shipkit review`, if anyone has. Read here, from the
+      // repository root rather than from cwd, so a brief asked for from a subdirectory
+      // still finds it. A file that exists but cannot be parsed throws `FixRequestError`
+      // and stops the command — see src/review/fixrequest.ts for why silence is the one
+      // failure this must not have.
+      const fixRequest = readFixRequest(readRepoRoot());
       const brief = assembleBrief({
         repo,
         target: { branch: base, reason },
@@ -202,11 +220,17 @@ program
         issue,
         changed,
         ...(readiness === undefined ? {} : { readiness }),
+        ...(fixRequest === undefined ? {} : { fixRequest }),
       });
       console.log(JSON.stringify(brief, null, 2));
       process.exitCode = 0;
     } catch (error) {
-      if (error instanceof ConfigError || error instanceof VcsError || error instanceof JiraError) {
+      if (
+        error instanceof ConfigError ||
+        error instanceof VcsError ||
+        error instanceof JiraError ||
+        error instanceof FixRequestError
+      ) {
         console.error(error.message);
         process.exitCode = 2;
         return;
@@ -229,6 +253,10 @@ const realSubmitDeps: SubmitDeps = {
   readPushChangedPaths: (base, exclude) => readPushChangedPaths(base, exclude, cwd),
   findPullRequest: (branch) => findPullRequest(branch, cwd),
   readUntrackedFiles,
+  // Read from the repository root, not from cwd: the exclusion is a root-relative pathspec
+  // and `shipkit submit` may well be run from a subdirectory.
+  fixRequestExclusions: () => fixRequestExclusions(readRepoRoot(cwd)),
+  archiveFixRequest: () => archiveFixRequest(readRepoRoot(cwd), new Date()),
   readRepoRoot,
   readHeadSha: () => readHeadSha(cwd),
   realpath: (path: string) => realpathSync(path),
@@ -278,6 +306,143 @@ program
       process.exitCode = result.code;
     } catch (error) {
       if (error instanceof ResponseError) {
+        console.error(error.message);
+        process.exitCode = 2;
+        return;
+      }
+      throw error;
+    }
+  });
+
+/**
+ * The real review dependencies.
+ *
+ * Every read is the same one `submit` uses, through the same function, which is what makes
+ * the page honest. The three that are not shared are the three `submit` has no use for: the
+ * patch, the socket, and the two ways of getting a person's attention.
+ */
+function realReviewDeps(configPath: string, notes: string[]): ReviewDeps {
+  return {
+    loadConfig,
+    loadResponse,
+    renderBody,
+    currentBranch,
+    resolveIssue,
+    loadReadiness: () => readinessRules(configPath, loadConfig(configPath)),
+    readRepoState: (base) => readRepoState(base, cwd),
+    readPushDiffstat: (base, exclude) => readPushDiffstat(base, exclude, cwd),
+    readPushAddedLines: (base, exclude) => readPushAddedLines(base, exclude, cwd),
+    readPushChangedFiles: (base, exclude) => readPushChangedFiles(base, exclude, cwd),
+    readPushChangedPaths: (base, exclude) => readPushChangedPaths(base, exclude, cwd),
+    readPushDiff: (base, exclude) => readPushDiff(base, exclude, cwd),
+    readUntrackedFiles: () => readUntrackedFiles(cwd),
+    readRepoRoot: () => readRepoRoot(cwd),
+    realpath: (path: string) => realpathSync(path),
+    // `submit` lets a `gh` failure become exit 2, and it is right to: it is about to push,
+    // and a forge it cannot reach is a forge it cannot open a pull request against. `review`
+    // pushes nothing, so the same failure is only three pre-flight checks it cannot run —
+    // approvals-dismissed, base-mismatch and blocking-label, all of which are about a pull
+    // request that may not exist. Refusing to show a person their own diff over that would
+    // make the command useless in exactly the repository it is easiest to try it in.
+    // The reader is told, on the page, rather than left to wonder.
+    findPullRequest: (branch) => {
+      try {
+        return findPullRequest(branch, cwd);
+      } catch (error) {
+        notes.push(
+          "The forge could not be consulted, so the pre-flight checks about an existing " +
+            `pull request did not run (${error instanceof Error ? error.message : String(error)}).`,
+        );
+        return null;
+      }
+    },
+    fixRequestExclusions: () => fixRequestExclusions(readRepoRoot(cwd)),
+    writeFixRequest: (request: FixRequest) => writeFixRequest(readRepoRoot(cwd), request),
+    notes: () => notes,
+    listen,
+    // `open` is what macOS uses to hand a URL to the default browser. Detached and ignored:
+    // the command's job is to wait for the page, not for the browser process.
+    openBrowser: (url: string) => {
+      execFile("open", [url], () => undefined);
+    },
+    // Measured before it was written, because a link the page cannot honour is worse than no
+    // link: `xed` is at /usr/bin/xed and its man page documents `-l, --line <number>`; no
+    // `x-source`, `vscode`, `txmt`, `mvim` or `idea` URL scheme is registered on this
+    // machine (only `x-source-tag`, which is Xcode's documentation anchor scheme and does
+    // not open files). So the page gets a button that comes back here, and the equivalent
+    // `xed --line N path` printed beside it for anyone whose editor is not Xcode.
+    //
+    // `--` and a root-relative path resolved against the repository root: the path can only
+    // ever be one the diff named (see src/review/server.ts), and this makes that explicit at
+    // the point the process is actually started.
+    openEditor: (path: string, line: number) => {
+      execFileSync("xed", ["--line", String(line), "--", join(readRepoRoot(cwd), path)], {
+        stdio: "ignore",
+      });
+    },
+    now: () => new Date(),
+    wait: (ms: number) =>
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, ms).unref();
+      }),
+    out: (line: string) => console.log(line),
+    err: (line: string) => console.error(line),
+  };
+}
+
+program
+  .command("review")
+  .description("Show the change and what shipkit found, and take a person's answer. Pushes nothing.")
+  .option("--config <path>", "path to .shipkit.yml", ".shipkit.yml")
+  .option("--base <branch>", "target branch for the pull request")
+  .option("--input <path>", "the agent's answer, if one has been drafted")
+  .option("--port <n>", "port to serve on; the default asks the kernel for a free one")
+  .option("--no-open", "print the URL instead of opening a browser")
+  .action(async (options: { config: string; base?: string; input?: string; port?: string; open: boolean }) => {
+    let port = 0;
+    if (options.port !== undefined) {
+      const parsed = Number(options.port);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+        console.error(`Invalid --port "${options.port}": expected a port number between 1 and 65535`);
+        process.exitCode = 2;
+        return;
+      }
+      port = parsed;
+    }
+
+    if (options.base !== undefined && !isValidBase(options.base)) {
+      console.error(
+        `Invalid --base "${options.base}": expected a branch or ref name, not an option`,
+      );
+      process.exitCode = 2;
+      return;
+    }
+
+    try {
+      // The same resolution `brief` does, and for the same reason: release timing decides the
+      // base and the repository does not record it, so the default is the repository's own
+      // default branch and anything else has to be said out loud.
+      const base = options.base ?? baseCandidates(cwd)[0];
+      if (base === undefined) {
+        console.error("Could not work out a base branch. Pass one with --base.");
+        process.exitCode = 2;
+        return;
+      }
+
+      const notes: string[] = [];
+      const result = await runReview(
+        {
+          base,
+          config: options.config,
+          responsePath: options.input,
+          port,
+          open: options.open,
+        },
+        realReviewDeps(options.config, notes),
+      );
+      process.exitCode = result.code;
+    } catch (error) {
+      if (error instanceof ConfigError || error instanceof VcsError || error instanceof JiraError) {
         console.error(error.message);
         process.exitCode = 2;
         return;

@@ -349,6 +349,191 @@ export function readPushChangedPaths(
   }
 }
 
+/** One file of the push, with the patch a person reads. */
+export type PushFileDiff = {
+  path: string;
+  status: ChangedFile["status"];
+  /**
+   * The unified diff git printed for this file, hunk headers and all, or the empty string
+   * when git printed no hunks — a binary file, or a mode change with no content change.
+   * Rendered verbatim; the page escapes it rather than re-parsing it.
+   */
+  patch: string;
+  /**
+   * The first line this change actually touches, numbered on the *new* side, or 1 when
+   * there is no hunk at all (a binary file). It is the only line number in the whole
+   * feature that is derived from the diff rather than invented — findings are not
+   * line-anchored, and none is claimed for them.
+   *
+   * Not the hunk header's own `+c`, which was the first attempt and is wrong: measured, a
+   * change to the last line of a four-line file produces `@@ -1,4 +1,4 @@`, because the
+   * header covers three lines of context first. Opening the editor there puts the cursor
+   * three lines above the change in the small case and, on a long file, at whichever line
+   * happens to be three above it — close enough to look right and wrong every time.
+   */
+  line: number;
+};
+
+/**
+ * The push as a patch, file by file.
+ *
+ * The same scratch-index recipe as `readPushDiffstat`, for the third time and for the third
+ * reason: a review that showed only committed work would be reviewing the wrong change,
+ * because `commitAll` runs `git add --all` after the gate and an agent's whole change is
+ * typically uncommitted when a person is asked to look at it. `readPushDiffstat` records the
+ * measurement; this one just reuses it.
+ *
+ * Two reads against the one index rather than one. `--name-status -z` is the authoritative
+ * list of paths and statuses — `-z` because `core.quotePath` mangles a non-ASCII path, and
+ * this repository's own Jira speaks Turkish. The patch read then supplies the text, matched
+ * back by path. Deriving the path list from the patch alone was rejected: a binary file
+ * produces no `+++` line at all, so it would silently vanish from a review of a change that
+ * carries it.
+ *
+ * `-c core.quotePath=false` on the patch read for the same reason `-z` is on the other, and
+ * because there is no `-z` for patch output: without it a path with a non-ASCII byte comes
+ * back C-quoted and matches nothing in the `--name-status` list.
+ *
+ * `--no-renames` so a moved file reads as a deletion and an addition, which is what the
+ * other three push reads already do and what keeps the two lists in step.
+ */
+export function readPushDiff(
+  base: string,
+  exclude: string[] = [],
+  cwd: string = process.cwd(),
+): PushFileDiff[] {
+  // `--end-of-options` for the reason the reads above record: only `base` is
+  // caller-controlled, and it must not be able to spell itself as an option.
+  const mergeBase = git(["merge-base", "--end-of-options", base, "HEAD"], cwd).trim();
+  const pathspec = stagingPathspec(exclude);
+  const scratch = mkdtempSync(join(tmpdir(), "shipkit-index-"));
+  const index = join(scratch, "index");
+  try {
+    gitWithIndex(["read-tree", "--end-of-options", mergeBase], cwd, index);
+    gitWithIndex(["add", "--all", ...pathspec], cwd, index);
+    // `--no-relative` for the reason `readPushDiffstat` records: `diff.relative` prints
+    // paths relative to cwd, so the answer would depend on which directory shipkit was
+    // invoked from — and these two reads are matched to each other by path.
+    const names = gitWithIndex(
+      [
+        "diff", "--cached", "--name-status", "-z", "--no-relative", "--no-renames",
+        "--end-of-options", mergeBase, ...pathspec,
+      ],
+      cwd,
+      index,
+    );
+    const patches = gitWithIndex(
+      [
+        "-c", "core.quotePath=false",
+        "diff", "--cached", "-p", "--no-color", "--no-relative", "--no-renames",
+        "--end-of-options", mergeBase, ...pathspec,
+      ],
+      cwd,
+      index,
+    );
+
+    const byPath = splitPatch(patches);
+    const fields = names.split("\0").filter((field) => field.length > 0);
+    const files: PushFileDiff[] = [];
+    for (let i = 0; i + 1 < fields.length; i += 2) {
+      const path = fields[i + 1] as string;
+      const patch = byPath.get(path) ?? "";
+      files.push({
+        path,
+        status: changeStatus(fields[i] as string),
+        patch,
+        line: firstNewLine(patch),
+      });
+    }
+    return files;
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Splits `git diff -p` output into one patch per file, keyed by path.
+ *
+ * The key comes from the `+++ b/<path>` line rather than the `diff --git a/x b/x` header,
+ * which is genuinely ambiguous for a path containing a space — git writes both halves on
+ * one line with nothing between them but a space. `+++` runs to the end of the line and is
+ * not ambiguous. A deletion has `+++ /dev/null`, so the `--- a/<path>` line answers for it.
+ *
+ * A `+++` line inside the content of the diff cannot be confused for a header: content
+ * lines always carry a leading `+`, `-` or space from the hunk body, so a line starting
+ * `+++ ` in a file's own text arrives here as `++++ `.
+ *
+ * The trailing tab is not decoration. Measured: for a path containing a space git writes
+ * `+++ b/two words.ts\t`, the unidiff convention that makes such a path parseable at all.
+ * Without cutting at it, the key carries a tab, matches nothing in the `--name-status`
+ * list, and every file whose name contains a space is shown with an empty patch. A tab
+ * inside a real path cannot be lost this way: git C-quotes such a path regardless of
+ * `core.quotePath`, so the tab never appears raw.
+ */
+function splitPatch(raw: string): Map<string, string> {
+  const byPath = new Map<string, string>();
+  let current: string[] = [];
+  let path: string | undefined;
+  let minus: string | undefined;
+
+  const flush = (): void => {
+    const name = path ?? minus;
+    if (name !== undefined && current.length > 0) byPath.set(name, current.join("\n"));
+    current = [];
+    path = undefined;
+    minus = undefined;
+  };
+
+  for (const line of raw.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      flush();
+      current.push(line);
+      continue;
+    }
+    if (current.length === 0) continue;
+    if (line.startsWith("+++ ")) {
+      const target = line.slice(4).split("\t")[0] as string;
+      if (target !== "/dev/null") path = target.replace(/^b\//, "");
+    } else if (line.startsWith("--- ")) {
+      const target = line.slice(4).split("\t")[0] as string;
+      if (target !== "/dev/null") minus = target.replace(/^a\//, "");
+    }
+    current.push(line);
+  }
+  flush();
+  return byPath;
+}
+
+/**
+ * Walks the hunks until a line is added or removed, counting context as it goes, and
+ * answers where that lands on the new side. 1 when the patch carries no hunk at all.
+ */
+function firstNewLine(patch: string): number {
+  let line = 0;
+  let inHunk = false;
+  for (const text of patch.split("\n")) {
+    const header = /^@@ -\d+(?:,\d+)? \+(\d+)/.exec(text);
+    if (header !== null) {
+      // `@@ ... +0,0 @@` is what a whole-file deletion's hunk says. Nobody can open line 0.
+      line = Math.max(1, Number(header[1]));
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk) continue;
+    // "\ No newline at end of file" is a note about the line above, not a line of its own.
+    if (text.startsWith("\\")) continue;
+    if (text.startsWith("+") || text.startsWith("-")) return line;
+    if (text.startsWith(" ")) {
+      line += 1;
+      continue;
+    }
+    // Anything else ends the hunk — in practice the `diff --git` of the next file, which
+    // `splitPatch` has already cut away, so this is only reached by a trailing blank.
+    inHunk = false;
+  }
+  return 1;
+}
+
 /**
  * The files `git add --all` would bring into the commit that are not tracked yet —
  * scratch notes, local env files, and the agent's own response file. `--exclude-standard`

@@ -1,0 +1,118 @@
+# PR-hazırlık kuralları — example-app
+#
+# Kaynak, tahmin değil ölçüm: 10 Ağustos–17 Eylül arası 371 insan review
+# yorumu (248 thread kökü) + kodun kendi yapısı + Apple guideline'ları.
+# Her maddenin yanında kanıtı yazıyor. SwiftLint/Sonar/styleguide'ın zaten
+# tuttuğu hiçbir şey burada YOK — makinenin dayattığını insana sormak
+# gürültüdür, ve gürültülü checklist okunmayan checklist'tir.
+#
+# severity: block  → submit reddeder
+#           warn   → preflight uyarısı; approval: human altında panele düşer,
+#                    yani "uyulsun ama insan ezebilsin"
+#           advise → bilgilendirir, asla kapı olmaz
+#
+# Bu dosya ekibin malı: kural eklemek/gevşetmek buraya PR açmaktır,
+# shipkit sürümü değişmez.
+version: 1
+rules:
+  - id: design-tokens
+    ask: >
+      Renkler semantik olarak doğru token'ı mı kullanıyor (text/icon/fill/border
+      ayrımı), legacy pgs* rengi ya da gereksiz Color() sarmalayıcısı kaldı mı,
+      görsel fark bilinçliyse PR'da söylendi mi?
+    why: "Ölçülen en baskın tema: 80 kök yorumun ~25'i token disiplini (yanlış semantik, kontrast kaybı, template işaretlenmemiş asset dahil)."
+    appliesTo: ["**/*.swift", "**/*.xcassets/**"]
+    severity: warn
+
+  - id: tests-mean-something
+    ask: >
+      Değişen mantığın ana senaryoları test edildi mi, assert'ler gerçekten
+      ayırt ediyor mu (default değeri doğrulayan assert etmez), test global
+      state'e (Session.instance vb.) bağımlı mı?
+    why: "Review'da yakalananlar: yalnızca tek senaryoyu ölçen test, hiçbir şeyi doğrulamayan assert, global state'e bağımlı test. Bu repo'nun kendi tarihi de aynı dersle dolu."
+    appliesTo: ["Sources/**/*.swift", "AppTests/**"]
+    severity: warn
+
+  - id: concurrency
+    ask: >
+      Paylaşılan state'e erişim tutarlı mı (lock'lu yazıp lock'suz okumak yok),
+      çift-tap/in-flight koruması var mı, .serialized/singleton mutasyonu gibi
+      bilinçli tercihlerin yanına bir cümle gerekçe yazıldı mı?
+    why: "5 kök yorum; en ağırı ödeme ekranında in-flight bayrağı eksikliği — çift tap, çift ödeme demek."
+    appliesTo: ["**/*.swift"]
+    severity: warn
+
+  - id: all-entry-paths
+    ask: >
+      Eklenen kontrol/davranış TÜM giriş yollarında geçerli mi (ör. normal buton
+      + Apple Pay), hata dalları sessizce yutmuyor mu, dismiss/present sıralaması
+      hata senaryosunda da doğru mu?
+    why: "4 kök yorum: yalnız bir yolda çalışan kontrol, onSuccess çağırmayan dal, hata sırasında present çakışması."
+    severity: warn
+
+  - id: shared-component-blast-radius
+    ask: >
+      Ortak bir component'e dokunulduysa: tüm kullanım yerleri gözden geçirildi
+      mi, iPad dahil denendi mi, bu değişiklik feature branch'i yerine develop'a
+      ayrı PR olmalı mıydı?
+    why: "3 kök yorum, birebir bu üç soru: 'tüm app'e ait olduğunun farkında mıyız? tüm bottom sheet'ler test edildi mi?' / 'iPad'de bakılmalı' / 'develop'a alsak ya, ortak component'."
+    severity: warn
+
+  - id: swiftui-direction
+    ask: >
+      Yeni UI SwiftUI (+Observation) ile mi yazıldı, SwiftUI'dan UIKit'e geri
+      dönüş var mı, elin değmişken taşınabilecek küçük bir VC kaldıysa not edildi mi?
+    why: "Yön review'da açıkça korunuyor: 'swiftui'dan uikit'e gitmemeliyiz', 'observation kullanalım', 'kalan 3 view'ı geçirip vc'den kurtulabilir miyiz'. Kapsam dışı büyük dönüşüm zaten shipkit'in tech-task tavsiyesine düşer."
+    appliesTo: ["**/*.swift", "**/*.xib", "**/*.storyboard"]
+    severity: warn
+
+  - id: layering
+    ask: >
+      View'da iş mantığı birikti mi (view model'e taşınmalı), aynı logic iki
+      yere dağıldı mı (tek sahibi olmalı)?
+    why: "3 kök yorum: 'neden view model oluşturmadık', checkin selection mantığının kopyası, 'filter logic'ini dağıtıyoruz'."
+    severity: warn
+
+  - id: leftovers
+    ask: >
+      Kalıntı var mı: açıklama diye bırakılmış eski kod, gereksiz yorum satırı,
+      debug print, başıboş boşluk, artık kullanılmayan Constant/asset?
+    why: "6 kök yorum ('yorum satırına gerek yok', 'gereksiz boşluklar', 'bunları da uçuralım') + öksüz kalan sabitler."
+    severity: warn
+
+  - id: constants-deliberate
+    ask: >
+      Magic değerler bilinçli mi: birden çok yerde geçen değer Constant'ta,
+      tek kullanımlık değer yerinde mi; Constant'a taşınan şey gerçekten
+      tekrar mı ediyor?
+    why: "8 kök yorum ve iki yönde: 'Constant'a alalım' kadar 'Constant'a gerek var mı, yerinde kullan' da geliyor. İstenen taşıma değil, kasıt."
+    severity: advise
+
+  - id: localization-cms
+    ask: >
+      Kullanıcıya görünen her metin cmsLocalized üzerinden mi, hardcoded
+      Türkçe/İngilizce string kaldı mı?
+    why: "Review kanıtı: TODO ile bırakılmış hardcoded 'Ayrıcalıkları İncele'. Diğer tüm metinler cmsLocalized."
+    appliesTo: ["**/*.swift"]
+    severity: warn
+
+  - id: no-new-lint-warnings
+    ask: "Base'e göre yeni SwiftLint uyarısı eklendi mi? (opening_brace, unneeded_synthesized_initializer örnekleri review'a düşmüştü — makineye yakalatma, review'a bırakma.)"
+    why: "2 kök yorum; lint temiz branch'te uyarı diffi sıfır olmalı."
+    appliesTo: ["**/*.swift"]
+    severity: warn
+
+  - id: apple-alignment
+    ask: >
+      Apple tarafına aykırılık var mı: HIG kontrast/zemin varsayımları (koyu
+      zemin, şeffaflık) bozuldu mu; tint'lenen asset template olarak işaretli
+      mi; izin isteyen API'ye dokunulduysa Info.plist purpose string'i güncel
+      mi; yeni deprecated API kullanımı girdi mi?
+    why: "Kullanıcı şartı + ölçülen örnekler: kontrast kaybı yorumları, template işaretlenmemiş asset, ve ABC-30354 (eksik konum izin metni) — bu sınıf ekibin başına gerçekten geldi."
+    severity: warn
+
+  - id: accessibility-ids
+    ask: "Reusable view'lara AccessibilityIdentifier eklendi mi?"
+    why: "1 kök yorum — tek örnek olduğu için advise; tekrar ederse warn'a terfi eder. Terfi kararı da bu dosyaya PR'dır."
+    appliesTo: ["**/*.swift"]
+    severity: advise

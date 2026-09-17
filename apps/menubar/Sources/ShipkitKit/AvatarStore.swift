@@ -187,15 +187,40 @@ public actor AvatarStore {
             .appendingPathComponent("avatars", isDirectory: true)
     }
 
-    /// The cache file's name: a SHA-256 of the URL, hex.
+    /// Query parameters that authorise a fetch rather than identify an image.
+    ///
+    /// Measured against the real host: avatar URLs come back signed, as
+    /// `…/avatars/u/1274872?token=MTc4OTY1MTQyNS4wMDI0OTM…`. The token rotates,
+    /// so keying on it re-fetched every face on a refresh that was supposed to
+    /// be free and orphaned the previous copy forever.
+    private static let credentialParameters: Set<String> = ["token", "jwt", "signature", "sig", "x-amz-signature"]
+
+    /// The cache file's name: a SHA-256 of the URL *without its query string*, hex.
     ///
     /// Hashed rather than escaped because the URL carries `/`, `?` and `&`,
     /// any of which would either create directories or be dropped by a naive
     /// sanitiser — and two URLs that sanitise to the same name would serve
     /// each other's faces. A hash cannot collide by accident and cannot
     /// escape the directory.
+    ///
+    /// The signing token is dropped — see `credentialParameters`. What is left
+    /// identifies the image: the path says who, and a size parameter says which
+    /// rendering of them.
     public static func cacheFileName(for url: String) -> String {
-        SHA256.hash(data: Data(url.utf8))
+        let identity = URLComponents(string: url).flatMap { parts -> String? in
+            var stable = parts
+            stable.fragment = nil
+            // Only the credential is dropped, not the whole query: `?s=80` and
+            // `?s=81` are different images and must stay different files, which
+            // an existing test pins. Sorted so the same parameters in a
+            // different order still land on one file.
+            let kept = (parts.queryItems ?? [])
+                .filter { credentialParameters.contains($0.name.lowercased()) == false }
+                .sorted { $0.name < $1.name }
+            stable.queryItems = kept.isEmpty ? nil : kept
+            return stable.string
+        } ?? url
+        return SHA256.hash(data: Data(identity.utf8))
             .map { String(format: "%02x", $0) }
             .joined()
     }

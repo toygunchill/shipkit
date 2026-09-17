@@ -353,3 +353,27 @@ private actor CallLog {
 
     #expect(path.hasSuffix("/Library/Caches/shipkit/avatars"))
 }
+
+@Test func aRotatingTokenDoesNotChangeTheCacheKey() {
+    // Measured against the real host: avatar URLs are signed and carry an
+    // expiring token, so the same face arrives under a different URL on every
+    // refresh. Keying on the whole string re-downloaded every avatar each time
+    // and orphaned the previous copy — the cache existed but never hit.
+    let first = "https://git.example.com/avatars/u/1274872?token=MTc4OTY1MTQyNS4wMDI0OTM"
+    let later = "https://git.example.com/avatars/u/1274872?token=OTk5OTk5OTk5OS5aWlpaWlo"
+    #expect(AvatarStore.cacheFileName(for: first) == AvatarStore.cacheFileName(for: later))
+
+    // Two different people must still never share a file.
+    let other = "https://git.example.com/avatars/u/999?token=MTc4OTY1MTQyNS4wMDI0OTM"
+    #expect(AvatarStore.cacheFileName(for: first) != AvatarStore.cacheFileName(for: other))
+
+    // And only the credential is dropped: a size parameter still identifies a
+    // different image, which `theCacheFileNameIsAHashThatCannotEscapeTheDirectory`
+    // caught when a first attempt at this dropped the whole query string.
+    let small = "https://git.example.com/avatars/u/1274872?s=80&token=AAA"
+    let large = "https://git.example.com/avatars/u/1274872?s=200&token=AAA"
+    #expect(AvatarStore.cacheFileName(for: small) != AvatarStore.cacheFileName(for: large))
+    // Parameter order is not identity.
+    let reordered = "https://git.example.com/avatars/u/1274872?token=BBB&s=80"
+    #expect(AvatarStore.cacheFileName(for: small) == AvatarStore.cacheFileName(for: reordered))
+}

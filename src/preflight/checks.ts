@@ -1,3 +1,4 @@
+import { explanatoryComments } from "./comments.js";
 import type { PreflightInput, PreflightResult, Warning } from "./types.js";
 
 export type { PreflightInput, PreflightResult, Warning };
@@ -77,6 +78,22 @@ export function preflight(input: PreflightInput): PreflightResult {
       message:
         `Staging will add ${input.untrackedFiles.length} untracked file(s) to this commit: ` +
         `${shown.join(", ")}${tail}`,
+    });
+  }
+
+  const comments = explanatoryComments(input.addedLines);
+  if (comments.length > 0) {
+    const SHOWN = 3;
+    const shown = comments.slice(0, SHOWN);
+    const remaining = comments.length - shown.length;
+    const tail = remaining > 0 ? `, and ${remaining} more` : "";
+    const quoted = shown.map(({ path, text }) => `${path}: ${text.trim()}`).join("; ");
+    warnings.push({
+      check: "comment-lines",
+      message:
+        `This push adds ${comments.length} explanatory comment line(s): ${quoted}${tail}. ` +
+        `Keep the ones that say why, and take out the ones that restate the code — ` +
+        `acknowledge to confirm the remaining ones are deliberate.`,
     });
   }
 

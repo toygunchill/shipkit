@@ -11,6 +11,7 @@ const base = {
   issueVerified: true,
   pullRequest: null,
   untrackedFiles: [],
+  addedLines: [],
   config,
 };
 const ids = (r: { warnings: { check: string }[] }) => r.warnings.map((w) => w.check);
@@ -144,5 +145,76 @@ describe("preflight untracked-files", () => {
     expect(finding?.message).toContain("a.txt");
     expect(finding?.message).toContain("b.txt");
     expect(finding?.message).not.toContain("more");
+  });
+});
+
+describe("preflight comment-lines", () => {
+  const indented = (text: string) => ({ path: "Views/Card.swift", text });
+
+  it("asks about an explanatory comment written inside the code", () => {
+    const result = preflight({
+      ...base,
+      addedLines: [indented("        // The link's own inset leaves a target shorter than a finger.")],
+    });
+    const finding = result.warnings.find((w) => w.check === "comment-lines");
+    expect(finding?.message).toContain("1 explanatory comment line");
+    expect(finding?.message).toContain("Views/Card.swift");
+  });
+
+  it("stays silent for a licence header, which is never indented", () => {
+    const result = preflight({
+      ...base,
+      addedLines: [
+        { path: "Views/Card.swift", text: "//" },
+        { path: "Views/Card.swift", text: "//  Card.swift" },
+        { path: "Views/Card.swift", text: "//  Copyright © 2026 Example Inc. All rights reserved." },
+      ],
+    });
+    expect(ids(result)).not.toContain("comment-lines");
+  });
+
+  it("asks about a doc comment, indented or not", () => {
+    const nested = preflight({
+      ...base,
+      addedLines: [indented("    /// Selection is carried by the border alone.")],
+    });
+    expect(ids(nested)).toContain("comment-lines");
+
+    // A licence header is `//`, never `///`, so a doc comment at column zero is
+    // documentation on a top-level declaration rather than boilerplate.
+    const topLevel = preflight({
+      ...base,
+      addedLines: [{ path: "Views/Card.swift", text: "/// Confirmation shown once a payment completes." }],
+    });
+    expect(ids(topLevel)).toContain("comment-lines");
+  });
+
+  it("stays silent for pragmas spelled as comments", () => {
+    const result = preflight({
+      ...base,
+      addedLines: [
+        indented("    // MARK: - Border"),
+        indented("    // swiftlint:disable:next force_cast"),
+      ],
+    });
+    expect(ids(result)).not.toContain("comment-lines");
+  });
+
+  it("stays silent for added code that merely contains a slash", () => {
+    const result = preflight({
+      ...base,
+      addedLines: [indented('        Text("Kredi / Banka Kartı ile Öde")')],
+    });
+    expect(ids(result)).not.toContain("comment-lines");
+  });
+
+  it("caps the listing and says how many were left out", () => {
+    const result = preflight({
+      ...base,
+      addedLines: Array.from({ length: 5 }, (_, i) => indented(`    // note ${i}`)),
+    });
+    const finding = result.warnings.find((w) => w.check === "comment-lines");
+    expect(finding?.message).toContain("5 explanatory comment line");
+    expect(finding?.message).toContain("and 2 more");
   });
 });

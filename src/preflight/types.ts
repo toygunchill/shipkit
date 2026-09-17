@@ -1,5 +1,5 @@
 import type { ShipkitConfig } from "../config/schema.js";
-import type { PullRequestState } from "../vcs/types.js";
+import type { AddedLine, PullRequestState } from "../vcs/types.js";
 
 export type Warning = {
   check: string;
@@ -16,6 +16,8 @@ export type PreflightInput = {
   pullRequest: PullRequestState | null;
   /** Untracked, non-ignored paths that staging would sweep into the commit. */
   untrackedFiles: string[];
+  /** Every line this push adds — see `comment-lines`. Empty when the read failed. */
+  addedLines: AddedLine[];
   config: ShipkitConfig;
 };
 

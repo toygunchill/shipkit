@@ -29,9 +29,27 @@
  * behaviour at all three call sites.
  */
 
+import type { AddedLine } from "../vcs/types.js";
 import type { ChangedFile } from "./uikit.js";
 
 export function observedChangedFiles(read: () => ChangedFile[]): ChangedFile[] {
+  try {
+    return read();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The same guard for the lines a push adds.
+ *
+ * `comment-lines` gates where the advice above only informs, so the trade is worth stating:
+ * a read that fails means the check cannot fire, and a push goes out unasked. That is the
+ * lesser harm. The alternative — treating a broken scratch index as grounds to refuse — puts
+ * a repository with git-lfs missing in a state where nothing can be pushed at all, to enforce
+ * a rule about comments.
+ */
+export function observedAddedLines(read: () => AddedLine[]): AddedLine[] {
   try {
     return read();
   } catch {

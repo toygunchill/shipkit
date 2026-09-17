@@ -11,6 +11,7 @@ import { runSubmit, type SubmitDeps } from "../../src/submit/run.js";
 import {
   currentBranch,
   readHeadSha,
+  readPushAddedLines,
   readPushChangedFiles,
   readPushDiffstat,
   readRepoRoot,
@@ -78,6 +79,7 @@ function realDeps(repo: string, opened: { input?: unknown }): SubmitDeps {
     readRepoState: (base) => readRepoState(base, repo),
     readPushDiffstat: (base, exclude) => readPushDiffstat(base, exclude, repo),
     readPushChangedFiles: (base, exclude) => readPushChangedFiles(base, exclude, repo),
+    readPushAddedLines: (base, exclude) => readPushAddedLines(base, exclude, repo),
     // gh cannot be pointed at a local bare repository, so the two adapters that reach it
     // are the only fakes here. Everything else is the real thing.
     findPullRequest: () => null,

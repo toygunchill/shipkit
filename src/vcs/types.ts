@@ -7,6 +7,12 @@ export type RepoState = {
   commits: string[];
 };
 
+/** One line this push adds, with the file it lands in. */
+export type AddedLine = {
+  path: string;
+  text: string;
+};
+
 export type PullRequestState = {
   number: number;
   url: string;

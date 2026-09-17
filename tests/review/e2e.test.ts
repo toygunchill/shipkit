@@ -231,6 +231,8 @@ describe("shipkit review, end to end, against a real repository", () => {
 
   it("carries the selection into the next brief, first, and then out again on a push", async () => {
     const repo = scratch();
+    // Injected: an archive must never land in the developer's real Application Support.
+    const archives = join(scratch(), "archives");
     const configPath = join(repo, ".shipkit.yml");
     writeFixRequest(repo, {
       version: 1,
@@ -273,7 +275,7 @@ describe("shipkit review, end to end, against a real repository", () => {
       findPullRequest: () => null,
       readUntrackedFiles: () => readUntrackedFiles(repo),
       fixRequestExclusions: () => fixRequestExclusions(repo),
-      archiveFixRequest: () => archiveFixRequest(repo, new Date("2026-09-17T11:00:00.000Z")),
+      archiveFixRequest: () => archiveFixRequest(repo, new Date("2026-09-17T11:00:00.000Z"), archives),
       readRepoRoot: () => readRepoRoot(repo),
       readHeadSha: () => readHeadSha(repo),
       realpath: (path) => realpathSync(path),
@@ -314,11 +316,16 @@ describe("shipkit review, end to end, against a real repository", () => {
       .filter(Boolean);
     expect(committed).toContain("Sources/InvoiceScreen.swift");
     expect(committed.some((path) => path.startsWith(".shipkit/"))).toBe(false);
-    // And it has been moved aside, so the next brief cannot carry it again.
+    // And it has been moved aside, so the next brief cannot carry it again — out of the
+    // repository entirely, which is why there is nothing left here to exclude.
     expect(readFixRequest(repo)).toBeUndefined();
-    expect(fixRequestExclusions(repo)).toEqual([
-      ".shipkit/fix-request-2026-09-17T11-00-00-000Z.json",
-    ]);
+    expect(fixRequestExclusions(repo)).toEqual([]);
+    // The selection itself survives out there, which is the reason it is moved rather than
+    // deleted: after the push, the archive is the only answer to "was what I ticked done?"
+    const archived = JSON.parse(
+      readFileSync(join(archives, "fix-request-2026-09-17T11-00-00-000Z.json"), "utf8"),
+    ) as { items: unknown[] };
+    expect(archived.items.length).toBeGreaterThan(0);
   });
 
   it("leaves the selection where it is when the submit refuses", async () => {
@@ -362,7 +369,7 @@ describe("shipkit review, end to end, against a real repository", () => {
         findPullRequest: () => null,
         readUntrackedFiles: () => readUntrackedFiles(repo),
         fixRequestExclusions: () => fixRequestExclusions(repo),
-        archiveFixRequest: () => archiveFixRequest(repo, new Date()),
+        archiveFixRequest: () => archiveFixRequest(repo, new Date(), join(scratch(), "archives")),
         readRepoRoot: () => readRepoRoot(repo),
         readHeadSha: () => readHeadSha(repo),
         realpath: (path) => realpathSync(path),

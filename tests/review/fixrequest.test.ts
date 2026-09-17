@@ -99,16 +99,17 @@ describe("keeping the selection out of the commit", () => {
     expect(fixRequestExclusions(scratch())).toEqual([]);
   });
 
-  it("names the archives too, and leaves everything else in .shipkit alone", () => {
+  // One entry, always — not a list that grows with every review. The exclusion is passed to
+  // `git add --all` and to four scratch-index reads, so a branch reviewed a hundred times
+  // used to carry a hundred pathspec arguments toward ARG_MAX. Archives live outside the
+  // repository now, so there is nothing else in here to name.
+  it("names the live selection and nothing else, however much sits beside it", () => {
     const root = scratch();
     writeFixRequest(root, REQUEST);
     writeFileSync(join(root, ".shipkit/fix-request-2026-01-01T00-00-00-000Z.json"), "{}", "utf8");
     writeFileSync(join(root, ".shipkit/notes.md"), "mine", "utf8");
 
-    expect(fixRequestExclusions(root)).toEqual([
-      ".shipkit/fix-request-2026-01-01T00-00-00-000Z.json",
-      ".shipkit/fix-request.json",
-    ]);
+    expect(fixRequestExclusions(root)).toEqual([".shipkit/fix-request.json"]);
   });
 
   // The whole point of the exclusion, asserted against real git rather than against an argv.
@@ -124,22 +125,19 @@ describe("keeping the selection out of the commit", () => {
     expect(staged).not.toContain(".shipkit/fix-request.json");
   });
 
-  // Measured, and the reason the archives are in the exclusion list at all: with only the
-  // live file excluded, the archive an earlier submit left behind is staged on the next run.
-  it("cannot be staged after it has been archived either", () => {
+  // The archive used to be the leak's second act: written beside the live file, it was
+  // staged on the next run. It is written outside the repository now, so the repository has
+  // nothing left to leak — asserted against real git, not against an argv.
+  it("leaves nothing behind in the repository once it has been archived", () => {
     const root = repo();
+    const elsewhere = join(scratch(), "archives");
     writeFixRequest(root, REQUEST);
-    archiveFixRequest(root, new Date("2026-09-17T10:00:00.000Z"));
+    const archived = archiveFixRequest(root, new Date("2026-09-17T10:00:00.000Z"), elsewhere);
 
+    expect(archived?.startsWith(root)).toBe(false);
     git(["add", "--all", ...stagingPathspec(fixRequestExclusions(root))], root);
-    const withArchives = git(["diff", "--cached", "--name-only"], root).split("\n").filter(Boolean);
-    expect(withArchives.filter((path) => path.startsWith(".shipkit/"))).toEqual([]);
-
-    // The discriminating half: excluding only the live path leaves the archive staged.
-    git(["reset"], root);
-    git(["add", "--all", ...stagingPathspec([".shipkit/fix-request.json"])], root);
-    const liveOnly = git(["diff", "--cached", "--name-only"], root).split("\n").filter(Boolean);
-    expect(liveOnly).toContain(".shipkit/fix-request-2026-09-17T10-00-00-000Z.json");
+    const staged = git(["diff", "--cached", "--name-only"], root).split("\n").filter(Boolean);
+    expect(staged.filter((path) => path.startsWith(".shipkit/"))).toEqual([]);
   });
 });
 
@@ -148,9 +146,10 @@ describe("archiving a consumed selection", () => {
     const root = scratch();
     writeFixRequest(root, REQUEST);
 
-    const archived = archiveFixRequest(root, new Date("2026-09-17T10:00:00.000Z"));
+    const elsewhere = join(scratch(), "archives");
+    const archived = archiveFixRequest(root, new Date("2026-09-17T10:00:00.000Z"), elsewhere);
 
-    expect(archived).toBe(join(root, ".shipkit/fix-request-2026-09-17T10-00-00-000Z.json"));
+    expect(archived).toBe(join(elsewhere, "fix-request-2026-09-17T10-00-00-000Z.json"));
     expect(readFixRequest(root)).toBeUndefined();
     expect(JSON.parse(readFileSync(archived as string, "utf8"))).toEqual(REQUEST);
   });

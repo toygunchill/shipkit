@@ -1,5 +1,7 @@
-import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { z } from "zod";
 
 /**
@@ -115,41 +117,46 @@ function stamp(now: Date): string {
 }
 
 /**
- * Every review-selection file under `root`, root-relative and git-spelled, for the staging
- * exclusion.
+ * The review-selection file to keep out of the commit: exactly one, always.
  *
- * The archives are here as well as the live file, and that is not belt-and-braces. Measured,
- * in a scratch repository, with only the live file excluded:
+ * It was once a list, because consumed selections were archived beside the live file and
+ * each archive then needed its own exclusion — measured, with only the live file excluded:
  *
  *   $ git add --all -- :/ ':(exclude,literal,top).shipkit/fix-request.json'
  *   $ git diff --cached --name-only
- *   .shipkit.yml
- *   .shipkit/fix-request.2026.json      <- the archive, staged
- *   a.txt
+ *   .shipkit/fix-request-2026-...json      <- the archive, staged
  *
- * So archiving a consumed selection inside the repository re-creates, one run later,
- * exactly the leak the exclusion exists to close.
+ * The exclusion is passed to `git add --all` and to four scratch-index reads, so a branch
+ * reviewed a hundred times carried a hundred extra pathspec arguments toward `ARG_MAX`. The
+ * archives moved out of the repository instead (see `archiveDirectory`), which bounds this
+ * at one entry forever and costs nothing: nothing inside the repository needs excluding that
+ * was never written there.
  *
- * Excluding the whole directory (`:(exclude,literal,top).shipkit`) also works — measured, it
- * keeps both files out and leaves `.shipkit.yml` staged, because a literal pathspec matches
- * at path boundaries and `.shipkit.yml` is not inside `.shipkit/`. It is not used because it
- * would also stop staging edits to any *tracked* file a repository chooses to keep there,
- * silently, and a commit that quietly omits a file is worse than the leak it prevents.
- *
- * Nothing is returned when the directory does not exist, which is every repository that has
- * never been reviewed — so an ordinary `submit` passes exactly the exclusions it always did.
+ * Excluding the whole `.shipkit` directory would also have worked — measured — but would
+ * silently stop staging edits to any *tracked* file a repository chooses to keep there, and
+ * a commit that quietly omits a file is worse than the leak it prevents.
  */
 export function fixRequestExclusions(root: string): string[] {
-  let entries: string[];
-  try {
-    entries = readdirSync(join(root, SHIPKIT_DIR));
-  } catch {
-    return [];
-  }
-  return entries
-    .filter((name) => name === "fix-request.json" || /^fix-request-.+\.json$/.test(name))
-    .sort()
-    .map((name) => `${SHIPKIT_DIR}/${name}`);
+  return existsSync(join(root, FIX_REQUEST_PATH)) ? [FIX_REQUEST_PATH] : [];
+}
+
+/**
+ * Where consumed selections are kept: outside the repository, under Application Support.
+ *
+ * Outside because anything left inside has to be excluded from staging for the rest of the
+ * branch's life, and that list is passed on every read — see `fixRequestExclusions`.
+ *
+ * Application Support rather than Caches because the archive answers "did the agent actually
+ * do what was ticked?" after the push, when the brief that carried the notes is gone with the
+ * agent's context. The system may purge a cache at any time; that is the wrong contract for
+ * evidence.
+ *
+ * One directory per repository, named for readability and hashed for identity, so two
+ * checkouts of the same project — a worktree, a second clone — keep their own history.
+ */
+export function archiveDirectory(root: string): string {
+  const digest = createHash("sha256").update(root).digest("hex").slice(0, 12);
+  return join(homedir(), "Library", "Application Support", "shipkit", "fix-requests", `${basename(root)}-${digest}`);
 }
 
 /**
@@ -158,14 +165,24 @@ export function fixRequestExclusions(root: string): string[] {
  *
  * Moved rather than deleted. The notes are a person's own words about this change, and the
  * archive is the only place left to answer "did the agent actually do what was ticked?"
- * after the push — the brief that carried them is gone with the agent's context. The cost of
- * keeping it is the staging leak measured in `fixRequestExclusions` above, and that is a
- * cost this file already pays for the live selection.
+ * after the push — the brief that carried them is gone with the agent's context. It lands
+ * outside the repository (see `archiveDirectory`), so keeping it costs the commit nothing.
  */
-export function archiveFixRequest(root: string, now: Date): string | undefined {
+export function archiveFixRequest(
+  root: string,
+  now: Date,
+  /** Injected by tests, which must not write into the real Application Support. */
+  directory: string = archiveDirectory(root),
+): string | undefined {
   const from = join(root, FIX_REQUEST_PATH);
-  const to = join(root, SHIPKIT_DIR, `fix-request-${stamp(now)}.json`);
+  // Checked before anything is created: the ordinary case is that there is nothing to
+  // archive, and creating a directory to hold a file that will never arrive litters every
+  // repository that has never been reviewed.
+  if (!existsSync(from)) return undefined;
+
+  const to = join(directory, `fix-request-${stamp(now)}.json`);
   try {
+    mkdirSync(directory, { recursive: true });
     renameSync(from, to);
   } catch {
     // No selection to archive is the ordinary case — every submit that was never reviewed.

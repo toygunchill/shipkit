@@ -28,15 +28,89 @@ rather than repairs — a silent repair hides that the rules were ignored.
 ## Commands
 
 ```
-shipkit check    Validate a title and body against .shipkit.yml. No side effects.
-shipkit brief    Emit the JSON brief an agent fills in.
-shipkit submit   Validate, warn, then commit, push and open the pull request.
-shipkit mcp      Serve the same three as MCP tools over stdio.
+shipkit check      Validate a title and body against .shipkit.yml. No side effects.
+shipkit brief      Emit the JSON brief an agent fills in.
+shipkit review     Show the change and the findings on a local page, and take one answer.
+shipkit submit     Validate, warn, then commit, push and open the pull request.
+shipkit init       Write a starter .shipkit.yml, reading what the forge can prove.
+shipkit rules      Propose a readiness checklist from the code, for a repo that has none.
+shipkit tech-task  Open the technical item for work the ticket did not ask for.
+shipkit mcp        Serve brief, preview and apply as MCP tools over stdio.
 ```
 
 `check` is the one to run in CI. Instructions are advisory and an agent can
 ignore them; CI cannot be ignored, and it is the layer that moves the number
 above.
+
+### Any repository, any checklist
+
+shipkit is installed once and used everywhere, so the repository and the
+checklist are both arguments:
+
+```
+shipkit brief  --repo ~/code/other-app --base develop
+shipkit review --repo ~/code/other-app --rules ~/conventions/team.yml ~/conventions/ios.yml
+```
+
+`--repo` defaults to the working directory, so every command means exactly
+what it meant without it. A relative `--config` resolves against `--repo`, not
+against the shell.
+
+`--rules` **replaces** whatever the repository's config names, rather than
+adding to it — "apply only this checklist" is the question the option answers.
+Repeating it applies several, as a list under `readiness:` does. An id defined
+in two of them is refused, naming both files: one answer would satisfy both, so
+which rule applied would otherwise depend on the order they were listed in.
+
+### When there is no checklist yet
+
+```
+shipkit rules --repo ~/code/other-app --out readiness.yml
+```
+
+This selects; it does not invent. shipkit ships a catalogue of candidate rules,
+each with a detector, and proposes only the ones whose subject is actually in
+the repository — with the evidence written above each line:
+
+```yaml
+  # observed: UIKit in 9 files, SwiftUI in 15 files
+  - id: swiftui-direction
+    appliesTo:
+      - "**/*.swift"
+    severity: advise
+```
+
+Three things it will not do. It will not propose a rule for something that is
+not there — a checklist asking about what a repository does not have is one
+people learn to skip. It will not repeat a linter you already run, and it says
+which tool covered what. And everything it derives is `advise`, which never
+gates and never changes an exit code, so nothing starts blocking your team's
+work before a person has read the file.
+
+The scope is derived too: rules are limited to the languages the repository is
+actually written in, and the shared-layer rule names the shared directory it
+found. A change touching only a README is asked nothing.
+
+## The way back
+
+Everything above is shipkit talking. `shipkit review` is the way back.
+
+It computes exactly what `submit` would compute — the same base, the same
+uncommitted-work reads, the same pre-flight, the same readiness evaluation —
+and pushes nothing. It serves one page on loopback, behind a single-use token,
+showing the diff (including the work that is not committed yet, because that is
+what the push will carry) and every finding, warning and piece of advice as a
+card with a checkbox and a note field. It waits for one answer, writes it to
+`.shipkit/fix-request.json`, and exits.
+
+The next `shipkit brief` carries that file first, before the change and before
+the rules, saying in so many words that a person chose it. A successful
+`submit` moves it aside with a timestamp so a stale selection cannot haunt the
+next run; a `submit` that refuses leaves it exactly where it was. The file is
+excluded from staging everywhere the response file is, so it can never reach a
+commit.
+
+shipkit speaks, the human chooses, the agent fixes.
 
 ## What it refuses
 
@@ -85,7 +159,9 @@ is a working one, reconstructed from a real team's rules — but note that it
 sets `pr.approval: human` (see below); a reader copying it as a starting point
 inherits that setting too.
 
-There is no `shipkit init` yet, so it is written by hand.
+`shipkit init` writes a starter one by reading what the forge can prove, and
+says where every value came from. `shipkit rules` does the same for the
+readiness checklist, from the code.
 
 ### `pr.approval` and `pr.approvalTimeoutSeconds`
 

@@ -5,10 +5,35 @@ import { citeTarget } from "../jira/level.js";
 import { asks } from "../readiness/apply.js";
 import type { ReadinessRule } from "../readiness/types.js";
 import type { IssueFacts } from "../jira/types.js";
+import type { FixRequest } from "../review/fixrequest.js";
 import type { RepoState } from "../vcs/types.js";
 import type { Brief } from "./types.js";
 
 export type { Brief };
+
+/**
+ * Said in shipkit's own words, because an agent that cannot tell this list apart from the
+ * rest of the brief will treat it like the rest of the brief.
+ */
+const FIX_REQUEST_INSTRUCTION =
+  "A person read this change in shipkit review and chose these. They are not shipkit's " +
+  "opinion and not a heuristic — someone looked at the diff and ticked them. Address every " +
+  "one, and read each note as the instruction it is, before you draft anything below.";
+
+/**
+ * Said when the selection was made somewhere other than where the agent is standing.
+ *
+ * Deliberately a description and not a verdict: shipkit cannot tell a rebase from a rename
+ * from genuinely stale work, and the person who ticked the boxes is not here to ask.
+ */
+function mismatchNote(fixRequest: FixRequest, branch: string, base: string): string {
+  return (
+    `This selection was made on branch "${fixRequest.branch}" against base "${fixRequest.base}", ` +
+    `and this change is on "${branch}" against "${base}". It is carried here rather than ` +
+    "dropped, because a person chose it. Decide for yourself whether each item still applies " +
+    "to the diff in front of you, and say which ones you skipped and why."
+  );
+}
 
 export type AssembleInput = {
   repo: RepoState;
@@ -35,6 +60,11 @@ export type AssembleInput = {
    * not be read at all and every rule is carried on purpose.
    */
   readiness?: ReadinessRule[];
+  /**
+   * The selection `shipkit review` left at `.shipkit/fix-request.json`, when there is one.
+   * Read by the caller, like everything else that needs a filesystem.
+   */
+  fixRequest?: FixRequest;
 };
 
 export function assembleBrief({
@@ -44,6 +74,7 @@ export function assembleBrief({
   issue,
   changed,
   readiness,
+  fixRequest,
 }: AssembleInput): Brief {
   const conversion = changed === undefined ? undefined : detectConversion(changed);
   const advice: Advice[] =
@@ -52,6 +83,23 @@ export function assembleBrief({
       : [conversionAdvice(conversion, { ticketKey: issue?.key, epic: config.techTask?.epic })];
 
   const brief: Brief = {
+    // First key in the object literal, because `JSON.stringify` writes string keys in
+    // insertion order and this is the one thing in the brief that a person chose. An empty
+    // selection is treated as none at all: `shipkit review` does not write one, and a
+    // `fixRequest` key with no items would be an instruction to do nothing.
+    ...(fixRequest !== undefined && fixRequest.items.length > 0
+      ? {
+          fixRequest: {
+            instruction: FIX_REQUEST_INSTRUCTION,
+            createdAt: fixRequest.createdAt,
+            madeOn: { branch: fixRequest.branch, base: fixRequest.base },
+            ...(fixRequest.branch === repo.branch && fixRequest.base === target.branch
+              ? {}
+              : { note: mismatchNote(fixRequest, repo.branch, target.branch) }),
+            items: fixRequest.items,
+          },
+        }
+      : {}),
     change: {
       branch: repo.branch,
       files: repo.changedFiles,

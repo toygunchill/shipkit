@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../../src/config/load.js";
+import { configSchema } from "../../src/config/schema.js";
+import { parse } from "yaml";
+import { readFileSync } from "node:fs";
+
+/** A config that already loads, so these tests vary exactly one key. */
+const BASE = parse(readFileSync("tests/fixtures/valid.shipkit.yml", "utf8")) as unknown;
 
 describe("the readiness config key", () => {
   it("is absent from the configs that exist today, and they load unchanged", () => {
@@ -20,5 +26,24 @@ describe("the readiness config key", () => {
     expect(loadConfig("docs/examples/example-app.shipkit.yml").readiness).toBe(
       "./example-app.readiness.yml",
     );
+  });
+});
+
+describe("readiness: naming more than one file", () => {
+  it("takes a list, so a team ruleset and a platform ruleset can both apply", () => {
+    const config = configSchema.parse({
+      ...configSchema.parse(BASE),
+      readiness: ["./team.yml", "./platform.yml"],
+    });
+
+    expect(config.readiness).toEqual(["./team.yml", "./platform.yml"]);
+  });
+
+  it("still takes one path written as a string", () => {
+    expect(configSchema.parse({ ...configSchema.parse(BASE), readiness: "./r.yml" }).readiness).toBe("./r.yml");
+  });
+
+  it("refuses an empty list rather than reading it as no rules at all", () => {
+    expect(() => configSchema.parse({ ...configSchema.parse(BASE), readiness: [] })).toThrow();
   });
 });

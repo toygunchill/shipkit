@@ -1,6 +1,7 @@
 // Small, dependency-light helpers factored out of src/cli.ts so they can be unit-tested
 // directly. src/cli.ts itself runs `program.parse()` at import time and must not be
 // imported from tests.
+import { isAbsolute, join } from "node:path";
 import { fetchIssue, type Fetcher } from "./jira/client.js";
 import type { IssueFacts } from "./jira/types.js";
 import type { SubmitResult } from "./submit/run.js";
@@ -101,4 +102,22 @@ export function cliRemedy(result: SubmitResult, yesGiven: boolean): string | und
   if (yesGiven) return undefined;
   if (result.refusal !== "unacknowledged") return undefined;
   return "Re-run with --yes to accept these.";
+}
+
+/**
+ * Where this run's `.shipkit.yml` is, given the repository it is working on.
+ *
+ * A relative `--config` is relative to *that repository*, not to the directory the command
+ * was typed in: `shipkit brief --repo ../other` has to read the other repository's config,
+ * and one long-lived MCP server serves several repositories from one process. An absolute
+ * path is left exactly as given.
+ *
+ * Shared by the CLI and the MCP tools so the two cannot drift: they are two spellings of
+ * one product, and a config resolved differently by each is a difference nobody would
+ * think to test for.
+ */
+export function configPath(args: { repo: string; config?: string | undefined }): string {
+  // "" is absent too — `??` alone would read it as an explicit path and fail open.
+  if (!args.config) return join(args.repo, ".shipkit.yml");
+  return isAbsolute(args.config) ? args.config : join(args.repo, args.config);
 }

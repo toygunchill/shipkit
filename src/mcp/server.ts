@@ -7,6 +7,7 @@ import { requestApproval } from "../approval/client.js";
 import { loadConfig } from "../config/load.js";
 import { loadReadiness as loadReadinessRules } from "../readiness/load.js";
 import { resolveIssue } from "../cli-support.js";
+import { archiveFixRequest, fixRequestExclusions, readFixRequest } from "../review/fixrequest.js";
 import { renderBody } from "../submit/response.js";
 import { runSubmit } from "../submit/run.js";
 import type { SubmitDeps } from "../submit/run.js";
@@ -80,6 +81,9 @@ export function realToolDeps(): ToolDeps {
     // wire, so there is never a response file in the repository to keep out of the commit.
     readPushChangedFiles: (base, cwd) => readPushChangedFiles(base, [], cwd),
     readPushChangedPaths: (base, cwd) => readPushChangedPaths(base, [], cwd),
+    // Root-relative, so it is read from the repository root and not from whichever
+    // subdirectory the caller happened to name.
+    readFixRequest: (repo: string) => readFixRequest(readRepoRoot(repo)),
     // Resolved against the realpath of the config that named it — see
     // src/readiness/load.ts. A configured-but-broken rules file throws `ConfigError` from
     // here, which the tool reports as a failure; it never degrades into an empty checklist.
@@ -106,6 +110,14 @@ export function realToolDeps(): ToolDeps {
           ? undefined
           : loadReadinessRules(configPath, config.readiness);
       },
+      // Both of these were missing, and both are optional on `SubmitDeps`, so their absence
+      // type-checked in silence. Without the first, `commitAll` ran `git add --all` with no
+      // exclusion and committed and pushed `.shipkit/fix-request.json` — a person's private
+      // notes about what is wrong with their own change — and then `untracked-files` warned
+      // about it on every later run. Without the second, a selection the agent had acted on
+      // was never consumed, so the next brief asked for the same fixes again.
+      fixRequestExclusions: () => fixRequestExclusions(readRepoRoot(repo)),
+      archiveFixRequest: () => archiveFixRequest(readRepoRoot(repo), new Date()),
       findPullRequest: (branch) => findPullRequest(branch, repo),
       readUntrackedFiles: () => readUntrackedFiles(repo),
       readRepoRoot: () => readRepoRoot(repo),

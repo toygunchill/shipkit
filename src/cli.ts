@@ -1,12 +1,14 @@
 #!/usr/bin/env node
-import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFile, execFileSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { Command, CommanderError } from "commander";
 import { observedChangedFiles } from "./advice/observe.js";
 import { requestApproval } from "./approval/client.js";
 import { assembleBrief } from "./brief/assemble.js";
 import {
   cliRemedy,
+  configPath,
   extractIssueKeysFromBody,
   isValidBase,
   resolveIssue,
@@ -29,9 +31,21 @@ import {
 } from "./jira/techtask.js";
 import type { IssueFacts } from "./jira/types.js";
 import { applicable, observedPaths } from "./readiness/apply.js";
-import { loadReadiness } from "./readiness/load.js";
+import { loadReadiness, loadReadinessFiles } from "./readiness/load.js";
+import { runRules } from "./rules/run.js";
+import { surveyRepository } from "./rules/survey.js";
 import type { ReadinessRule } from "./readiness/types.js";
 import { jiraToken } from "./secrets/keychain.js";
+import {
+  archiveFixRequest,
+  fixRequestExclusions,
+  readFixRequest,
+  writeFixRequest,
+  FixRequestError,
+  type FixRequest,
+} from "./review/fixrequest.js";
+import { runReview, type ReviewDeps } from "./review/run.js";
+import { listen } from "./review/server.js";
 import { loadResponse, renderBody, ResponseError } from "./submit/response.js";
 import { runSubmit, type SubmitDeps } from "./submit/run.js";
 import { validate } from "./validate/rules.js";
@@ -41,9 +55,11 @@ import {
   readPushChangedFiles,
   readPushChangedPaths,
   readPushAddedLines,
+  readPushDiff,
   readPushDiffstat,
   readRepoRoot,
   readRepoState,
+  readTrackedFiles,
   readUntrackedFiles,
   VcsError,
 } from "./vcs/git.js";
@@ -62,7 +78,45 @@ program.name("shipkit").version("0.1.0").exitOverride();
  * command below already reports and exits 2 on. That is deliberate: a repository whose
  * rules file is missing or malformed must stop, not quietly proceed with nothing asked.
  */
-function readinessRules(configPath: string, config: ShipkitConfig): ReadinessRule[] | undefined {
+/**
+ * The repository this run works on.
+ *
+ * `--repo` rather than the process's working directory, because shipkit is installed once
+ * and used against many checkouts: a person who has it on their PATH should be able to point
+ * it at a repository they are not standing in. Absent, it is the working directory, so every
+ * command means exactly what it meant before.
+ *
+ * Checked here rather than left to git, whose message for a path that is not a directory
+ * names neither the option nor the value the person typed.
+ */
+function repoOf(options: { repo?: string }): string {
+  const repo = resolve(options.repo ?? process.cwd());
+  if (!existsSync(repo) || !statSync(repo).isDirectory()) {
+    throw new ConfigError(`--repo ${options.repo ?? repo} is not a directory`);
+  }
+  return repo;
+}
+
+/**
+ * Which readiness checklist this run applies.
+ *
+ * `--rules` replaces `readiness:` rather than adding to it. A merge would make "apply only
+ * this checklist" unexpressible, which is the whole question the option answers, and would
+ * read differently depending on whether the target repository happens to configure one at
+ * all. Repeating `--rules` applies several, exactly as a list under `readiness:` does.
+ *
+ * The two resolve differently on purpose. `readiness:` resolves against the realpath of the
+ * config that names it — the symlinked-conventions deployment `readinessPath` documents —
+ * while `--rules` was typed at a prompt and resolves against the shell's own directory.
+ */
+function readinessRules(
+  configPath: string,
+  config: ShipkitConfig,
+  rules?: string[] | undefined,
+): ReadinessRule[] | undefined {
+  if (rules !== undefined && rules.length > 0) {
+    return loadReadinessFiles(rules.map((entry) => ({ path: resolve(entry), named: `--rules ${entry}` })));
+  }
   return config.readiness === undefined ? undefined : loadReadiness(configPath, config.readiness);
 }
 
@@ -71,10 +125,11 @@ program
   .description("Validate a pull-request title and body against .shipkit.yml")
   .requiredOption("--title <title>", "pull-request title")
   .requiredOption("--body-file <path>", "file holding the pull-request body")
-  .option("--config <path>", "path to .shipkit.yml", ".shipkit.yml")
+  .option("--repo <path>", "the repository to work in", ".")
+  .option("--config <path>", "path to .shipkit.yml, relative to --repo", ".shipkit.yml")
   .option("--branch <name>", "branch name to validate (defaults to the checked-out branch)")
   .option("--issue <key>", "override which cited issue key to check against Jira")
-  .action(async (options: { title: string; bodyFile: string; config: string; branch?: string; issue?: string }) => {
+  .action(async (options: { title: string; bodyFile: string; repo: string; config: string; branch?: string; issue?: string }) => {
     let body: string;
     try {
       body = readFileSync(options.bodyFile, "utf8");
@@ -85,12 +140,13 @@ program
     }
 
     try {
-      const config = loadConfig(options.config);
+      const root = repoOf(options);
+      const config = loadConfig(configPath({ repo: root, config: options.config }));
 
       let branch = options.branch;
       if (branch === undefined) {
         try {
-          branch = currentBranch();
+          branch = currentBranch(root);
         } catch {
           // Not a git repository, or git is unavailable — branch-pattern silently
           // does not run rather than failing the whole command.
@@ -146,8 +202,10 @@ program
   .command("brief")
   .description("Emit the JSON brief an agent fills in")
   .option("--base <branch>", "target branch for the pull request")
-  .option("--config <path>", "path to .shipkit.yml", ".shipkit.yml")
-  .action(async (options: { base?: string; config: string }) => {
+  .option("--repo <path>", "the repository to work in", ".")
+  .option("--config <path>", "path to .shipkit.yml, relative to --repo", ".shipkit.yml")
+  .option("--rules <path...>", "readiness ruleset(s) to apply, replacing the config's")
+  .action(async (options: { base?: string; repo: string; config: string; rules?: string[] }) => {
     if (options.base === undefined && !process.stdin.isTTY) {
       console.error(
         "--base is required when stdin is not a terminal. Valid targets are the repository's " +
@@ -166,17 +224,18 @@ program
     }
 
     try {
-      const config = loadConfig(options.config);
+      const root = repoOf(options);
+      const configFile = configPath({ repo: root, config: options.config });
+      const config = loadConfig(configFile);
 
       let base = options.base;
       let reason = "given with --base";
       if (base === undefined) {
-        const cwd = process.cwd();
-        base = baseCandidates(cwd)[0];
+        base = baseCandidates(root)[0];
         reason = "repository default branch";
       }
 
-      const repo = readRepoState(base);
+      const repo = readRepoState(base, root);
       const key = ticketFromBranch(repo.branch, config.jira.keyPattern);
       const issue = await resolveIssue(key, config);
       // No exclusion: `brief` runs before there is a response file to keep out of a commit.
@@ -184,8 +243,8 @@ program
       // `observedChangedFiles` because this read can fail on a repository where nothing is
       // wrong with the change — see src/advice/observe.ts. Unguarded, a missing clean-filter
       // binary means no brief is printed at all, which is a gate in everything but name.
-      const changed = observedChangedFiles(() => readPushChangedFiles(base));
-      const rules = readinessRules(options.config, config);
+      const changed = observedChangedFiles(() => readPushChangedFiles(base, [], root));
+      const rules = readinessRules(configFile, config, options.rules);
       // Guarded exactly like the advice observation above, and for the same reason: the
       // scratch-index read fails on repositories where nothing is wrong with the change, and
       // an unguarded call here means no brief is printed at all. The difference is what a
@@ -194,7 +253,13 @@ program
       const readiness =
         rules === undefined
           ? undefined
-          : applicable(rules, observedPaths(() => readPushChangedPaths(base)));
+          : applicable(rules, observedPaths(() => readPushChangedPaths(base, [], root)));
+      // What a person chose in `shipkit review`, if anyone has. Read here, from the
+      // repository root rather than from cwd, so a brief asked for from a subdirectory
+      // still finds it. A file that exists but cannot be parsed throws `FixRequestError`
+      // and stops the command — see src/review/fixrequest.ts for why silence is the one
+      // failure this must not have.
+      const fixRequest = readFixRequest(readRepoRoot(root));
       const brief = assembleBrief({
         repo,
         target: { branch: base, reason },
@@ -202,11 +267,17 @@ program
         issue,
         changed,
         ...(readiness === undefined ? {} : { readiness }),
+        ...(fixRequest === undefined ? {} : { fixRequest }),
       });
       console.log(JSON.stringify(brief, null, 2));
       process.exitCode = 0;
     } catch (error) {
-      if (error instanceof ConfigError || error instanceof VcsError || error instanceof JiraError) {
+      if (
+        error instanceof ConfigError ||
+        error instanceof VcsError ||
+        error instanceof JiraError ||
+        error instanceof FixRequestError
+      ) {
         console.error(error.message);
         process.exitCode = 2;
         return;
@@ -215,21 +286,24 @@ program
     }
   });
 
-const cwd = process.cwd();
-
-const realSubmitDeps: SubmitDeps = {
+function realSubmitDeps(cwd: string): SubmitDeps {
+  return {
   loadConfig,
   renderBody,
-  currentBranch,
+  currentBranch: () => currentBranch(cwd),
   resolveIssue,
-  readRepoState,
+  readRepoState: (base) => readRepoState(base, cwd),
   readPushDiffstat: (base, exclude) => readPushDiffstat(base, exclude, cwd),
   readPushAddedLines: (base, exclude) => readPushAddedLines(base, exclude, cwd),
   readPushChangedFiles: (base, exclude) => readPushChangedFiles(base, exclude, cwd),
   readPushChangedPaths: (base, exclude) => readPushChangedPaths(base, exclude, cwd),
   findPullRequest: (branch) => findPullRequest(branch, cwd),
-  readUntrackedFiles,
-  readRepoRoot,
+  readUntrackedFiles: () => readUntrackedFiles(cwd),
+  // Read from the repository root, not from cwd: the exclusion is a root-relative pathspec
+  // and `shipkit submit` may well be run from a subdirectory.
+  fixRequestExclusions: () => fixRequestExclusions(readRepoRoot(cwd)),
+  archiveFixRequest: () => archiveFixRequest(readRepoRoot(cwd), new Date()),
+  readRepoRoot: () => readRepoRoot(cwd),
   readHeadSha: () => readHeadSha(cwd),
   realpath: (path: string) => realpathSync(path),
   requestApproval: (request, timeoutMs) => requestApproval(request, { timeoutMs }),
@@ -238,33 +312,38 @@ const realSubmitDeps: SubmitDeps = {
   createPullRequest: (input) => createPullRequest(input, cwd),
   out: (line: string) => console.log(line),
   err: (line: string) => console.error(line),
-};
+  };
+}
 
 program
   .command("submit")
   .description("Validate the agent's answer, warn, then commit, push and open the pull request")
   .requiredOption("--input <path>", "file holding the agent's answer")
   .requiredOption("--base <branch>", "target branch for the pull request")
-  .option("--config <path>", "path to .shipkit.yml", ".shipkit.yml")
+  .option("--repo <path>", "the repository to work in", ".")
+  .option("--config <path>", "path to .shipkit.yml, relative to --repo", ".shipkit.yml")
+  .option("--rules <path...>", "readiness ruleset(s) to apply, replacing the config's")
   .option("--yes", "proceed despite pre-flight warnings", false)
-  .action(async (options: { input: string; base: string; config: string; yes: boolean }) => {
+  .action(async (options: { input: string; base: string; repo: string; config: string; rules?: string[]; yes: boolean }) => {
     try {
+      const repo = repoOf(options);
+      const config = configPath({ repo, config: options.config });
       const response = loadResponse(options.input);
       const result = await runSubmit(
         {
           base: options.base,
-          config: options.config,
+          config,
           response,
           responsePath: options.input,
           mode: "apply",
           acknowledge: options.yes ? "all" : [],
         },
         {
-          ...realSubmitDeps,
-          // Built here and not in `realSubmitDeps`, which is module-level and cannot know
-          // --config. The config is read a second time to learn one optional key; that is
-          // cheaper than giving the pure core a path to resolve and a file to open.
-          loadReadiness: () => readinessRules(options.config, loadConfig(options.config)),
+          ...realSubmitDeps(repo),
+          // Built here and not inside `realSubmitDeps`, which is handed a repository and not
+          // a config path. The config is read a second time to learn one optional key; that
+          // is cheaper than giving the pure core a path to resolve and a file to open.
+          loadReadiness: () => readinessRules(config, loadConfig(config), options.rules),
         },
       );
       // cliRemedy (src/cli-support.ts) is this interface's own after-the-fact remedy,
@@ -278,6 +357,170 @@ program
       process.exitCode = result.code;
     } catch (error) {
       if (error instanceof ResponseError) {
+        console.error(error.message);
+        process.exitCode = 2;
+        return;
+      }
+      throw error;
+    }
+  });
+
+/**
+ * The real review dependencies.
+ *
+ * Every read is the same one `submit` uses, through the same function, which is what makes
+ * the page honest. The three that are not shared are the three `submit` has no use for: the
+ * patch, the socket, and the two ways of getting a person's attention.
+ */
+function realReviewDeps(cwd: string, configPath: string, rules: string[] | undefined, notes: string[]): ReviewDeps {
+  return {
+    loadConfig,
+    loadResponse,
+    renderBody,
+    currentBranch: () => currentBranch(cwd),
+    resolveIssue,
+    loadReadiness: () => {
+      const applied = readinessRules(configPath, loadConfig(configPath), rules);
+      if (applied === undefined) {
+        // Said on the page rather than left as an absence. A review with no checklist looks
+        // exactly like a review whose checklist had nothing to say, and the difference
+        // decides whether a person goes looking for one.
+        notes.push(
+          "No readiness checklist applied to this change — this repository configures none, " +
+            "and none was given with --rules. `shipkit rules` can propose one from the code.",
+        );
+      }
+      return applied;
+    },
+    readRepoState: (base) => readRepoState(base, cwd),
+    readPushDiffstat: (base, exclude) => readPushDiffstat(base, exclude, cwd),
+    readPushAddedLines: (base, exclude) => readPushAddedLines(base, exclude, cwd),
+    readPushChangedFiles: (base, exclude) => readPushChangedFiles(base, exclude, cwd),
+    readPushChangedPaths: (base, exclude) => readPushChangedPaths(base, exclude, cwd),
+    readPushDiff: (base, exclude) => readPushDiff(base, exclude, cwd),
+    readUntrackedFiles: () => readUntrackedFiles(cwd),
+    readRepoRoot: () => readRepoRoot(cwd),
+    realpath: (path: string) => realpathSync(path),
+    // `submit` lets a `gh` failure become exit 2, and it is right to: it is about to push,
+    // and a forge it cannot reach is a forge it cannot open a pull request against. `review`
+    // pushes nothing, so the same failure is only three pre-flight checks it cannot run —
+    // approvals-dismissed, base-mismatch and blocking-label, all of which are about a pull
+    // request that may not exist. Refusing to show a person their own diff over that would
+    // make the command useless in exactly the repository it is easiest to try it in.
+    // The reader is told, on the page, rather than left to wonder.
+    findPullRequest: (branch) => {
+      try {
+        return findPullRequest(branch, cwd);
+      } catch (error) {
+        notes.push(
+          "The forge could not be consulted, so the pre-flight checks about an existing " +
+            `pull request did not run (${error instanceof Error ? error.message : String(error)}).`,
+        );
+        return null;
+      }
+    },
+    fixRequestExclusions: () => fixRequestExclusions(readRepoRoot(cwd)),
+    writeFixRequest: (request: FixRequest) => writeFixRequest(readRepoRoot(cwd), request),
+    // The same call `submit` makes once it has pushed: a selection that is finished with is
+    // kept, not deleted. Ticking nothing is a person saying the earlier list is done.
+    clearFixRequest: () => archiveFixRequest(readRepoRoot(cwd), new Date()),
+    notes: () => notes,
+    listen,
+    // `open` is what macOS uses to hand a URL to the default browser. Detached and ignored:
+    // the command's job is to wait for the page, not for the browser process.
+    openBrowser: (url: string) => {
+      execFile("open", [url], () => undefined);
+    },
+    // Measured before it was written, because a link the page cannot honour is worse than no
+    // link: `xed` is at /usr/bin/xed and its man page documents `-l, --line <number>`; no
+    // `x-source`, `vscode`, `txmt`, `mvim` or `idea` URL scheme is registered on this
+    // machine (only `x-source-tag`, which is Xcode's documentation anchor scheme and does
+    // not open files). So the page gets a button that comes back here, and the equivalent
+    // `xed --line N path` printed beside it for anyone whose editor is not Xcode.
+    //
+    // `--` and a root-relative path resolved against the repository root: the path can only
+    // ever be one the diff named (see src/review/server.ts), and this makes that explicit at
+    // the point the process is actually started.
+    //
+    // Absolute path and a timeout, both for the same reason: this call is synchronous and
+    // blocks the event loop, so a binary that does not return takes the review's ten-minute
+    // timer down with it — the timer cannot fire while the loop is blocked. Resolving `xed`
+    // through the inherited PATH would also have made "which program opens the file" depend
+    // on the shell the agent happened to launch shipkit from.
+    openEditor: (path: string, line: number) => {
+      execFileSync(
+        "/usr/bin/xed",
+        ["--line", String(line), "--", join(readRepoRoot(cwd), path)],
+        { stdio: "ignore", timeout: 10_000 },
+      );
+    },
+    now: () => new Date(),
+    wait: (ms: number) =>
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, ms).unref();
+      }),
+    out: (line: string) => console.log(line),
+    err: (line: string) => console.error(line),
+  };
+}
+
+program
+  .command("review")
+  .description("Show the change and what shipkit found, and take a person's answer. Pushes nothing.")
+  .option("--repo <path>", "the repository to work in", ".")
+  .option("--config <path>", "path to .shipkit.yml, relative to --repo", ".shipkit.yml")
+  .option("--rules <path...>", "readiness ruleset(s) to apply, replacing the config's")
+  .option("--base <branch>", "target branch for the pull request")
+  .option("--input <path>", "the agent's answer, if one has been drafted")
+  .option("--port <n>", "port to serve on; the default asks the kernel for a free one")
+  .option("--no-open", "print the URL instead of opening a browser")
+  .action(async (options: { repo: string; config: string; rules?: string[]; base?: string; input?: string; port?: string; open: boolean }) => {
+    let port = 0;
+    if (options.port !== undefined) {
+      const parsed = Number(options.port);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+        console.error(`Invalid --port "${options.port}": expected a port number between 1 and 65535`);
+        process.exitCode = 2;
+        return;
+      }
+      port = parsed;
+    }
+
+    if (options.base !== undefined && !isValidBase(options.base)) {
+      console.error(
+        `Invalid --base "${options.base}": expected a branch or ref name, not an option`,
+      );
+      process.exitCode = 2;
+      return;
+    }
+
+    try {
+      // The same resolution `brief` does, and for the same reason: release timing decides the
+      // base and the repository does not record it, so the default is the repository's own
+      // default branch and anything else has to be said out loud.
+      const root = repoOf(options);
+      const config = configPath({ repo: root, config: options.config });
+      const base = options.base ?? baseCandidates(root)[0];
+      if (base === undefined) {
+        console.error("Could not work out a base branch. Pass one with --base.");
+        process.exitCode = 2;
+        return;
+      }
+
+      const notes: string[] = [];
+      const result = await runReview(
+        {
+          base,
+          config,
+          responsePath: options.input,
+          port,
+          open: options.open,
+        },
+        realReviewDeps(root, config, options.rules, notes),
+      );
+      process.exitCode = result.code;
+    } catch (error) {
+      if (error instanceof ConfigError || error instanceof VcsError || error instanceof JiraError) {
         console.error(error.message);
         process.exitCode = 2;
         return;
@@ -375,10 +618,11 @@ function realInitSources(cwd: string): InitSources {
 program
   .command("init")
   .description("Write a starter .shipkit.yml, reading what the forge can prove")
-  .option("--config <path>", "path to write", ".shipkit.yml")
+  .option("--repo <path>", "the repository to work in", ".")
+  .option("--config <path>", "path to write, relative to --repo", ".shipkit.yml")
   .option("--force", "overwrite an existing config", false)
   .option("--limit <n>", "how many merged pull requests to read", "50")
-  .action((options: { config: string; force: boolean; limit: string }) => {
+  .action((options: { repo: string; config: string; force: boolean; limit: string }) => {
     const limit = Number(options.limit);
     if (!Number.isInteger(limit) || limit < 1) {
       console.error(`Invalid --limit "${options.limit}": expected a positive whole number`);
@@ -386,10 +630,18 @@ program
       return;
     }
 
+    let root: string;
+    try {
+      root = repoOf(options);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 2;
+      return;
+    }
     const result = runInit(
-      { config: options.config, force: options.force, limit },
+      { config: configPath({ repo: root, config: options.config }), force: options.force, limit },
       {
-        sources: realInitSources(cwd),
+        sources: realInitSources(root),
         exists: (path: string) => existsSync(path),
         write: (path: string, text: string) => writeFileSync(path, text, "utf8"),
         out: (line: string) => console.log(line),
@@ -463,7 +715,8 @@ program
   .command("tech-task")
   .description("Open the technical item for work the ticket did not ask for, or say why it cannot")
   .requiredOption("--subject <text>", "what was converted, as it should read in the summary")
-  .option("--config <path>", "path to .shipkit.yml", ".shipkit.yml")
+  .option("--repo <path>", "the repository to work in", ".")
+  .option("--config <path>", "path to .shipkit.yml, relative to --repo", ".shipkit.yml")
   .option("--team <name>", "Digital Team, instead of deriving it from your recent issues")
   .option("--sprint <id>", 'sprint id, instead of deriving it — or "none" to open it without a sprint')
   .option("--portfolio <child>", "portfolio child, instead of deriving it")
@@ -471,6 +724,7 @@ program
   .action(
     async (options: {
       subject: string;
+      repo: string;
       config: string;
       team?: string;
       sprint?: string;
@@ -511,11 +765,12 @@ program
       }
 
       try {
-        const config = loadConfig(options.config);
+        const configFile = configPath({ repo: repoOf(options), config: options.config });
+        const config = loadConfig(configFile);
 
         const techTask = config.techTask;
         if (techTask === undefined) {
-          console.error(missingTechTaskBlock(options.config));
+          console.error(missingTechTaskBlock(configFile));
           process.exitCode = 2;
           return;
         }
@@ -528,7 +783,7 @@ program
           portfolioParent === null ||
           Array.isArray(portfolioParent)
         ) {
-          console.error(missingPortfolioParent(options.config));
+          console.error(missingPortfolioParent(configFile));
           process.exitCode = 2;
           return;
         }
@@ -652,6 +907,51 @@ program
       }
     },
   );
+
+program
+  .command("rules")
+  .description("Propose a readiness ruleset from the code, for a repository that has none")
+  .option("--repo <path>", "the repository to read", ".")
+  .option("--out <path>", "write here instead of printing")
+  .option("--force", "overwrite an existing --out", false)
+  .action((options: { repo: string; out?: string; force: boolean }) => {
+    try {
+      const root = repoOf(options);
+      const result = runRules(
+        { out: options.out, force: options.force },
+        {
+          // `git ls-files` decides which files are this repository's code, so a repository
+          // that is not a checkout gets git's own refusal rather than a walk of whatever
+          // happens to be in the directory.
+          survey: () =>
+            surveyRepository({
+              trackedPaths: () => readTrackedFiles(root),
+              read: (path: string) => {
+                try {
+                  return readFileSync(join(root, path), "utf8");
+                } catch {
+                  // A git-lfs pointer with no filter installed, a symlink into a directory
+                  // that is not checked out. Skipped by the survey, never fatal.
+                  return undefined;
+                }
+              },
+            }),
+          exists: (path: string) => existsSync(path),
+          write: (path: string, text: string) => writeFileSync(path, text, "utf8"),
+          out: (line: string) => console.log(line),
+          err: (line: string) => console.error(line),
+        },
+      );
+      process.exitCode = result.code;
+    } catch (error) {
+      if (error instanceof ConfigError || error instanceof VcsError) {
+        console.error(error.message);
+        process.exitCode = 2;
+        return;
+      }
+      throw error;
+    }
+  });
 
 program
   .command("mcp")

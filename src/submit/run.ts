@@ -1,7 +1,8 @@
-import { isAbsolute, relative, resolve, sep } from "node:path";
-import { observedAddedLines, observedChangedFiles } from "../advice/observe.js";
+import { observedAddedLines } from "../advice/observe.js";
 import type { Advice } from "../advice/types.js";
-import { conversionAdvice, detectConversion, type ChangedFile } from "../advice/uikit.js";
+import type { ChangedFile } from "../advice/uikit.js";
+import { assessChange, assessReadiness } from "../assess/change.js";
+import { repoRelative } from "../assess/paths.js";
 import { changedFields, fingerprint, sortWarnings, type Situation } from "../approval/fingerprint.js";
 import {
   gate,
@@ -19,12 +20,12 @@ import { JiraError } from "../jira/client.js";
 import type { IssueFacts } from "../jira/types.js";
 import { preflight } from "../preflight/checks.js";
 import type { Warning } from "../preflight/types.js";
-import { applicable, evaluate, observedPaths } from "../readiness/apply.js";
 import type { ReadinessRule } from "../readiness/types.js";
 import { validate } from "../validate/rules.js";
 import type { Finding } from "../validate/types.js";
 import { VcsError, type RepoState } from "../vcs/git.js";
 import type { AddedLine, PullRequestState } from "../vcs/types.js";
+import type { ArchiveOutcome } from "../review/fixrequest.js";
 import { ResponseError, type SubmitResponse } from "./response.js";
 
 export type Acknowledgement = "all" | string[];
@@ -147,6 +148,24 @@ export type SubmitDeps = {
   loadReadiness?: () => ReadinessRule[] | undefined;
   findPullRequest: (branch: string) => PullRequestState | null;
   readUntrackedFiles: () => string[];
+  /**
+   * Root-relative paths of the review selection files lying in this repository —
+   * `.shipkit/fix-request.json` and anything already archived beside it. They get exactly
+   * the treatment the response file gets, for the same reason: they are shipkit's own
+   * working files and are never part of the change.
+   *
+   * Optional, like `loadReadiness`: a caller that supplies none is a caller with no review
+   * selection, which is every caller that existed before `shipkit review` did, and every run
+   * in a repository nobody has reviewed. Such a run passes exactly the exclusions it always
+   * did.
+   */
+  fixRequestExclusions?: () => string[];
+  /**
+   * Moves a consumed selection aside, so a stale one cannot haunt the next run. Called only
+   * once the push has landed — a submit that refuses must leave the selection where it is,
+   * because the work it asks for has not been done yet.
+   */
+  archiveFixRequest?: () => ArchiveOutcome;
   readRepoRoot: () => string;
   readHeadSha: () => string;
   realpath: (path: string) => string;
@@ -284,27 +303,14 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
     // is the author's to judge, which is what the warning is for.
     //
     // Paths here are repository-root-relative, which is what the pathspec needs and what
-    // `readUntrackedFiles` returns. A response file written outside the repository is not
-    // excluded at all: git rejects an out-of-tree pathspec outright, and there is nothing
-    // to exclude anyway, since staging can never reach it.
-    // Both sides go through realpath first. `git rev-parse --show-toplevel` resolves
-    // symbolic links and `resolve` does not, so on a checkout reached through one (macOS
-    // puts every temporary directory behind /var -> /private/var) the two spellings of the
-    // same directory would not match. The mismatch fails quietly in the worst direction:
-    // the response file is judged to be outside the repository, the exclusion is skipped,
-    // and it lands in the commit again.
-    //
-    // The result is spelled the way git spells paths. `relative` uses the platform
-    // separator, `git ls-files --full-name` always answers with forward slashes, and the
-    // two are compared to each other and handed to a pathspec — so on Windows the
-    // exclusion would miss and the file would be reported as untracked on every run.
+    // `readUntrackedFiles` returns. `repoRelative` (src/assess/paths.ts) holds the realpath
+    // and separator rules and the reasons for both; a response file written outside the
+    // repository comes back `undefined` and is not excluded at all, because git rejects an
+    // out-of-tree pathspec outright and staging can never reach it anyway.
     let relativeToRoot: string | undefined;
     if (options.responsePath !== undefined) {
       try {
-        const repoRoot = deps.realpath(deps.readRepoRoot());
-        relativeToRoot = relative(repoRoot, deps.realpath(resolve(options.responsePath)))
-          .split(sep)
-          .join("/");
+        relativeToRoot = repoRelative(options.responsePath, deps);
       } catch {
         // The file was readable a moment ago (whoever built `options.response` read it), so
         // failing here means it vanished underneath us. Report it the way every other bad
@@ -315,12 +321,12 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
         );
       }
     }
-    const responseInRepo =
-      relativeToRoot !== undefined &&
-      relativeToRoot.length > 0 &&
-      !relativeToRoot.startsWith("..") &&
-      !isAbsolute(relativeToRoot);
-    const exclude = responseInRepo ? [relativeToRoot as string] : [];
+    // The review selection joins it, when a person has made one. Same status, same
+    // treatment, and in every place the exclusion is passed rather than only at the commit.
+    const exclude = [
+      ...(relativeToRoot === undefined ? [] : [relativeToRoot]),
+      ...(deps.fixRequestExclusions?.() ?? []),
+    ];
 
     // The team's readiness rules, carried to the agent by `brief` and answered in the
     // response. Read here — as soon as `exclude` exists, and before the repository state or
@@ -341,18 +347,17 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
     let readinessWarnings: Warning[] = [];
     let readinessAdvice: Advice[] = [];
     if (rules !== undefined) {
-      const readPaths = deps.readPushChangedPaths;
-      // `undefined` means "could not be read", which `applicable` answers by carrying every
-      // rule. Distinct from `[]`, which means the push delivers nothing and legitimately
-      // excuses every `appliesTo` rule — see src/readiness/apply.ts.
-      const changedPaths =
-        readPaths === undefined
-          ? undefined
-          : observedPaths(() => readPaths(options.base, exclude));
-      const applying = applicable(rules, changedPaths);
-      // The whole rule set as the third argument, so an answer to a rule that exists but did
-      // not apply here costs nothing, while a misspelled id is still caught.
-      const readiness = evaluate(applying, response.readiness, rules);
+      // The same three steps `shipkit review` takes, in the same function — see
+      // src/assess/change.ts. Two readings of "which rules does this change owe an answer
+      // for" would drift, and the page a person ticks boxes on has to be about the submit
+      // that will follow it.
+      const readiness = assessReadiness({
+        rules,
+        base: options.base,
+        exclude,
+        answers: response.readiness,
+        readPushChangedPaths: deps.readPushChangedPaths,
+      });
       readinessWarnings = readiness.warnings;
       readinessAdvice = readiness.advice;
 
@@ -370,29 +375,28 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
     }
 
 
-    const repo = deps.readRepoState(options.base);
+    // The repository state, the forge, the working tree, pre-flight over all three, and the
+    // conversion observation — in one function, because `shipkit review` has to show a
+    // person exactly the set of problems this run is about to enforce. See
+    // src/assess/change.ts.
+    //
+    // The advisory read moved one step earlier than it used to sit: it now happens inside
+    // this call, before the warnings are printed rather than after. Nothing downstream
+    // consults `advice` — it is not in `gate`, not in `shouldRequestApproval`, not in the
+    // `Situation`, and not on the wire to the approval surface — so the only thing that
+    // changed is which line of stderr appears first.
+    const assessment = assessChange(
+      { base: options.base, branch, exclude, ticketKey, issueVerified, config },
+      deps,
+    );
+    const repo = assessment.repo;
     // Reassigned below when a re-derivation runs and the situation is unchanged: the
     // open-or-update decision at the end of this function must act on the pull request
     // as it stands now, not as it stood when the person was first asked.
-    let existingPr = deps.findPullRequest(branch);
-    const untrackedFiles = deps
-      .readUntrackedFiles()
-      .filter((file) => !responseInRepo || file !== relativeToRoot);
+    let existingPr = assessment.pullRequest;
 
     warnings = [
-      ...preflight({
-        branch,
-        base: options.base,
-        commits: repo.commits,
-        ticketKey,
-        issueVerified,
-        pullRequest: existingPr,
-        untrackedFiles,
-        // Read through the advisory guard: a repository where the scratch-index read fails
-        // is one where shipkit still has to run, and no observation is the honest answer.
-        addedLines: observedAddedLines(() => deps.readPushAddedLines(options.base, exclude)),
-        config,
-      }).warnings,
+      ...assessment.warnings,
       // Appended rather than interleaved: `sortWarnings` puts them in canonical order for
       // the fingerprint and the panel, so position here decides only the order they are
       // printed in — pre-flight's findings about the push first, then the answers about the
@@ -406,28 +410,10 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       }
     }
 
-    // Read after the warnings and before the gate, so `preview` carries it too: preview is
-    // where the agent asks what pushing would do, and an observation it only ever learns
-    // from `apply` arrives after the body it should have shaped is already written.
-    //
-    // The same `exclude` the commit gets, and the same uncommitted-work reading — see
-    // `readPushChangedFiles`. Nothing below this line consults `advice`: it is not in
-    // `gate`, not in `shouldRequestApproval`, not in the `Situation`, and not on the wire
-    // to the approval surface. It is printed and returned, and that is all it does.
-    //
-    // Wrapped in `observedChangedFiles` because the read itself can fail on a repository
-    // where nothing is wrong with the change — see src/advice/observe.ts. An advisory read
-    // that threw here would land in the catch below and return `code: 2` with nothing
-    // committed, which is precisely the thing advice must never do.
-    const conversion = detectConversion(
-      observedChangedFiles(() => deps.readPushChangedFiles(options.base, exclude)),
-    );
-    advice = [
-      ...(conversion === undefined
-        ? []
-        : [conversionAdvice(conversion, { ticketKey, epic: config.techTask?.epic })]),
-      ...readinessAdvice,
-    ];
+    // Set before the gate, so `preview` carries it too: preview is where the agent asks what
+    // pushing would do, and an observation it only ever learns from `apply` arrives after
+    // the body it should have shaped is already written.
+    advice = [...assessment.advice, ...readinessAdvice];
     // `err`, like the warnings above, because `out` is where the pull-request URL goes and
     // a caller piping stdout is reading that.
     for (const item of advice) deps.err(item.message);
@@ -508,6 +494,10 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
       // property the echoed ids have — checked against what pre-flight produces
       // now, not what it produced when the question was asked.
       if (approval === "approved") {
+        // Deliberately not `assessChange`. That function reads the advisory channel too, and
+        // this re-derivation exists only to re-hash the facts the fingerprint binds — an
+        // extra scratch-index read here would cost a second `git add --all` over the whole
+        // tree to produce advice nobody looks at after an approval.
         const freshHead = deps.readHeadSha();
         const freshPr = deps.findPullRequest(branch);
         const freshRepo = deps.readRepoState(options.base);
@@ -521,7 +511,7 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
             pullRequest: freshPr,
             untrackedFiles: deps
               .readUntrackedFiles()
-              .filter((file) => !responseInRepo || file !== relativeToRoot),
+              .filter((file) => !exclude.includes(file)),
             addedLines: observedAddedLines(() =>
               deps.readPushAddedLines(options.base, exclude),
             ),
@@ -620,6 +610,27 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
     committed = true;
     deps.pushBranch(branch);
     pushed = true;
+
+    // Here, and not at the two `code: 0` returns below, because the push is the moment the
+    // work a person asked for actually leaves the machine. A `gh pr create` that fails after
+    // this point still leaves that work pushed, and a selection carried into the *next*
+    // brief would ask the agent to fix what it has already fixed.
+    //
+    // Every refusal above returns before `commitAll`, so a submit that refuses leaves the
+    // selection exactly where `shipkit review` put it.
+    const archived = deps.archiveFixRequest?.() ?? { kind: "none" as const };
+    if (archived.kind === "moved") {
+      deps.err(`The review selection was acted on and moved to ${archived.path}.`);
+    } else if (archived.kind === "failed") {
+      // Said out loud rather than swallowed. The push has landed, so this cannot fail the
+      // run — but the selection is still sitting in the repository, and the next `brief`
+      // will carry it again and ask the agent to redo work it has already done. A person
+      // who is told can delete the file; a person who is not told cannot even see the loop.
+      deps.err(
+        `The push landed, but the review selection could not be moved aside: ${archived.detail}. ` +
+          "Delete .shipkit/fix-request.json, or the next shipkit brief will ask for these fixes again.",
+      );
+    }
 
     // `gh pr create` refuses outright when an open pull request already exists for this head
     // branch — exactly the state approvals-dismissed/base-mismatch/blocking-label exist to

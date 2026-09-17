@@ -15,6 +15,123 @@ import Foundation
 // is the first real test. That is why every failure path below produces a
 // sentence naming what it could not make sense of.
 
+/// Who opened a pull request.
+///
+/// Optional wherever it appears, because GitHub's `author` is genuinely
+/// nullable: a deleted account leaves the pull request in place with a null
+/// author, and a row that cannot be drawn for that reason would be a row
+/// missing from a count. `avatarURL` is optional inside an author that is
+/// present for the same reason one step down — a login is enough to draw the
+/// row, an avatar is decoration on top of it.
+public struct InboxAuthor: Sendable, Equatable {
+    public let login: String
+    public let avatarURL: String?
+
+    public init(login: String, avatarURL: String?) {
+        self.login = login
+        self.avatarURL = avatarURL
+    }
+}
+
+/// GitHub's own summary of where a pull request's review stands.
+///
+/// Deliberately not reconstructed from the reviews list. The server knows
+/// things the reviews list does not — which reviewers are required, whether a
+/// CODEOWNERS rule is satisfied, whether a `CHANGES_REQUESTED` was
+/// superseded — and a client that recomputes this from `reviews(last: 20)`
+/// gets a different answer than the merge button does on exactly the pull
+/// requests where it matters.
+public enum ReviewDecision: String, Sendable, Equatable {
+    case approved = "APPROVED"
+    case changesRequested = "CHANGES_REQUESTED"
+    case reviewRequired = "REVIEW_REQUIRED"
+}
+
+/// What the row says about a pull request's review, in one mark.
+public enum StandingMark: Sendable, Equatable {
+    /// Changes were requested. Shown ahead of any approval count: a pull
+    /// request with two approvals *and* changes requested is blocked, and the
+    /// blocking fact is the one the reader needs first.
+    case changesRequested
+    /// How many people currently approve. Zero is a real answer and is shown
+    /// as one — this team needs three before it can merge, so "none yet" is
+    /// information, not noise.
+    case approvals(Int)
+}
+
+/// Where a pull request's review stands: the server's verdict, and the count
+/// derived beside it.
+public struct ReviewStanding: Sendable, Equatable {
+    /// `nil` when the field came back null (GitHub returns null when no review
+    /// is required and none has been submitted) or carried a string this does
+    /// not know.
+    public let decision: ReviewDecision?
+    /// How many distinct people currently approve, by `latestApprovalCount`'s
+    /// rule. `nil` means the reviews were not asked for or did not come back —
+    /// which is not the same as zero, and is drawn as nothing rather than as a
+    /// confident "0".
+    public let approvals: Int?
+
+    /// Nothing was established. What a pull request parsed before this feature
+    /// existed looks like, and what a search that did not select the fields
+    /// produces.
+    public static let unknown = ReviewStanding(decision: nil, approvals: nil)
+
+    public init(decision: ReviewDecision?, approvals: Int?) {
+        self.decision = decision
+        self.approvals = approvals
+    }
+
+    /// The single mark the row draws, or `nil` when neither half is known.
+    ///
+    /// `decision` is the authority for *state* and the count is the authority
+    /// for *how many*; the precedence between them lives here rather than in
+    /// the view so it can be tested. Changes requested wins outright, even
+    /// against a healthy approval count.
+    public var mark: StandingMark? {
+        if decision == .changesRequested { return .changesRequested }
+        guard let approvals else { return nil }
+        return .approvals(approvals)
+    }
+}
+
+/// How many distinct people currently approve, counting **each reviewer's
+/// latest position once**.
+///
+/// This collapsing rule is the whole correctness of the number. GitHub returns
+/// every review ever submitted, so a reviewer who requested changes on Monday
+/// and approved on Tuesday appears twice; counting `state == "APPROVED"` rows
+/// would report that person's single approval as one of two, and a pull
+/// request that went round twice with one reviewer would read as fully
+/// approved. Latest per author, then count the approvals among those.
+///
+/// Only *position-bearing* reviews take part in "latest": `APPROVED`,
+/// `CHANGES_REQUESTED` and `DISMISSED`. A `COMMENTED` review is not a
+/// position — GitHub leaves an existing approval standing when its author
+/// later comments — so letting a comment become someone's latest review would
+/// silently retract their approval. `PENDING` has not been submitted at all.
+///
+/// Absence is not evidence, as everywhere else in this file: a review with no
+/// author, no state, or no `submittedAt` cannot be attributed or ordered, so
+/// it takes no part.
+public func latestApprovalCount(reviews: [ReviewEvent]) -> Int {
+    var latest: [String: (at: Date, state: String)] = [:]
+    for review in reviews {
+        guard let author = review.authorLogin,
+              let state = review.state,
+              let submittedAt = review.submittedAt
+        else { continue }
+        guard state == "APPROVED" || state == "CHANGES_REQUESTED" || state == "DISMISSED" else { continue }
+        // Logins are case-insensitive on GitHub and the casing is not
+        // guaranteed stable across fields, so the key is folded — otherwise
+        // "Octocat" and "octocat" collapse into two people.
+        let key = author.lowercased()
+        if let seen = latest[key], seen.at >= submittedAt { continue }
+        latest[key] = (submittedAt, state)
+    }
+    return latest.values.filter { $0.state == "APPROVED" }.count
+}
+
 /// One pull request, as the panel lists it.
 public struct InboxPullRequest: Sendable, Equatable, Identifiable {
     /// The URL is the identity: a pull request cannot appear twice under one,
@@ -25,12 +142,27 @@ public struct InboxPullRequest: Sendable, Equatable, Identifiable {
     /// `owner/name`, as GitHub's `nameWithOwner`.
     public let repository: String
     public let updatedAt: Date
+    /// `nil` for a deleted account. See `InboxAuthor`.
+    public let author: InboxAuthor?
+    public let standing: ReviewStanding
 
-    public init(title: String, url: String, repository: String, updatedAt: Date) {
+    /// The two new fields default to absent so that constructing a pull
+    /// request without them stays legal — the panel's own rule is that an
+    /// unestablished fact is absent, not zero, and that has to be expressible.
+    public init(
+        title: String,
+        url: String,
+        repository: String,
+        updatedAt: Date,
+        author: InboxAuthor? = nil,
+        standing: ReviewStanding = .unknown
+    ) {
         self.title = title
         self.url = url
         self.repository = repository
         self.updatedAt = updatedAt
+        self.author = author
+        self.standing = standing
     }
 }
 
@@ -239,6 +371,14 @@ public let inboxSearchLimit = 50
 /// what *others* did), the recent conversation comments, the head commit for
 /// `needsAnotherLook`, and the pull request's own `createdAt` plus its latest
 /// commit for `newsOnMyPullRequest`'s anchor.
+///
+/// All three additionally select `author { login avatarUrl }` and
+/// `reviewDecision`, which no filter uses — they are what the *row* shows. The
+/// first search also takes the review window it did not need before, because
+/// the approval count is derived from the reviews list (see
+/// `latestApprovalCount`) while the state comes from `reviewDecision`. Two
+/// fields for two questions: the server is the authority on *where the review
+/// stands*, and only the list can say *how many people* stand there.
 public func inboxQuery(login: String) -> String {
     let waiting = "is:open is:pr archived:false review-requested:\(login)"
     let reviewed = "is:open is:pr archived:false reviewed-by:\(login) -author:\(login)"
@@ -251,7 +391,16 @@ public func inboxQuery(login: String) -> String {
             title
             url
             updatedAt
+            author { login avatarUrl }
+            reviewDecision
             repository { nameWithOwner }
+            reviews(last: \(reviewWindow)) {
+              nodes {
+                author { login }
+                state
+                submittedAt
+              }
+            }
           }
         }
       }
@@ -262,6 +411,8 @@ public func inboxQuery(login: String) -> String {
             url
             updatedAt
             headRefOid
+            author { login avatarUrl }
+            reviewDecision
             repository { nameWithOwner }
             reviews(last: \(reviewWindow)) {
               nodes {
@@ -287,6 +438,8 @@ public func inboxQuery(login: String) -> String {
             url
             updatedAt
             createdAt
+            author { login avatarUrl }
+            reviewDecision
             repository { nameWithOwner }
             reviews(last: \(reviewWindow)) {
               nodes {
@@ -322,6 +475,12 @@ public func inboxQuery(login: String) -> String {
 /// treated as one I never reviewed — so it stays out of the bucket. A miss,
 /// not a false alarm, which is the right direction for a bucket whose value is
 /// being quiet.
+///
+/// The approval count shares the window and inherits the same direction of
+/// error: an approval pushed out of the last twenty reviews is not counted, so
+/// the number can read low on a very long thread. It never reads high, which
+/// is the half that matters — this team merges on three approvals, and a count
+/// that overstates would say "ready" about something that is not.
 public let reviewWindow = 20
 public let commentWindow = 10
 
@@ -551,6 +710,8 @@ private struct SearchNode: Decodable {
     let updatedAt: String?
     let createdAt: String?
     let headRefOid: String?
+    let reviewDecision: String?
+    let author: Author?
     let repository: Repository?
     let reviews: ReviewConnection?
     let comments: CommentConnection?
@@ -561,10 +722,16 @@ private struct SearchNode: Decodable {
     /// node comes back as `{}`. `is:pr` should already have excluded those;
     /// this is what keeps the belt-and-braces case from being reported as a
     /// broken response.
+    ///
+    /// Every selected field is listed, `author` and `reviewDecision` included.
+    /// Leaving a field out would make a node carrying only that field look
+    /// empty and be skipped — a silently dropped pull request, which is a
+    /// wrong count presented confidently.
     var isEmptySelection: Bool {
         title == nil && url == nil && updatedAt == nil && createdAt == nil
             && repository == nil && headRefOid == nil && reviews == nil
-            && comments == nil && commits == nil
+            && comments == nil && commits == nil && author == nil
+            && reviewDecision == nil
     }
 }
 
@@ -594,6 +761,10 @@ private struct CommentNode: Decodable {
 
 private struct Author: Decodable {
     let login: String?
+    /// Only selected on the pull request's own author; the `author` inside a
+    /// review node does not carry it, which is why it is optional here rather
+    /// than a second type.
+    let avatarUrl: String?
 }
 
 private struct Commit: Decodable {
@@ -756,6 +927,13 @@ private func commentEvents(_ node: SearchNode) -> [CommentEvent]? {
 
 /// The fields both buckets need. The reason string names the pull request
 /// where it can, so the first run against the real server says which one.
+///
+/// The four load-bearing fields are still required — without one of them the
+/// row cannot be drawn or opened at all, and a dropped row is a wrong count.
+/// The two added here are not: an author that did not come back and a review
+/// standing that did not come back are absences the row draws around. That is
+/// the line — a missing fact that changes *membership* is a reported problem,
+/// a missing fact that only changes *decoration* is an absence.
 private func pullRequest(from node: SearchNode) -> Result<InboxPullRequest, InboxProblem> {
     let subject = node.url ?? node.title ?? "a pull request"
     guard let title = node.title else { return .failure(InboxProblem("no title came back for \(subject)")) }
@@ -771,8 +949,40 @@ private func pullRequest(from node: SearchNode) -> Result<InboxPullRequest, Inbo
         title: title,
         url: url,
         repository: repository,
-        updatedAt: updatedAt
+        updatedAt: updatedAt,
+        author: author(from: node),
+        standing: standing(from: node)
     ))
+}
+
+/// `nil` when `author` came back null — a deleted account — or came back
+/// without a login to name it by. The pull request is still listed; it simply
+/// has nobody to show.
+private func author(from node: SearchNode) -> InboxAuthor? {
+    guard let login = node.author?.login, login.isEmpty == false else { return nil }
+    // An empty `avatarUrl` string is treated as no avatar rather than handed
+    // on as a URL to fetch, because the fetch would be one guaranteed failure
+    // per refresh and the row looks identical either way.
+    let avatar = node.author?.avatarUrl.flatMap { $0.isEmpty ? nil : $0 }
+    return InboxAuthor(login: login, avatarURL: avatar)
+}
+
+/// The state from the server, the count from the list.
+///
+/// A `reviewDecision` string this does not know becomes `nil` rather than a
+/// guess, on the same whitelist principle the two bucket filters use: an
+/// unrecognised enum member — a GHE-version variant, a future addition — is
+/// not affirmative evidence of anything.
+///
+/// `approvals` is `nil`, not `0`, when the reviews connection itself did not
+/// come back. The bucket filters treat that as a broken response because their
+/// *membership* depends on it; here only the mark depends on it, and the mark
+/// for "I could not find out" is nothing at all rather than a confident zero.
+private func standing(from node: SearchNode) -> ReviewStanding {
+    ReviewStanding(
+        decision: node.reviewDecision.flatMap(ReviewDecision.init(rawValue:)),
+        approvals: reviewEvents(node).map(latestApprovalCount(reviews:))
+    )
 }
 
 /// GitHub returns RFC 3339 in UTC.

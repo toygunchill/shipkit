@@ -19,6 +19,19 @@ private func graphQL(waiting: String, reviewed: String, mine: String = "") -> Da
     """.utf8)
 }
 
+/// `"author":{...}` as the searches select it, or the literal null a deleted
+/// account produces. `nil` for `login` is that null; `nil` for `avatar` is an
+/// author whose `avatarUrl` came back null.
+private func authorField(login: String?, avatar: String?) -> String {
+    guard let login else { return "\"author\":null," }
+    let url = avatar.map { "\"\($0)\"" } ?? "null"
+    return "\"author\":{\"login\":\"\(login)\",\"avatarUrl\":\(url)},"
+}
+
+private func decisionField(_ decision: String?) -> String {
+    decision.map { "\"reviewDecision\":\"\($0)\"," } ?? ""
+}
+
 /// A node as the third search returns it: my own pull request, with the
 /// anchor material and everyone's answers.
 private func myNode(
@@ -26,6 +39,9 @@ private func myNode(
     updatedAt: String = "2026-09-16T09:00:00Z",
     createdAt: String = "2026-09-10T09:00:00Z",
     lastCommitAt: String? = "2026-09-12T09:00:00Z",
+    authorLogin: String? = "toygun",
+    avatarURL: String? = "https://example.test/avatars/u/1",
+    reviewDecision: String? = nil,
     reviews: [String] = [],
     comments: [String] = []
 ) -> String {
@@ -35,6 +51,8 @@ private func myNode(
     return """
     {"title":"Drop the dead flag","url":"\(url)","updatedAt":"\(updatedAt)",\
     "createdAt":"\(createdAt)","repository":{"nameWithOwner":"acme/api"},\
+    \(authorField(login: authorLogin, avatar: avatarURL))\
+    \(decisionField(reviewDecision))\
     \(commits)\
     "reviews":{"nodes":[\(reviews.joined(separator: ","))]},\
     "comments":{"nodes":[\(comments.joined(separator: ","))]}}
@@ -42,14 +60,29 @@ private func myNode(
 }
 
 /// A node as the first search returns it.
+///
+/// `reviews: nil` omits the connection altogether, which is what an older
+/// server that did not answer that part of the selection would produce — not
+/// the same as an empty connection, and the parser is required to tell them
+/// apart.
 private func waitingNode(
     title: String = "Tighten the merge gate",
     url: String = "https://example.test/acme/api/pull/7",
     repository: String = "acme/api",
-    updatedAt: String = "2026-09-15T09:00:00Z"
+    updatedAt: String = "2026-09-15T09:00:00Z",
+    authorLogin: String? = "raine",
+    avatarURL: String? = "https://example.test/avatars/u/9",
+    reviewDecision: String? = nil,
+    reviews: [String]? = []
 ) -> String {
-    """
+    let reviewField = reviews
+        .map { "\"reviews\":{\"nodes\":[\($0.joined(separator: ","))]}," }
+        ?? ""
+    return """
     {"title":"\(title)","url":"\(url)","updatedAt":"\(updatedAt)",\
+    \(authorField(login: authorLogin, avatar: avatarURL))\
+    \(decisionField(reviewDecision))\
+    \(reviewField)\
     "repository":{"nameWithOwner":"\(repository)"}}
     """
 }
@@ -60,6 +93,9 @@ private func reviewedNode(
     url: String = "https://example.test/acme/api/pull/11",
     updatedAt: String = "2026-09-16T09:00:00Z",
     headRefOid: String? = "aaa111",
+    authorLogin: String? = "raine",
+    avatarURL: String? = "https://example.test/avatars/u/9",
+    reviewDecision: String? = nil,
     reviews: [String] = [],
     comments: [String] = []
 ) -> String {
@@ -67,6 +103,8 @@ private func reviewedNode(
     return """
     {"title":"Rename the base branch","url":"\(url)","updatedAt":"\(updatedAt)",\
     \(head)"repository":{"nameWithOwner":"acme/api"},\
+    \(authorField(login: authorLogin, avatar: avatarURL))\
+    \(decisionField(reviewDecision))\
     "reviews":{"nodes":[\(reviews.joined(separator: ","))]},\
     "comments":{"nodes":[\(comments.joined(separator: ","))]}}
     """
@@ -806,4 +844,354 @@ private actor RunSpy {
         comments: []
     )
     #expect(news.comments == 1)
+}
+
+// MARK: - Who owns it, and where the review stands
+
+@Test func asksEverySearchForTheAuthorAndTheServersReviewDecision() {
+    let query = inboxQuery(login: "toygun")
+
+    // Three of each, one per aliased search. Counted rather than merely
+    // `contains`-checked, because "it is in the document somewhere" would pass
+    // with the field on one search and missing from the other two.
+    #expect(query.components(separatedBy: "author { login avatarUrl }").count - 1 == 3)
+    #expect(query.components(separatedBy: "reviewDecision").count - 1 == 3)
+}
+
+@Test func asksTheReviewRequestedSearchForReviewsToo() {
+    let query = inboxQuery(login: "toygun")
+
+    // Three review windows now: the first search needs one only for the
+    // approval count, not for its membership.
+    #expect(query.components(separatedBy: "reviews(last: 20)").count - 1 == 3)
+    // The literal 20 above and the constant are the same number: the window
+    // is reused, not re-chosen.
+    #expect(reviewWindow == 20)
+}
+
+@Test func areviewerWhoRequestedChangesAndThenApprovedCountsOnce() {
+    // The case the feature was asked for by name: somebody blocked the pull
+    // request and later came back and approved it. They are one approval, not
+    // a rejection plus an approval.
+    //
+    // Measured, not assumed: this case alone does *not* discriminate against
+    // the obvious wrong implementation. Filtering the rows for "APPROVED"
+    // also answers 1 here, because there is only one such row. The tests that
+    // catch that implementation are the three below —
+    // `theSameReviewerApprovingTwiceStillCountsOnce`,
+    // `areviewerWhoApprovedAndThenRequestedChangesCountsAsNeither` and
+    // `aDismissedReviewIsAWithdrawnApproval`. This one pins the behaviour that
+    // was asked for; those three pin the mechanism that delivers it.
+    let count = latestApprovalCount(reviews: [
+        ReviewEvent(
+            authorLogin: "raine",
+            state: "CHANGES_REQUESTED",
+            submittedAt: at("2026-09-10T09:00:00Z"),
+            commitOid: "aaa111"
+        ),
+        ReviewEvent(
+            authorLogin: "raine",
+            state: "APPROVED",
+            submittedAt: at("2026-09-14T09:00:00Z"),
+            commitOid: "bbb222"
+        ),
+    ])
+
+    #expect(count == 1)
+}
+
+@Test func theSameReviewerApprovingTwiceStillCountsOnce() {
+    // GitHub records a fresh `APPROVED` review every time someone re-approves
+    // after a push, so one enthusiastic reviewer on a branch that went round
+    // three times is three rows. Counting rows would report that single
+    // person as the three approvals this team merges on.
+    let count = latestApprovalCount(reviews: [
+        ReviewEvent(
+            authorLogin: "raine",
+            state: "APPROVED",
+            submittedAt: at("2026-09-10T09:00:00Z"),
+            commitOid: "aaa111"
+        ),
+        ReviewEvent(
+            authorLogin: "raine",
+            state: "APPROVED",
+            submittedAt: at("2026-09-14T09:00:00Z"),
+            commitOid: "bbb222"
+        ),
+    ])
+
+    #expect(count == 1)
+}
+
+@Test func areviewerWhoApprovedAndThenRequestedChangesCountsAsNeither() {
+    // The same rule read the other way round: the latest position stands, so
+    // an approval that was withdrawn is not counted.
+    let count = latestApprovalCount(reviews: [
+        ReviewEvent(
+            authorLogin: "raine",
+            state: "APPROVED",
+            submittedAt: at("2026-09-10T09:00:00Z"),
+            commitOid: "aaa111"
+        ),
+        ReviewEvent(
+            authorLogin: "raine",
+            state: "CHANGES_REQUESTED",
+            submittedAt: at("2026-09-14T09:00:00Z"),
+            commitOid: "bbb222"
+        ),
+    ])
+
+    #expect(count == 0)
+}
+
+@Test func twoDifferentPeopleApprovingCountAsTwo() {
+    // The collapsing must not collapse across people, which is the failure
+    // mode opposite to the one above.
+    let count = latestApprovalCount(reviews: [
+        ReviewEvent(
+            authorLogin: "raine",
+            state: "APPROVED",
+            submittedAt: at("2026-09-14T09:00:00Z"),
+            commitOid: "aaa111"
+        ),
+        ReviewEvent(
+            authorLogin: "kerem",
+            state: "APPROVED",
+            submittedAt: at("2026-09-15T09:00:00Z"),
+            commitOid: "aaa111"
+        ),
+    ])
+
+    #expect(count == 2)
+}
+
+@Test func onePersonUnderTwoCasingsIsOnePerson() {
+    // Both rows are approvals, on purpose: with one of each state the folding
+    // makes no difference to the answer and the test would not be testing it.
+    // GitHub logins are case-insensitive and the casing is not guaranteed
+    // stable across fields, so an unfolded key turns one reviewer into two.
+    let count = latestApprovalCount(reviews: [
+        ReviewEvent(
+            authorLogin: "Raine",
+            state: "APPROVED",
+            submittedAt: at("2026-09-10T09:00:00Z"),
+            commitOid: "aaa111"
+        ),
+        ReviewEvent(
+            authorLogin: "raine",
+            state: "APPROVED",
+            submittedAt: at("2026-09-14T09:00:00Z"),
+            commitOid: "bbb222"
+        ),
+    ])
+
+    #expect(count == 1)
+}
+
+@Test func aLaterCommentDoesNotRetractAnEarlierApproval() {
+    // `COMMENTED` is not a position. GitHub leaves the approval standing when
+    // its author later comments, and so does this: if a comment could become
+    // someone's latest review, replying in a thread would silently un-approve.
+    let count = latestApprovalCount(reviews: [
+        ReviewEvent(
+            authorLogin: "raine",
+            state: "APPROVED",
+            submittedAt: at("2026-09-10T09:00:00Z"),
+            commitOid: "aaa111"
+        ),
+        ReviewEvent(
+            authorLogin: "raine",
+            state: "COMMENTED",
+            submittedAt: at("2026-09-16T09:00:00Z"),
+            commitOid: "aaa111"
+        ),
+    ])
+
+    #expect(count == 1)
+}
+
+@Test func aDismissedReviewIsAWithdrawnApproval() {
+    let count = latestApprovalCount(reviews: [
+        ReviewEvent(
+            authorLogin: "raine",
+            state: "APPROVED",
+            submittedAt: at("2026-09-10T09:00:00Z"),
+            commitOid: "aaa111"
+        ),
+        ReviewEvent(
+            authorLogin: "raine",
+            state: "DISMISSED",
+            submittedAt: at("2026-09-16T09:00:00Z"),
+            commitOid: "aaa111"
+        ),
+    ])
+
+    #expect(count == 0)
+}
+
+@Test func areviewThatCannotBeAttributedOrOrderedIsNotCounted() {
+    // Absence is not evidence, the same rule the two bucket filters keep. A
+    // null author cannot be told apart from somebody already counted, and a
+    // review with no `submittedAt` cannot be placed against the others.
+    let count = latestApprovalCount(reviews: [
+        ReviewEvent(authorLogin: nil, state: "APPROVED", submittedAt: at("2026-09-14T09:00:00Z"), commitOid: nil),
+        ReviewEvent(authorLogin: "kerem", state: "APPROVED", submittedAt: nil, commitOid: nil),
+        ReviewEvent(authorLogin: "ada", state: nil, submittedAt: at("2026-09-14T09:00:00Z"), commitOid: nil),
+    ])
+
+    #expect(count == 0)
+}
+
+@Test func changesRequestedOutranksAHealthyApprovalCount() {
+    // The user's rule: if it got an "rc", that is what the row says. Two
+    // approvals do not soften a pull request that is blocked.
+    let standing = ReviewStanding(decision: .changesRequested, approvals: 2)
+
+    #expect(standing.mark == .changesRequested)
+}
+
+@Test func theApprovalCountIsTheMarkWhenNothingIsBlocking() {
+    #expect(ReviewStanding(decision: .approved, approvals: 3).mark == .approvals(3))
+    #expect(ReviewStanding(decision: .reviewRequired, approvals: 1).mark == .approvals(1))
+    // No decision at all — GitHub returns null when no review is required —
+    // still shows the count.
+    #expect(ReviewStanding(decision: nil, approvals: 0).mark == .approvals(0))
+}
+
+@Test func aStandingThatCouldNotBeEstablishedHasNoMark() {
+    // Absent, not zero. The same rule the counts on the front screen keep.
+    #expect(ReviewStanding.unknown.mark == nil)
+    #expect(ReviewStanding(decision: nil, approvals: nil).mark == nil)
+    // But a known decision alone is still worth saying.
+    #expect(ReviewStanding(decision: .changesRequested, approvals: nil).mark == .changesRequested)
+}
+
+@Test func readsTheAuthorAndTheStandingOntoEveryRow() {
+    let data = graphQL(
+        waiting: waitingNode(
+            authorLogin: "raine",
+            avatarURL: "https://ghe.example.test/avatars/u/9",
+            reviewDecision: "REVIEW_REQUIRED",
+            reviews: [
+                review(login: "kerem", state: "APPROVED", submittedAt: "2026-09-14T09:00:00Z")
+            ]
+        ),
+        reviewed: ""
+    )
+
+    let outcome = parseInbox(data, myLogin: "toygun")
+
+    let row = outcome.list(.waitingOnMe)?.first
+    #expect(row?.author?.login == "raine")
+    #expect(row?.author?.avatarURL == "https://ghe.example.test/avatars/u/9")
+    #expect(row?.standing.decision == .reviewRequired)
+    #expect(row?.standing.approvals == 1)
+    #expect(row?.standing.mark == .approvals(1))
+}
+
+@Test func readsTheStandingOntoMyOwnPullRequestsToo() {
+    let data = graphQL(
+        waiting: "",
+        reviewed: "",
+        mine: myNode(
+            reviewDecision: "CHANGES_REQUESTED",
+            reviews: [
+                review(login: "raine", state: "CHANGES_REQUESTED", submittedAt: "2026-09-13T09:00:00Z"),
+                review(login: "raine", state: "APPROVED", submittedAt: "2026-09-15T09:00:00Z"),
+                // raine re-approved after a push. Three rows, two of them
+                // approvals, one person.
+                review(login: "raine", state: "APPROVED", submittedAt: "2026-09-16T09:00:00Z"),
+                review(login: "kerem", state: "APPROVED", submittedAt: "2026-09-15T10:00:00Z"),
+            ]
+        )
+    )
+
+    let outcome = parseInbox(data, myLogin: "toygun")
+
+    let row = outcome.mine?.first?.pullRequest
+    // Two approvals after collapsing raine's three reviews into one position,
+    // and the server still says the pull request is blocked — so the row
+    // shows the block.
+    #expect(row?.standing.approvals == 2)
+    #expect(row?.standing.decision == .changesRequested)
+    #expect(row?.standing.mark == .changesRequested)
+}
+
+@Test func aPullRequestWhoseAuthorWasDeletedStillAppears() {
+    // The row must survive a null author: it is still a pull request waiting
+    // on this person, and dropping it would make the count wrong.
+    let data = graphQL(
+        waiting: waitingNode(authorLogin: nil, avatarURL: nil),
+        reviewed: ""
+    )
+
+    let outcome = parseInbox(data, myLogin: "toygun")
+
+    #expect(outcome.list(.waitingOnMe)?.count == 1)
+    #expect(outcome.list(.waitingOnMe)?.first?.author == nil)
+    #expect(outcome.reason == nil)
+}
+
+@Test func anAuthorWithNoAvatarKeepsTheirLogin() {
+    let data = graphQL(waiting: waitingNode(avatarURL: nil), reviewed: "")
+
+    let outcome = parseInbox(data, myLogin: "toygun")
+
+    #expect(outcome.list(.waitingOnMe)?.first?.author?.login == "raine")
+    #expect(outcome.list(.waitingOnMe)?.first?.author?.avatarURL == nil)
+}
+
+@Test func aReviewDecisionThisDoesNotRecogniseIsNotGuessedAt() {
+    // The same whitelist discipline the two bucket filters keep: an
+    // unrecognised enum member is not affirmative evidence of anything.
+    let data = graphQL(waiting: waitingNode(reviewDecision: "SOME_FUTURE_STATE"), reviewed: "")
+
+    let outcome = parseInbox(data, myLogin: "toygun")
+
+    #expect(outcome.list(.waitingOnMe)?.first?.standing.decision == nil)
+    // And it does not take the whole refresh down with it.
+    #expect(outcome.reason == nil)
+}
+
+@Test func reviewsMissingFromTheFirstSearchLeaveTheCountAbsentRatherThanZero() {
+    // The first search's *membership* does not depend on the reviews — being
+    // in it means someone asked. So a reviews connection that did not come
+    // back costs the count and nothing else, unlike the other two searches
+    // where it means the server did not answer the query that was sent.
+    let data = graphQL(
+        waiting: waitingNode(reviewDecision: "APPROVED", reviews: nil),
+        reviewed: ""
+    )
+
+    let outcome = parseInbox(data, myLogin: "toygun")
+
+    #expect(outcome.reason == nil)
+    let row = outcome.list(.waitingOnMe)?.first
+    #expect(row?.standing.approvals == nil)
+    #expect(row?.standing.decision == .approved)
+    #expect(row?.standing.mark == nil)
+}
+
+@Test func anEmptyReviewsConnectionIsAConfidentZero() {
+    // The other side of the line above: the connection came back and is
+    // empty, which is an answer.
+    let data = graphQL(waiting: waitingNode(reviews: []), reviewed: "")
+
+    let outcome = parseInbox(data, myLogin: "toygun")
+
+    #expect(outcome.list(.waitingOnMe)?.first?.standing.approvals == 0)
+    #expect(outcome.list(.waitingOnMe)?.first?.standing.mark == .approvals(0))
+}
+
+@Test func aNodeCarryingOnlyAnAuthorIsReportedRatherThanSkipped() {
+    // `isEmptySelection` has to list every selected field. If it did not list
+    // `author`, this node would look like the `{}` an issue produces and be
+    // dropped in silence — one pull request missing from a count that is then
+    // presented with confidence.
+    let data = graphQL(waiting: "{\"author\":{\"login\":\"raine\",\"avatarUrl\":null}}", reviewed: "")
+
+    let outcome = parseInbox(data, myLogin: "toygun")
+
+    #expect(outcome.reason?.contains("no title came back") == true)
+    #expect(outcome.list(.waitingOnMe) == nil)
 }

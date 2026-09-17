@@ -33,6 +33,13 @@ final class AppModel: ObservableObject {
     private let journal = Journal()
     private let queue = ApprovalQueue()
     private let pullRequests = PullRequestInbox.live()
+    /// Author faces for the inbox rows. Owned here rather than made per view
+    /// so that its disk cache, its in-flight table and its record of what has
+    /// already failed all survive a navigation — a store rebuilt on every
+    /// appearance would re-fetch every face and re-attempt every failure.
+    /// Read straight from the views; nothing about it is `@Published` because
+    /// each row awaits its own bytes and nothing else depends on its state.
+    let avatars = AvatarStore.live()
     private var listener: Listener?
     private var reArmTask: Task<Void, Never>?
     private var inboxTask: Task<Void, Never>?

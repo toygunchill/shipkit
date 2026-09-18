@@ -48,9 +48,10 @@ named. That exercises config loading, the ESM entry point, and the validation
 gate — so `brew test shipkit` failing means something real is broken, not that
 a version string moved.
 
-**No `license` line.** This repository has no LICENSE file. A private tap does
-not require one, and choosing a license is not a packaging decision. Add both
-together.
+**`license "MIT"`.** It matches `LICENSE` and `package.json`, and `brew audit`
+compares all three — which is what keeps them from drifting apart. `npm pack`
+includes `LICENSE` in the tarball on its own, whatever `files` says, so the
+license travels with every install.
 
 ## The menu-bar cask
 

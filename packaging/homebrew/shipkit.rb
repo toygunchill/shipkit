@@ -4,15 +4,14 @@
 # from a tarball it builds, and prints what to do next. Nothing here works until
 # the repository is published somewhere Homebrew can fetch from — see
 # packaging/README.md.
-#
-# No `license` line: this repository carries no LICENSE file yet. A private tap
-# does not require one, and inventing a license is not mine to do. Add both when
-# the repository is published.
 class Shipkit < Formula
   desc "Holds AI coding agents to a team's pull-request conventions"
   homepage "REPLACE_WITH_REPOSITORY_URL"
   url "REPLACE_WITH_TARBALL_URL"
   sha256 "REPLACE_WITH_TARBALL_SHA256"
+  # Matches LICENSE and package.json. `brew audit` compares the three and
+  # complains when they disagree, which is the check that keeps them together.
+  license "MIT"
 
   depends_on "node"
 

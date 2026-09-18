@@ -186,3 +186,13 @@ readiness checklist, from the code.
 `pr.approvalTimeoutSeconds` (default `120`) is how long `submit` waits for
 that person's decision before refusing and naming a fingerprint the call can
 be repeated with to resume the same request.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Copyright © 2026 Toygun Çil.
+
+The worked examples under `docs/examples/` are drawn from one team's private
+repository and Jira, and they are examples, not part of the tool: nothing in
+`src/` depends on them. A team adopting shipkit writes its own, or runs
+`shipkit init` and `shipkit rules` to have them proposed from what is actually
+there.

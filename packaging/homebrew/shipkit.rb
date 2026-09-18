@@ -6,9 +6,9 @@
 # packaging/README.md.
 class Shipkit < Formula
   desc "Holds AI coding agents to a team's pull-request conventions"
-  homepage "REPLACE_WITH_REPOSITORY_URL"
-  url "REPLACE_WITH_TARBALL_URL"
-  sha256 "REPLACE_WITH_TARBALL_SHA256"
+  homepage "https://github.com/toygunchill/shipkit"
+  url "https://github.com/toygunchill/shipkit/releases/download/v0.1.0/shipkit-0.1.0.tgz"
+  sha256 "b2770773439a4063c8fde7ff94fa86f6c6502817273b92ac278b05bedc9880c3"
   # Matches LICENSE and package.json. `brew audit` compares the three and
   # complains when they disagree, which is the check that keeps them together.
   license "MIT"

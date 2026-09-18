@@ -91,6 +91,101 @@ The scope is derived too: rules are limited to the languages the repository is
 actually written in, and the shared-layer rule names the shared directory it
 found. A change touching only a README is asked nothing.
 
+## Getting started
+
+### 1. Install it
+
+```bash
+gh auth login                      # once, if you have not
+brew tap toygunchill/tools
+brew trust toygunchill/tools       # Homebrew refuses a third-party tap until you say so
+brew install shipkit
+```
+
+Needs Node, which Homebrew pulls in. From a checkout instead:
+`npm install && npm run build && node dist/cli.js --help`.
+
+shipkit runs **inside the repository you are opening the pull request for**, not
+in its own. That repository already has the remote and the `gh` login; shipkit
+needs neither of its own.
+
+### 2. Teach it your conventions
+
+```bash
+cd /path/to/your/checkout
+shipkit init
+```
+
+`init` reads what your forge can actually prove — the merged pull requests, the
+branch ruleset, the merge gate — and writes a starter `.shipkit.yml` with a
+label on every value saying where it came from: `read` is a fact, `observed` is
+a pattern in what people did (not the same as what they intended), `proposed` is
+shipkit's guess and yours to overrule. Read it before you trust it. It never
+opts you into anything: `pr.approval` defaults to `echo`.
+
+If your team also has a readiness checklist — the questions worth asking before
+a change is ready, not the ones your linter already asks — you can have one
+proposed from the code:
+
+```bash
+shipkit rules --out readiness.yml
+```
+
+It selects; it does not invent. Only rules whose subject is actually in your
+repository, with the evidence written above each line, everything at `advise`
+so nothing starts gating anyone's work before a person has read it. Point
+`.shipkit.yml` at it with `readiness: ./readiness.yml` when you are happy.
+
+### 3. Try it without letting it act
+
+`check`, `brief`, `review` and `rules` never write to your repository, never
+commit and never push. Only `submit` and `tech-task` act.
+
+```bash
+shipkit brief --base develop        # what shipkit knows and what it will ask for
+shipkit review --base develop       # the change and the findings, on a local page
+```
+
+Run those on a branch you already have before `submit` goes anywhere near it.
+
+### 4. Wire it into your agent
+
+Over MCP, once per agent per machine — the tools then appear in the agent's own
+tool list and nothing is copied into any repository:
+
+```bash
+claude mcp add shipkit -- shipkit mcp
+```
+
+For agents without MCP, an instruction file does the same job:
+`AGENTS.md` for Codex and most others, `CLAUDE.md` or a skill for Claude Code,
+`.github/copilot-instructions.md` for Copilot. Snippets for each are in
+[docs/integration/](docs/integration/).
+
+### 5. The loop, day to day
+
+```
+you              "open the PR"
+  agent          shipkit brief --base develop
+  agent          writes response.json — title, commit message, sections
+  agent          shipkit submit --input response.json --base develop
+  shipkit        refuses, or warns and asks, or commits, pushes and opens
+```
+
+When you want to look before that happens, put `shipkit review` in front of it.
+The page shows the change as it stands — including work not committed yet,
+because that is what the push will carry — with shipkit's remarks on the files
+they are about, and a checkbox on every line you might want changed. Tick, add
+your own words, send. The next `brief` carries your selection first, marked as
+something a person chose rather than something a tool inferred.
+
+### What it is not
+
+Not a CI gate and not a rule. It is opt-in per repository and per person: a
+teammate who does not run it is not blocked by it, and nothing here enforces
+anything on anyone who has not chosen it. If you want a gate, `shipkit check`
+is the one command with no side effects — that is the one to run in CI.
+
 ## The way back
 
 Everything above is shipkit talking. `shipkit review` is the way back.
@@ -131,26 +226,6 @@ forbidden. Only the licence header is exempt: a plain comment counts when it is
 indented, and a `///` counts wherever it sits.
 
 Pre-flight reports. The human decides.
-
-## Using it from an agent
-
-Over MCP, one registration per agent per machine makes the tools appear in the
-agent's own tool list — no prose copied into any repository. See
-[docs/integration/](docs/integration/) for that and for the instruction-file
-route used by agents without MCP.
-
-## Installing
-
-Not yet. See [packaging/](packaging/) — the Homebrew formula is written and the
-release script works, but Homebrew installs from a URL and this repository has
-no remote.
-
-For now, from a checkout:
-
-```bash
-npm install && npm run build
-node dist/cli.js --help
-```
 
 ## Configuration
 

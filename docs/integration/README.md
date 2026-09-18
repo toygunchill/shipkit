@@ -66,23 +66,26 @@ remote and needs none. Everything it does — reading the branch, the commits, t
 pull request, then committing, pushing and opening — happens in the consuming
 repository's checkout, as the current directory.
 
-## Until shipkit is published
-
-There is no npm package and no `shipkit init` yet, so the command is spelled with a
-path and the config is named explicitly:
+## Installing it
 
 ```bash
-SHIPKIT="/Users/ACME12345/Documents/Github Sources/shipkit"
-
-cd /path/to/your/checkout
-node "$SHIPKIT/dist/cli.js" brief --base develop --config "$SHIPKIT/docs/examples/example-app.shipkit.yml"
+brew tap toygunchill/tools
+brew trust toygunchill/tools
+brew install shipkit
 ```
 
-Pointing `--config` at the example keeps the consuming repository untouched — nothing
-new is added to it, and nothing is committed that was not already yours. Once the
-rules settle, copy that file to `.shipkit.yml` in the repository and drop the flag.
+Then, in the repository you are opening the pull request for:
 
-Once published, every command becomes `npx shipkit …`.
+```bash
+cd /path/to/your/checkout
+shipkit init            # writes .shipkit.yml from what your forge can prove
+shipkit brief --base develop
+```
+
+Every command takes `--repo <path>` if you would rather not stand in the
+checkout, and `--config <path>` if the rules live somewhere else — a shared
+conventions repository, say, which is the deployment `readiness:` resolves
+symlinks for.
 
 ## Trying it without letting it act
 
@@ -93,16 +96,18 @@ what they say before `submit` is allowed anywhere near a commit:
 cd /path/to/your/checkout
 
 # What would shipkit say about a body you have already written?
-node "$SHIPKIT/dist/cli.js" check \
+shipkit check \
   --title "[ABC-31087] fix(invoice): default citizenship from passenger info" \
-  --body-file /tmp/body.md \
-  --config "$SHIPKIT/docs/examples/example-app.shipkit.yml"
+  --body-file /tmp/body.md
 
 # What would it tell an agent about this branch?
-node "$SHIPKIT/dist/cli.js" brief --base develop \
-  --config "$SHIPKIT/docs/examples/example-app.shipkit.yml"
+shipkit brief --base develop
+
+# And what does the change actually look like, with the findings on it?
+shipkit review --base develop
 ```
 
-Neither writes anything. `submit` is the only command that commits, pushes, or opens
-a pull request, and without `--yes` it stops at the first warning having changed
-nothing.
+None of them writes anything to your repository. `submit` is the only command that
+commits, pushes or opens a pull request — and without `--yes` it stops at the first
+warning having changed nothing. `tech-task` is the only other one that acts, and it
+creates a Jira issue only when you run it by name.

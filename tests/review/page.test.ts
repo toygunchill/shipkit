@@ -273,3 +273,60 @@ describe("commenting on a line", () => {
     expect(html).not.toContain("<img src=x");
   });
 });
+
+describe("where shipkit's own remarks are drawn", () => {
+  const files = [
+    { path: "A.swift", status: "modified" as const, patch: "@@ -1 +1 @@\n+let a = 1", line: 1 },
+    { path: "B.swift", status: "added" as const, patch: "@@ -0,0 +1 @@\n+let b = 2", line: 1 },
+  ];
+
+  // A remark about A.swift sitting above A.swift is one a person answers; the same remark in
+  // a list above the diff is one they scroll past.
+  it("puts an item that names a file on that file, not in the list above", () => {
+    const html = page({
+      files,
+      items: [ITEM({ id: "readiness-design-tokens", where: ["B.swift"] })],
+    });
+    // Asserted on the rendered cards, not on the whole document: the body also carries every
+    // item as JSON in `data-items`, which the script reads, and which would match everything.
+    const sections = html.split('<section class="file">');
+    const cardsIn = (part: string | undefined): string[] =>
+      [...(part ?? "").matchAll(/class="id">([^<]+)/g)].map((match) => match[1] as string);
+
+    expect(cardsIn(sections.find((s2) => s2.includes('class="path">B.swift')))).toContain(
+      "readiness-design-tokens",
+    );
+    expect(cardsIn(sections.find((s2) => s2.includes('class="path">A.swift')))).toEqual([]);
+    expect(cardsIn(html.split("<h2>The change")[0])).toEqual([]);
+  });
+
+  // Two copies of one item are two checkboxes with two independent states for one question,
+  // and a person who ticks it on the first file has no way to tell, meeting it again on the
+  // second, whether they have answered it.
+  it("draws an item naming several files once, and names the others on the card", () => {
+    const html = page({
+      files,
+      items: [ITEM({ id: "untracked-files", where: ["A.swift", "B.swift"] })],
+    });
+
+    // One card, so one checkbox. Two would be two independent states for one question.
+    expect(html.split('id="pick-0"')).toHaveLength(2);
+    expect([...html.matchAll(/class="id">untracked-files/g)]).toHaveLength(1);
+    expect(html).toContain("also about");
+    expect(html).toContain("<code>B.swift</code>");
+  });
+
+  it("keeps an item about the whole change above the diff, where it belongs", () => {
+    const html = page({ files, items: [ITEM({ id: "title-pattern" })] });
+
+    expect(html.split("<h2>The change")[0]).toContain('class="id">title-pattern');
+  });
+
+  // The file may be one `exclude` kept out of the push. An item nobody is shown is an item
+  // nobody can answer, so it goes back to being about the change rather than disappearing.
+  it("keeps an item naming a file the diff does not carry", () => {
+    const html = page({ files, items: [ITEM({ id: "readiness-x", where: ["Gone.swift"] })] });
+
+    expect(html.split("<h2>The change")[0]).toContain('class="id">readiness-x');
+  });
+});

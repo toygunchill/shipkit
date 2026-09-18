@@ -190,7 +190,7 @@ export async function runReview(
     const rules = deps.loadReadiness?.();
     const readiness =
       rules === undefined
-        ? { findings: [], warnings: [], advice: [] }
+        ? { findings: [], warnings: [], advice: [], matched: new Map<string, string[]>() }
         : assessReadiness({
             rules,
             base: options.base,
@@ -207,10 +207,18 @@ export async function runReview(
     const allFindings = [...findings, ...readiness.findings];
     const allWarnings = [...change.warnings, ...readiness.warnings];
     const allAdvice = [...change.advice, ...readiness.advice];
+    // Where each item belongs, from the three producers that genuinely know. Nothing is
+    // inferred from a message: an item with no entry here is about the whole change, and the
+    // page draws it as one rather than attaching it to a file on a guess.
+    const anchors = new Map<string, readonly string[]>(readiness.matched);
+    if (change.untrackedFiles.length > 0) anchors.set("untracked-files", change.untrackedFiles);
+    if (change.conversionFiles.length > 0) anchors.set("uikit-to-swiftui", change.conversionFiles);
+
     const items = reviewItems({
       findings: allFindings,
       warnings: allWarnings,
       advice: allAdvice,
+      anchors,
     });
 
     const files = deps.readPushDiff(options.base, exclude);

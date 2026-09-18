@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applicable, asks, evaluate, observedPaths } from "../../src/readiness/apply.js";
+import { applicable, asks, evaluate, matchedPaths, observedPaths } from "../../src/readiness/apply.js";
 import type { ReadinessRule } from "../../src/readiness/types.js";
 
 const SWIFT: ReadinessRule = {
@@ -214,5 +214,38 @@ describe("evaluate", () => {
     expect(result.findings.map((item) => item.rule)).toEqual(["readiness-secrets"]);
     expect(result.warnings.map((item) => item.check)).toEqual(["readiness-design-tokens"]);
     expect(result.advice.map((item) => item.topic)).toEqual(["readiness-constants-deliberate"]);
+  });
+});
+
+describe("which paths a rule matched", () => {
+  const rules = [
+    { id: "swift", ask: "a", severity: "warn" as const, appliesTo: ["**/*.swift"] },
+    { id: "everything", ask: "b", severity: "warn" as const },
+    { id: "views", ask: "c", severity: "warn" as const, appliesTo: ["**/Views/**"] },
+  ];
+
+  // `applicable` answers whether a rule applies and throws the reason away. The review page
+  // needs the reason: a question shown beside the file it is about is one a person answers.
+  it("names the changed paths each rule's globs actually matched", () => {
+    const matched = matchedPaths(rules, ["A.swift", "Views/B.swift", "README.md"]);
+
+    expect(matched.get("swift")).toEqual(["A.swift", "Views/B.swift"]);
+    expect(matched.get("views")).toEqual(["Views/B.swift"]);
+  });
+
+  // A rule with no `appliesTo` is about the change, not about any file in it, so it gets no
+  // paths and the page keeps it above the diff.
+  it("gives no paths to a rule that applies to everything", () => {
+    expect(matchedPaths(rules, ["A.swift"]).has("everything")).toBe(false);
+  });
+
+  // `applicable` carries every rule when the paths could not be read. A rule carried for
+  // that reason is not a rule about any particular file, and must not be drawn as one.
+  it("gives no paths at all when the changed paths could not be read", () => {
+    expect(matchedPaths(rules, undefined).size).toBe(0);
+  });
+
+  it("omits a rule whose globs matched nothing", () => {
+    expect(matchedPaths(rules, ["README.md"]).size).toBe(0);
   });
 });

@@ -61,6 +61,31 @@ export function applicable(
  * read is not that answer, and conflating the two is how enforcement disappears on the
  * repositories least able to notice.
  */
+/**
+ * Which changed paths each rule's `appliesTo` actually matched.
+ *
+ * `applicable` answers whether a rule applies and throws the reason away. The review page
+ * needs the reason: a checklist question shown beside the file it is about is one a person
+ * can answer, and the same question in a list above the diff is one they scroll past.
+ *
+ * A rule with no `appliesTo` matches the whole change, so it gets no paths — it belongs to
+ * the change, not to any file in it. Same for a rule reached when the paths could not be
+ * read at all, which `applicable` deliberately carries anyway.
+ */
+export function matchedPaths(
+  rules: readonly ReadinessRule[],
+  changedPaths: readonly string[] | undefined,
+): Map<string, string[]> {
+  const matched = new Map<string, string[]>();
+  if (changedPaths === undefined) return matched;
+  for (const rule of rules) {
+    if (rule.appliesTo === undefined) continue;
+    const hits = changedPaths.filter((path) => anyMatch(rule.appliesTo as string[], [path]));
+    if (hits.length > 0) matched.set(rule.id, hits);
+  }
+  return matched;
+}
+
 export function observedPaths(read: () => string[]): string[] | undefined {
   try {
     return read();

@@ -4,7 +4,7 @@ import { conversionAdvice, detectConversion, type ChangedFile } from "../advice/
 import type { ShipkitConfig } from "../config/schema.js";
 import { preflight } from "../preflight/checks.js";
 import type { Warning } from "../preflight/types.js";
-import { applicable, evaluate, observedPaths } from "../readiness/apply.js";
+import { applicable, evaluate, matchedPaths, observedPaths } from "../readiness/apply.js";
 import type { ReadinessAnswer, ReadinessRule } from "../readiness/types.js";
 import type { Finding } from "../validate/types.js";
 import type { AddedLine, PullRequestState, RepoState } from "../vcs/types.js";
@@ -29,6 +29,15 @@ export type ReadinessAssessment = {
   /** Ordinary pre-flight warnings — see src/readiness/apply.ts for why that is the design. */
   warnings: Warning[];
   advice: Advice[];
+  /**
+   * Which changed paths each applying rule's `appliesTo` matched, by rule id.
+   *
+   * Computed here because this is where the paths are read; recomputing it in the caller
+   * would mean a second scratch-index read for an answer this function already had. Empty
+   * when the paths could not be read — `applicable` carries every rule in that case, and a
+   * rule carried for that reason is not a rule about any particular file.
+   */
+  matched: Map<string, string[]>;
 };
 
 /**
@@ -59,7 +68,7 @@ export function assessReadiness(input: {
   const applying = applicable(input.rules, changedPaths);
   // The whole rule set as the third argument, so an answer to a rule that exists but did
   // not apply here costs nothing, while a misspelled id is still caught.
-  return evaluate(applying, input.answers, input.rules);
+  return { ...evaluate(applying, input.answers, input.rules), matched: matchedPaths(applying, changedPaths) };
 }
 
 export type ChangeAssessment = {
@@ -72,6 +81,12 @@ export type ChangeAssessment = {
   warnings: Warning[];
   /** The conversion observation only. Readiness advice is the caller's to append. */
   advice: Advice[];
+  /**
+   * The files the conversion was seen in, when one was. Carried so the review page can show
+   * the observation *on* those files rather than in a list beside the diff — a remark whose
+   * subject a reader has to go and find is one they read as boilerplate.
+   */
+  conversionFiles: string[];
 };
 
 export type ChangeAssessmentDeps = {
@@ -140,6 +155,7 @@ export function assessChange(
     conversion === undefined
       ? []
       : [conversionAdvice(conversion, { ticketKey: input.ticketKey, epic: input.config.techTask?.epic })];
+  const conversionFiles = conversion === undefined ? [] : [...conversion.files];
 
-  return { repo, pullRequest, untrackedFiles, warnings, advice };
+  return { repo, pullRequest, untrackedFiles, warnings, advice, conversionFiles };
 }

@@ -100,6 +100,12 @@ button.primary { background:var(--inform); border-color:var(--inform); color:#ff
 button:disabled { opacity:.55; cursor:default; }
 code.cmd { font-family: ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px;
   color:var(--muted); user-select:all; }
+/* shipkit's own remarks, sitting on the file they are about, above its diff. */
+.anchored { padding:10px 12px; border-bottom:1px solid var(--line); background:var(--bg);
+  display:flex; flex-direction:column; gap:8px; }
+.anchored .card { margin:0; }
+.card .also { color:var(--muted); font-size:12px; margin-top:4px; }
+.card .also code { font-family: ui-monospace,SFMono-Regular,Menlo,monospace; }
 .diff { margin:0; overflow-x:auto; font-family: ui-monospace,SFMono-Regular,Menlo,monospace;
   font-size:12px; line-height:1.55; }
 .diff .row { display:flex; align-items:stretch; min-width:max-content; }
@@ -228,9 +234,20 @@ function renderPatch(path: string, patch: string): string {
   return `<div class="diff">${rows.join("")}</div>`;
 }
 
-function renderItem(item: ReviewItem, index: number): string {
+function renderItem(item: ReviewItem, index: number, shownOn?: string): string {
   const label =
     item.severity === "refuses" ? "refuses" : item.severity === "warns" ? "warns" : "advises";
+  // The files this item names other than the one it is drawn on. Said rather than shown
+  // again: the card is here once, and a reader looking at one of the others should still
+  // learn that this concerns it.
+  const others = (item.where ?? []).filter((path) => path !== shownOn);
+  const alsoAbout =
+    others.length === 0
+      ? ""
+      : `<div class="also">also about ${others
+          .slice(0, 4)
+          .map((path) => `<code>${escapeHtml(path)}</code>`)
+          .join(", ")}${others.length > 4 ? ` and ${others.length - 4} more` : ""}</div>`;
   return [
     `<div class="card ${item.severity}" data-index="${index}">`,
     `<div class="top">`,
@@ -239,12 +256,29 @@ function renderItem(item: ReviewItem, index: number): string {
     `<span class="id">${escapeHtml(item.id)}</span>`,
     `</div>`,
     `<div class="msg">${escapeHtml(item.message)}</div>`,
+    alsoAbout,
     `<textarea data-note="${index}" placeholder="Note to the agent (optional)"></textarea>`,
     `</div>`,
   ].join("");
 }
 
-function renderFile(file: PushFileDiff): string {
+/**
+ * The items shipkit has about one file, drawn where the file is.
+ *
+ * Same card as the change-level ones — same checkbox, same note field, same index into
+ * `items` — so the page's script neither knows nor cares where a card ended up. What moves
+ * is only where a person meets it: a remark about `InvoiceView.swift` sitting above
+ * `InvoiceView.swift` is one they answer, and the same remark in a list above the diff is
+ * one they scroll past.
+ */
+function renderAnchored(items: readonly ReviewItem[], indices: readonly number[], on: string): string {
+  if (indices.length === 0) return "";
+  return `<div class="anchored">${indices
+    .map((index) => renderItem(items[index] as ReviewItem, index, on))
+    .join("")}</div>`;
+}
+
+function renderFile(file: PushFileDiff, items: readonly ReviewItem[], indices: readonly number[]): string {
   const command = `xed --line ${file.line} ${file.path}`;
   return [
     `<section class="file">`,
@@ -255,6 +289,7 @@ function renderFile(file: PushFileDiff): string {
     `<code class="cmd">${escapeHtml(command)}</code>`,
     `<button data-open="${escapeHtml(file.path)}" data-line="${file.line}">Open in Xcode</button>`,
     `</div>`,
+    renderAnchored(items, indices, file.path),
     renderPatch(file.path, file.patch),
     `</section>`,
   ].join("");
@@ -451,15 +486,40 @@ export function renderPage(input: PageInput): string {
     `</header>`,
   ].join("");
 
+  // Which item belongs to which file, decided once. An item with no `where` belongs to the
+  // change; an item naming a file the diff does not carry also belongs to the change, rather
+  // than being dropped — the file may be one `exclude` kept out, and an item nobody is shown
+  // is an item nobody can answer.
+  const shown = new Set(input.files.map((file) => file.path));
+  const byFile = new Map<string, number[]>();
+  const aboutTheChange: number[] = [];
+  input.items.forEach((item, index) => {
+    const anchors = (item.where ?? []).filter((path) => shown.has(path));
+    if (anchors.length === 0) {
+      aboutTheChange.push(index);
+      return;
+    }
+    // One card per item, on the first file it names — never one copy per file. Two copies of
+    // one item are two checkboxes with two independent states for one question, and a person
+    // who ticks it on the first file and then meets it again on the second has no way to tell
+    // whether they have answered it. The card names the other files instead.
+    const first = anchors[0] as string;
+    const already = byFile.get(first);
+    if (already === undefined) byFile.set(first, [index]);
+    else already.push(index);
+  });
+
   const findings =
     input.items.length === 0
       ? `<p class="empty">Nothing to report. shipkit found no findings, no warnings and nothing to advise.</p>`
-      : input.items.map(renderItem).join("");
+      : aboutTheChange.length === 0
+        ? `<p class="empty">Everything shipkit had to say is on the files below.</p>`
+        : aboutTheChange.map((index) => renderItem(input.items[index] as ReviewItem, index)).join("");
 
   const files =
     input.files.length === 0
       ? `<p class="empty">The push carries no files.</p>`
-      : input.files.map(renderFile).join("");
+      : input.files.map((file) => renderFile(file, input.items, byFile.get(file.path) ?? [])).join("");
 
   return [
     `<!doctype html>`,
@@ -470,9 +530,9 @@ export function renderPage(input: PageInput): string {
     `<body data-token="${escapeHtml(input.token)}" data-items="${escapeHtml(JSON.stringify(payload))}">`,
     `<main>`,
     head,
-    `<h2>What shipkit has to say</h2>`,
+    `<h2>About this change</h2>`,
     findings,
-    `<h2>The change</h2>`,
+    `<h2>The change, before any of it is done</h2>`,
     files,
     `</main>`,
     `<footer>`,

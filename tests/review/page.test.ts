@@ -78,7 +78,9 @@ describe("the page says what shipkit found", () => {
     expect(html).toContain('data-pick="1"');
     expect(html).toContain('data-note="0"');
     expect(html).toContain('data-note="1"');
-    expect(html).toContain("0 of 2 selected");
+    // The footer's opening words, before the script has counted anything. It used to read
+    // "0 of 2 selected", which describes a selection nobody has made yet.
+    expect(html).toContain("Nothing selected");
   });
 
   it("says so when nobody has answered the readiness questions yet", () => {
@@ -212,5 +214,62 @@ describe("a file too large to draw", () => {
 
     expect(html).toContain("+line 199");
     expect(html).not.toContain("too much to");
+  });
+});
+
+describe("commenting on a line", () => {
+  const patch = [
+    "@@ -1,2 +1,3 @@",
+    " import SwiftUI",
+    "-let old = 1",
+    "+let fresh = 2",
+    "+let alsoFresh = 3",
+  ].join("\n");
+
+  // The line number comes from the hunk header: `@@ -1,2 +1,3 @@` means the next
+  // added-or-context line is line 1 of the file after the change.
+  it("numbers each line from the hunk header, counting the new file", () => {
+    const html = page({ files: [{ path: "A.swift", status: "modified", patch, line: 1 }] });
+
+    expect(html).toContain('data-path="A.swift" data-line="1"');
+    expect(html).toContain('data-path="A.swift" data-line="2"');
+    expect(html).toContain('data-path="A.swift" data-line="3"');
+  });
+
+  // A removed line is not in the file any more, so a note anchored to it could not be found
+  // by anyone — agent or person. It gets no number and no checkbox, which is the same rule
+  // GitHub applies for the same reason.
+  it("offers no tick on a removed line", () => {
+    const html = page({ files: [{ path: "A.swift", status: "modified", patch, line: 1 }] });
+    const rows = html.split('<div class="row"');
+    const removed = rows.find((row) => row.includes("let old = 1"));
+
+    expect(removed).toBeDefined();
+    expect(removed).not.toContain("data-line=");
+    expect(removed).not.toContain('class="tick"');
+  });
+
+  it("puts a checkbox on every commentable line, not behind a hover", () => {
+    const html = page({ files: [{ path: "A.swift", status: "modified", patch, line: 1 }] });
+
+    // Three commentable lines: one context and two additions.
+    expect(html.split('class="tick"')).toHaveLength(4);
+  });
+
+  it("offers Nothing to fix as its own button, never as the default's other meaning", () => {
+    const html = page();
+
+    expect(html).toContain('id="nothing"');
+    expect(html).toContain('id="send"');
+  });
+
+  // A path carrying markup reaches an attribute, so it goes through the same escaping as
+  // everything else. `data-line` is a number this file computed and needs none.
+  it("escapes a path with markup in it before it becomes an attribute", () => {
+    const html = page({
+      files: [{ path: '"><img src=x onerror=alert(1)>.swift', status: "added", patch, line: 1 }],
+    });
+
+    expect(html).not.toContain("<img src=x");
   });
 });

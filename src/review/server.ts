@@ -11,7 +11,7 @@ import type { FixRequestItem, FixRequestKind } from "./fixrequest.js";
  * single-use POST — lives on that side of the line.
  */
 
-const KINDS: readonly FixRequestKind[] = ["warning", "finding", "readiness", "advice"];
+const KINDS: readonly FixRequestKind[] = ["warning", "finding", "readiness", "advice", "comment"];
 
 export type ReviewHttpRequest = {
   method: string;
@@ -77,6 +77,9 @@ function parseSelection(body: string): FixRequestItem[] | undefined {
     const { kind, id, message, note } = raw as Record<string, unknown>;
     if (typeof kind !== "string" || !KINDS.includes(kind as FixRequestKind)) return undefined;
     if (typeof id !== "string" || id.length === 0) return undefined;
+    // A comment is the one item the page invents rather than echoes, so its id is checked
+    // for the shape the agent will read it as: `path:line`, line a positive integer.
+    if (kind === "comment" && !/^.+:[1-9][0-9]*$/.test(id)) return undefined;
     if (typeof message !== "string") return undefined;
     // The note is the one field a person types, and an empty one is an ordinary answer:
     // they ticked the box and had nothing to add.

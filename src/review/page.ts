@@ -100,13 +100,33 @@ button.primary { background:var(--inform); border-color:var(--inform); color:#ff
 button:disabled { opacity:.55; cursor:default; }
 code.cmd { font-family: ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px;
   color:var(--muted); user-select:all; }
-pre.diff { margin:0; overflow-x:auto; font-family: ui-monospace,SFMono-Regular,Menlo,monospace;
-  font-size:12px; line-height:1.45; }
-pre.diff span { display:block; padding:0 12px; white-space:pre; }
-pre.diff .a { background:var(--add); }
-pre.diff .d { background:var(--del); }
-pre.diff .h { color:var(--muted); }
-pre.diff .m { color:var(--muted); font-weight:600; }
+.diff { margin:0; overflow-x:auto; font-family: ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:12px; line-height:1.55; }
+.diff .row { display:flex; align-items:stretch; min-width:max-content; }
+.diff .gut { flex:0 0 66px; display:flex; align-items:center; gap:6px; padding:0 8px 0 8px;
+  color:var(--muted); user-select:none; white-space:pre; }
+.diff .gut .tick { margin:0; flex:0 0 auto; cursor:pointer; }
+.diff .gut .num { flex:1 1 auto; text-align:right; }
+/* A ticked line is the thing being sent, so it is marked as such rather than left to be
+   found by re-reading every checkbox. */
+.diff .row.picked .code { box-shadow: inset 3px 0 0 var(--inform); }
+.diff .code { flex:1 1 auto; padding:0 12px; white-space:pre; }
+.diff .code.a { background:var(--add); }
+.diff .code.d { background:var(--del); }
+.diff .code.h { color:var(--muted); }
+.diff .code.m { color:var(--muted); font-weight:600; }
+/* A comment sits under the line it is about, indented past the gutter so the diff still
+   reads as a column. */
+.diff .comment { display:flex; padding:6px 12px 8px 66px; gap:8px; align-items:flex-start;
+  background:var(--card); border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+.diff .comment textarea { flex:1 1 auto; font:inherit; font-family:inherit; min-height:48px;
+  padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg);
+  color:var(--fg); resize:vertical; }
+.diff .comment .said { flex:1 1 auto; white-space:pre-wrap; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; font-size:13px; }
+.diff .comment .acts { display:flex; flex-direction:column; gap:4px; }
+.diff .comment button { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; font-size:12px; padding:3px 9px; border-radius:6px;
+  border:1px solid var(--line); background:var(--bg); color:var(--fg); cursor:pointer; }
+.diff .comment button.primary { background:var(--inform); color:#fff; border-color:var(--inform); }
 .empty { color:var(--muted); }
 footer { position:fixed; left:0; right:0; bottom:0; border-top:1px solid var(--line);
   background:var(--bg); padding:12px 16px; display:flex; align-items:center; gap:16px;
@@ -130,30 +150,82 @@ footer .wait { color:var(--muted); font-size:12px; }
  */
 const MAX_PATCH_CHARS = 256 * 1024;
 
-/** One `<span>` per diff line, classed by its marker so a hunk reads at a glance. */
-function renderPatch(patch: string): string {
+/**
+ * The new-file line number a diff line sits on, or `undefined` where there is none.
+ *
+ * Tracked across the whole patch rather than guessed per line, because only the hunk headers
+ * say where a hunk starts: `@@ -12,7 +34,9 @@` means the next added-or-context line is line
+ * 34 of the file after the change. A removed line has no number on that side — it is not in
+ * the file any more — so it gets none, and cannot be commented on. That is the same rule
+ * GitHub applies, and for the same reason: a note anchored to a line that no longer exists
+ * cannot be found by anyone, agent or person.
+ */
+function withLineNumbers(patch: string): { text: string; cls: string; line?: number }[] {
+  const rows: { text: string; cls: string; line?: number }[] = [];
+  let next: number | undefined;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("@@")) {
+      const match = /^@@ -\d+(?:,\d+)? \+(\d+)/.exec(line);
+      next = match === null ? undefined : Number(match[1]);
+      rows.push({ text: line, cls: "h" });
+      continue;
+    }
+    if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff --git ")) {
+      rows.push({ text: line, cls: "m" });
+      continue;
+    }
+    if (line.startsWith("-")) {
+      rows.push({ text: line, cls: "d" });
+      continue;
+    }
+    if (next === undefined) {
+      rows.push({ text: line, cls: line.startsWith("+") ? "a" : "" });
+      continue;
+    }
+    rows.push({ text: line, cls: line.startsWith("+") ? "a" : "", line: next });
+    next += 1;
+  }
+  return rows;
+}
+
+/**
+ * One row per diff line, each carrying the line number it sits on so a person can write on
+ * it.
+ *
+ * The row, not a `<span>`: a comment has to open *under* the line it is about, which needs a
+ * block to insert after. The gutter is a separate cell rather than characters in the text so
+ * that copying the diff copies the diff and not the numbering.
+ */
+function renderPatch(path: string, patch: string): string {
   if (patch.length > MAX_PATCH_CHARS) {
     const lines = patch.split("\n").length;
     return (
-      `<pre class="diff"><span class="h">  ${lines.toLocaleString("en-US")} lines of diff — too much to ` +
-      `draw here. Open the file to read it; everything else on this page still covers it.</span></pre>`
+      `<div class="diff"><div class="row"><span class="gut"></span><span class="h">  ` +
+      `${lines.toLocaleString("en-US")} lines of diff — too much to draw here. Open the file to ` +
+      `read it; everything else on this page still covers it.</span></div></div>`
     );
   }
   if (patch.length === 0) {
-    return `<pre class="diff"><span class="h">  No textual diff — a binary file, or a mode change only.</span></pre>`;
+    return `<div class="diff"><div class="row"><span class="gut"></span><span class="h">  No textual diff — a binary file, or a mode change only.</span></div></div>`;
   }
-  const lines = patch.split("\n").map((line) => {
-    let cls = "";
-    if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff --git ")) cls = "m";
-    else if (line.startsWith("@@")) cls = "h";
-    else if (line.startsWith("+")) cls = "a";
-    else if (line.startsWith("-")) cls = "d";
+  const rows = withLineNumbers(patch).map((row) => {
     // A blank line inside a patch is a context line whose content is empty; without the
-    // space the `<span>` collapses to zero height and the hunk loses a row.
-    const text = line.length === 0 ? " " : line;
-    return `<span class="${cls}">${escapeHtml(text)}</span>`;
+    // space the row collapses to zero height and the hunk loses a row.
+    const text = row.text.length === 0 ? " " : row.text;
+    if (row.line === undefined) {
+      return `<div class="row"><span class="gut"><span class="num">${escapeHtml("")}</span></span><span class="code ${row.cls}">${escapeHtml(text)}</span></div>`;
+    }
+    return (
+      `<div class="row" data-path="${escapeHtml(path)}" data-line="${row.line}">` +
+      `<span class="gut">` +
+      `<input type="checkbox" class="tick" title="Send this line to the agent">` +
+      `<span class="num">${row.line}</span>` +
+      `</span>` +
+      `<span class="code ${row.cls}">${escapeHtml(text)}</span>` +
+      `</div>`
+    );
   });
-  return `<pre class="diff">${lines.join("")}</pre>`;
+  return `<div class="diff">${rows.join("")}</div>`;
 }
 
 function renderItem(item: ReviewItem, index: number): string {
@@ -183,7 +255,7 @@ function renderFile(file: PushFileDiff): string {
     `<code class="cmd">${escapeHtml(command)}</code>`,
     `<button data-open="${escapeHtml(file.path)}" data-line="${file.line}">Open in Xcode</button>`,
     `</div>`,
-    renderPatch(file.patch),
+    renderPatch(file.path, file.patch),
     `</section>`,
   ].join("");
 }
@@ -207,16 +279,96 @@ const SCRIPT = `
   var picks = Array.prototype.slice.call(document.querySelectorAll("[data-pick]"));
   var count = document.getElementById("count");
   var send = document.getElementById("send");
+  var nothing = document.getElementById("nothing");
+
+  // Line comments, keyed by "path:line" so two notes on one line replace rather than stack —
+  // the id is what an agent reads as the place, and two items with one id is the ambiguity
+  // the readiness loader refuses for the same reason.
+  var comments = {};
 
   function selected() {
     return picks.filter(function (box) { return box.checked; });
   }
+  function commentCount() {
+    return Object.keys(comments).length;
+  }
   function refresh() {
-    count.textContent = selected().length + " of " + items.length + " selected";
+    var ticked = selected().length;
+    var written = commentCount();
+    var parts = [];
+    if (items.length > 0) parts.push(ticked + " of " + items.length + " selected");
+    if (written > 0) parts.push(written + (written === 1 ? " line comment" : " line comments"));
+    count.textContent = parts.length === 0 ? "Nothing selected" : parts.join(" · ");
   }
   picks.forEach(function (box) { box.addEventListener("change", refresh); });
   refresh();
 
+  function rowKey(row) {
+    return row.getAttribute("data-path") + ":" + row.getAttribute("data-line");
+  }
+
+  function noteBlock(row) {
+    var next = row.nextElementSibling;
+    return next && next.className === "comment" ? next : null;
+  }
+
+  /**
+   * A ticked line is already an instruction: "fix this". The note is optional, so the field
+   * is offered rather than demanded — a person who only ticks has still said something.
+   */
+  function openNote(row, key) {
+    if (noteBlock(row)) return;
+    var block = document.createElement("div");
+    block.className = "comment";
+    var field = document.createElement("textarea");
+    field.placeholder = "Anything to add about this line? (optional)";
+    field.value = comments[key].note;
+    field.addEventListener("input", function () {
+      comments[key].note = field.value.trim();
+    });
+    field.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") { field.blur(); }
+    });
+    block.appendChild(field);
+    row.parentNode.insertBefore(block, row.nextSibling);
+    return field;
+  }
+
+  function closeNote(row) {
+    var block = noteBlock(row);
+    if (block) block.parentNode.removeChild(block);
+  }
+
+  function pickLine(row, on) {
+    var key = rowKey(row);
+    row.className = on ? "row picked" : "row";
+    if (!on) {
+      delete comments[key];
+      closeNote(row);
+      refresh();
+      return;
+    }
+    comments[key] = {
+      kind: "comment",
+      id: key,
+      // The line itself, so an agent that has the note but not this page can find the place
+      // even after the line numbers have moved under it.
+      message: row.querySelector(".code").textContent,
+      note: comments[key] ? comments[key].note : ""
+    };
+    var field = openNote(row, key);
+    if (field) field.focus();
+    refresh();
+  }
+
+  document.addEventListener("change", function (event) {
+    var tick = event.target;
+    if (!tick.classList || !tick.classList.contains("tick")) return;
+    pickLine(tick.closest(".row"), tick.checked);
+  });
+
+  // The per-file "Open in Xcode" button. Confined on the server to the set of paths the page
+  // itself offered — see src/review/server.ts — so this only ever names one of them.
   document.addEventListener("click", function (event) {
     var button = event.target.closest ? event.target.closest("[data-open]") : null;
     if (!button) return;
@@ -229,28 +381,45 @@ const SCRIPT = `
     }).catch(function () { button.textContent = "Could not open"; });
   });
 
-  send.addEventListener("click", function () {
+  function post(chosen, describe) {
     send.disabled = true;
-    var chosen = selected().map(function (box) {
-      var index = Number(box.getAttribute("data-pick"));
-      var note = document.querySelector('[data-note="' + index + '"]');
-      var item = items[index];
-      return { kind: item.kind, id: item.id, message: item.message, note: note ? note.value.trim() : "" };
-    });
+    nothing.disabled = true;
     fetch("/submit?token=" + encodeURIComponent(token), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ items: chosen })
     }).then(function (response) {
       if (!response.ok) throw new Error(String(response.status));
-      count.textContent = chosen.length === 0
-        ? "Nothing selected. You can close this tab."
-        : "Sent " + chosen.length + " to shipkit. You can close this tab.";
+      count.textContent = describe;
       send.textContent = "Sent";
     }).catch(function () {
       send.disabled = false;
+      nothing.disabled = false;
       count.textContent = "Could not send. Is shipkit still waiting?";
     });
+  }
+
+  nothing.addEventListener("click", function () {
+    // Its own gesture, never the side effect of pressing the default button. An empty
+    // selection also clears whatever a previous review left pending.
+    post([], "Sent: nothing to fix. You can close this tab.");
+  });
+
+  send.addEventListener("click", function () {
+    var chosen = selected().map(function (box) {
+      var index = Number(box.getAttribute("data-pick"));
+      var note = document.querySelector('[data-note="' + index + '"]');
+      var item = items[index];
+      return { kind: item.kind, id: item.id, message: item.message, note: note ? note.value.trim() : "" };
+    });
+    // Line comments go in the same list. They are not shipkit's findings, but they are the
+    // same thing to the agent: something a person read this diff and asked for.
+    Object.keys(comments).forEach(function (key) { chosen.push(comments[key]); });
+    if (chosen.length === 0) {
+      count.textContent = "Tick a finding or a line first, or choose Nothing to fix.";
+      return;
+    }
+    post(chosen, "Sent " + chosen.length + " to shipkit. You can close this tab.");
   });
 })();
 `;
@@ -307,8 +476,12 @@ export function renderPage(input: PageInput): string {
     files,
     `</main>`,
     `<footer>`,
-    `<span class="count" id="count">0 of ${input.items.length} selected</span>`,
-    `<button class="primary" id="send">Send to shipkit</button>`,
+    `<span class="count" id="count">Nothing selected</span>`,
+    // Two buttons, because "fix these" and "this is fine" are two statements. The menu-bar
+    // panel learned this the expensive way: one button whose words changed with what was
+    // ticked read as the only option, and a person with an unread list pressed it.
+    `<button class="primary" id="send">Send to the agent</button>`,
+    `<button id="nothing">Nothing to fix</button>`,
     `<span class="wait">shipkit is waiting for up to ${input.waitMinutes} minutes.</span>`,
     `</footer>`,
     `<script>${SCRIPT}</script>`,

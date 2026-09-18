@@ -33,13 +33,17 @@ export const FIX_REQUEST_PATH = `${SHIPKIT_DIR}/fix-request.json`;
 /**
  * Which channel an item came out of.
  *
+ * `comment` is the one kind shipkit did not say. It is a person writing on a line of the
+ * diff, so its `id` is `path:line` and its `message` is the line they wrote it on — which is
+ * what lets an agent find the place without the diff in front of it.
+ *
  * `readiness` is not a fifth channel — a readiness failure arrives as a finding, a warning
  * or a piece of advice depending on the rule's severity. It is called out separately here
  * because a person ticking a box is choosing between kinds of *thing*, not between shipkit's
  * internal routing: "the team's checklist says no" is a different sort of remark from "the
  * title does not match the pattern", even when both are findings.
  */
-export type FixRequestKind = "warning" | "finding" | "readiness" | "advice";
+export type FixRequestKind = "warning" | "finding" | "readiness" | "advice" | "comment";
 
 export type FixRequestItem = {
   kind: FixRequestKind;
@@ -59,7 +63,7 @@ export type FixRequest = {
 };
 
 const itemSchema = z.object({
-  kind: z.enum(["warning", "finding", "readiness", "advice"]),
+  kind: z.enum(["warning", "finding", "readiness", "advice", "comment"]),
   id: z.string().min(1),
   message: z.string(),
   note: z.string(),

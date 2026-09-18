@@ -9,6 +9,7 @@ import {
   type FixRequest,
   type FixRequestItem,
 } from "../../src/review/fixrequest.js";
+import type { ReviewOfferOutcome } from "../../src/approval/client.js";
 import { runReview, type ReviewDeps, type ReviewOptions } from "../../src/review/run.js";
 import type { Listening, ReviewHandler } from "../../src/review/server.js";
 import { renderBody, type SubmitResponse } from "../../src/submit/response.js";
@@ -574,7 +575,7 @@ describe("a review answered from the menu bar", () => {
     cancelled: () => boolean;
     offered: () => number;
   } {
-    let resolveAnswer: (outcome: { outcome: "answered"; response: { protocol: number; kind: "review"; fingerprint: string; answer: "selected" | "nothing"; items: FixRequestItem[] } }) => void = () => undefined;
+    let resolveAnswer: (outcome: ReviewOfferOutcome) => void = () => undefined;
     let wasCancelled = false;
     let count = 0;
     let fingerprint = "";

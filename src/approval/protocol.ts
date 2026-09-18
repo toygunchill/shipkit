@@ -108,7 +108,11 @@ export type ReviewOffer = {
 };
 
 const selectedItemSchema = z.object({
-  kind: z.enum(["warning", "finding", "readiness", "advice"]),
+  // The same five kinds `FixRequestKind` has. `comment` cannot come from the panel today —
+  // the offer carries no diff for anyone to write on — but the two lists are one contract,
+  // and letting them drift would mean a selection this shipkit writes is one it could not
+  // then read back.
+  kind: z.enum(["warning", "finding", "readiness", "advice", "comment"]),
   id: z.string().min(1),
   message: z.string(),
   note: z.string(),

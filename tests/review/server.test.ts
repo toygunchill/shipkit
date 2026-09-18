@@ -334,3 +334,57 @@ describe("a handler that throws", () => {
     }
   });
 });
+
+describe("a comment written on a line", () => {
+  // The one item the page invents rather than echoes. Its id is the place, so it is checked
+  // for the shape an agent will read it as.
+  it("is taken when its id names a path and a positive line", () => {
+    const { handle, submitted } = make();
+
+    const response = handle({
+      method: "POST",
+      url: `/submit?token=${TOKEN}`,
+      body: selection([
+        { kind: "comment", id: "Sources/A.swift:42", message: "+  let x = 1", note: "move this" },
+      ]),
+    });
+
+    expect(response.status).toBe(200);
+    expect(submitted[0][0]).toEqual({
+      kind: "comment",
+      id: "Sources/A.swift:42",
+      message: "+  let x = 1",
+      note: "move this",
+    });
+  });
+
+  it.each(["Sources/A.swift", "Sources/A.swift:0", "Sources/A.swift:-1", ":12", "A.swift:1.5"])(
+    "is refused when its id does not name a place: %s",
+    (id) => {
+      const { handle, submitted } = make();
+
+      const response = handle({
+        method: "POST",
+        url: `/submit?token=${TOKEN}`,
+        body: selection([{ kind: "comment", id, message: "m", note: "n" }]),
+      });
+
+      expect(response.status).toBe(400);
+      expect(submitted).toEqual([]);
+    },
+  );
+
+  // The shape check is for comments only: a finding's id is a check name, and demanding a
+  // line number of it would refuse every real selection.
+  it("leaves the other kinds' ids alone", () => {
+    const { handle } = make();
+
+    const response = handle({
+      method: "POST",
+      url: `/submit?token=${TOKEN}`,
+      body: selection([{ kind: "warning", id: "untracked-files", message: "m", note: "" }]),
+    });
+
+    expect(response.status).toBe(200);
+  });
+});

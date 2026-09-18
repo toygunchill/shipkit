@@ -58,7 +58,7 @@ private func readLine(_ fd: Int32, seconds: Int) -> String? {
 }
 
 private let offerSituation = ReviewSituation(
-    repo: "example-app", root: "/r", branch: "b", base: "develop",
+    repo: "example-app", root: "/r", url: "http://127.0.0.1:1/?token=x", branch: "b", base: "develop",
     commitMessage: "fix(x): y", diffstat: " 1 file changed",
     items: [OfferedItem(kind: "warning", id: "untracked-files", message: "m", severity: "warns")],
     files: [OfferedFile(path: "A.swift", status: "modified", line: 3)]
@@ -70,7 +70,7 @@ private func offerLine(fingerprintOverride: String? = nil, protocolOverride: Int
         protocolVersion: protocolOverride ?? protocolVersion,
         kind: "review",
         fingerprint: fp,
-        repo: offerSituation.repo, root: offerSituation.root,
+        repo: offerSituation.repo, root: offerSituation.root, url: offerSituation.url,
         branch: offerSituation.branch, base: offerSituation.base,
         commitMessage: offerSituation.commitMessage, diffstat: offerSituation.diffstat,
         items: offerSituation.items, files: offerSituation.files

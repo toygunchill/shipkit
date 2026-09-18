@@ -682,6 +682,23 @@ describe("a review answered from the menu bar", () => {
     expect(result.selected).toEqual([ITEM]);
   });
 
+  // The panel's primary action opens this, so it has to be the page this very
+  // review is serving — and it is bound into the fingerprint for that reason.
+  it("carries the very URL it printed, so the panel opens this review and not another", async () => {
+    let offeredUrl: string | undefined;
+    const harness = makeDeps({
+      offerReview: (offer) => {
+        offeredUrl = offer.url;
+        return { answer: new Promise(() => undefined), cancel: () => undefined };
+      },
+    });
+
+    await review(harness, (h) => h.abandon());
+
+    expect(offeredUrl).toBe(harness.out[0]);
+    expect(offeredUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/\?token=[0-9a-f]{64}$/);
+  });
+
   it("offers each review once, and binds what the panel will show", async () => {
     let seen: { items: unknown[]; files: unknown[]; fingerprint: string } | undefined;
     const harness = makeDeps({

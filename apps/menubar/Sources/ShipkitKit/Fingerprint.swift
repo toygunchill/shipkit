@@ -140,6 +140,10 @@ public struct ReviewSituation: Sendable, Equatable {
     /// opens, and a field that steers a side effect must not be changeable
     /// between the hash and the click.
     public let root: String
+    /// Where shipkit's own review page is, token and all. Bound for the reason
+    /// `root` is: the panel's primary action opens it, so it steers what happens
+    /// when a button is pressed.
+    public let url: String
     public let branch: String
     public let base: String
     public let commitMessage: String
@@ -148,12 +152,13 @@ public struct ReviewSituation: Sendable, Equatable {
     public let files: [OfferedFile]
 
     public init(
-        repo: String, root: String, branch: String, base: String,
+        repo: String, root: String, url: String, branch: String, base: String,
         commitMessage: String, diffstat: String,
         items: [OfferedItem], files: [OfferedFile]
     ) {
         self.repo = repo
         self.root = root
+        self.url = url
         self.branch = branch
         self.base = base
         self.commitMessage = commitMessage
@@ -182,6 +187,7 @@ public func canonicalReview(_ situation: ReviewSituation) -> String {
         reviewVersion,
         field(situation.repo),
         field(situation.root),
+        field(situation.url),
         field(situation.branch),
         field(situation.base),
         field(situation.commitMessage),
@@ -213,7 +219,7 @@ public extension ReviewRequest {
     /// anything whose fields do not produce the fingerprint it carries.
     var situation: ReviewSituation {
         ReviewSituation(
-            repo: repo, root: root, branch: branch, base: base,
+            repo: repo, root: root, url: url, branch: branch, base: base,
             commitMessage: commitMessage, diffstat: diffstat,
             items: items, files: files
         )

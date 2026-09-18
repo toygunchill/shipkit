@@ -193,7 +193,32 @@ final class AppModel: ObservableObject {
                 note: (reviewNotes[item.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             )
         }
-        finishReview(ReviewOutcome(answer: items.isEmpty ? .nothing : .selected, items: items))
+        // Never `.nothing` from here: that is `sendNothingToFix`, and the two
+        // are different statements. This button is disabled when nothing is
+        // ticked, so reaching it with an empty list means the state changed
+        // underneath the click — which is not a reason to say the change is fine.
+        guard items.isEmpty == false else { return }
+        finishReview(ReviewOutcome(answer: .selected, items: items))
+    }
+
+    /// Opens shipkit's own review page — the diff, the findings, and a note
+    /// field per item, which is the surface this popover is a glance at.
+    ///
+    /// The URL came in the offer and is bound into its fingerprint, so it is the
+    /// page this very review is serving and not somewhere a line on the socket
+    /// could point a browser. The review stays on the panel: opening the editor
+    /// is not answering, and whichever surface is answered first closes the other.
+    func openReviewPage() {
+        guard let offer = review, let url = URL(string: offer.request.url) else { return }
+        guard url.scheme == "http", url.host == "127.0.0.1" else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// "I read this and there is nothing to fix." Its own gesture, never the
+    /// side effect of pressing the only button on screen.
+    func sendNothingToFix() {
+        guard review != nil else { return }
+        finishReview(ReviewOutcome(answer: .nothing, items: []))
     }
 
     /// The run that offered this review has gone — answered on its page, or

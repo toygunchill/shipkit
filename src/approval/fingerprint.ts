@@ -143,6 +143,14 @@ export type ReviewSituation = {
    * changeable between the hash and the click.
    */
   root: string;
+  /**
+   * Where shipkit's own review page is, token and all.
+   *
+   * Bound for the reason `root` is: the panel's primary action opens this, so
+   * it steers what happens when a button is pressed, and a field that does that
+   * must not be changeable between the hash and the click.
+   */
+  url: string;
   branch: string;
   base: string;
   /** Empty when the review is running without an agent's answer. */
@@ -173,6 +181,7 @@ export function canonicalReview(situation: ReviewSituation): string {
     REVIEW_VERSION,
     field(situation.repo),
     field(situation.root),
+    field(situation.url),
     field(situation.branch),
     field(situation.base),
     field(situation.commitMessage),

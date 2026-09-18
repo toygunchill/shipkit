@@ -4,6 +4,7 @@
     "situation": {
       "repo": "example-app",
       "root": "/Users/x/example-app",
+      "url": "http://127.0.0.1:53983/?token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "branch": "bugfix/squadb/31087-invoice",
       "base": "develop",
       "commitMessage": "",
@@ -11,13 +12,14 @@
       "items": [],
       "files": []
     },
-    "fingerprint": "17114e79232e22c88743279f4bd50fbaf7646c64d88d0d52690dd327683958e9"
+    "fingerprint": "bf12955bbb8a9a22a9f05aa2717c72757cec59c49a6389df70eacec54000c69b"
   },
   {
     "name": "all four channels and three files",
     "situation": {
       "repo": "example-app",
       "root": "/Users/x/example-app",
+      "url": "http://127.0.0.1:61120/?token=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "branch": "bugfix/squadb/31087-invoice",
       "base": "release/3.76.0",
       "commitMessage": "fix(invoice): default citizenship",
@@ -66,13 +68,14 @@
         }
       ]
     },
-    "fingerprint": "a7953af4050e2d6560de33744a34b1bcc822e33177318dfdfa0db5ee2cf266ba"
+    "fingerprint": "8b964dd8ffb857a1461d934b7e7d070bfb64b4190b71cd896514aecfab4c236e"
   },
   {
     "name": "a message carrying the delimiters",
     "situation": {
       "repo": "x",
       "root": "/tmp/a\nb",
+      "url": "http://127.0.0.1:1/?token=1:2\n3",
       "branch": "b",
       "base": "develop",
       "commitMessage": "line one\nline two",
@@ -93,13 +96,14 @@
         }
       ]
     },
-    "fingerprint": "5901a9742404fbefb17feae4815eb4d058f00dc605ebccb0bb43605fd468ce5f"
+    "fingerprint": "c74810927530d13a4830ea66091ef2763dbe71882d41c6cdbb9207ecedba1a2d"
   },
   {
     "name": "Turkish and an astral character",
     "situation": {
       "repo": "example-app",
       "root": "/Users/x/Belgeler/example-app",
+      "url": "http://127.0.0.1:8080/?token=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "branch": "bugfix/İstanbul",
       "base": "develop",
       "commitMessage": "fix(fatura): vatandaşlık varsayılanı",
@@ -120,13 +124,14 @@
         }
       ]
     },
-    "fingerprint": "0ca5cfb5fdcd55ef979d532697e92aff477b944dbc338b55592abdfafbe77bbf"
+    "fingerprint": "c17b207a5f61b860556dd21aa16705e3f28918ccd1b103ad4a525ce89c38e692"
   },
   {
     "name": "order is not sorted, so two orders are two fingerprints",
     "situation": {
       "repo": "x",
       "root": "/tmp/x",
+      "url": "http://127.0.0.1:2/?token=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       "branch": "b",
       "base": "develop",
       "commitMessage": "",
@@ -147,6 +152,6 @@
       ],
       "files": []
     },
-    "fingerprint": "8f8dbe490dbf84804b3aaa622f9367d1e3daaa46b1cc823ba37aed5d62960da2"
+    "fingerprint": "22db9fdfc1c6da5587b5190c2769a21932573e908f5777a2f77b4bad9028a15a"
   }
 ]

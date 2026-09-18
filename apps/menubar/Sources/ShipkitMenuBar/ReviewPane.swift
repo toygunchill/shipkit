@@ -165,20 +165,41 @@ struct ReviewPane: View {
     }
 
     private var actions: some View {
-        HStack {
-            Text(pickedCount == 0
-                ? "Nothing ticked"
-                : "\(pickedCount) of \(request.items.count) ticked")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
-            // One button, whose words change with what is ticked. Two buttons
-            // would put "send these" and "nothing to fix" side by side, and the
-            // second is the one a tired person presses by mistake.
-            Button(pickedCount == 0 ? "Nothing to fix" : "Send \(pickedCount) to the agent") {
-                model.sendReview()
+        VStack(alignment: .leading, spacing: 8) {
+            // The primary action is the full editor, not an answer.
+            //
+            // This pane used to carry one button whose words changed with what
+            // was ticked, so with nothing ticked the only thing on screen said
+            // "Nothing to fix" — and a person with an unread list in front of
+            // them pressed the only button there was and thereby answered "this
+            // change is fine". The list was right there with its checkboxes; the
+            // action was the trap. Opening the page is now the obvious thing to
+            // do, and answering from here is deliberately the smaller gesture.
+            Button {
+                model.openReviewPage()
+            } label: {
+                Label("Open in shipkit", systemImage: "arrow.up.forward.app")
+                    .frame(maxWidth: .infinity)
             }
             .keyboardShortcut(.defaultAction)
+            .controlSize(.large)
+
+            HStack {
+                Text(pickedCount == 0
+                    ? "or tick above and send from here"
+                    : "\(pickedCount) of \(request.items.count) ticked")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Send \(pickedCount)") { model.sendReview() }
+                    .font(.caption)
+                    // Nothing ticked is not something to send. It is a separate
+                    // statement, and it has its own button below.
+                    .disabled(pickedCount == 0)
+                Button("Nothing to fix") { model.sendNothingToFix() }
+                    .buttonStyle(.link)
+                    .font(.caption)
+            }
         }
     }
 }

@@ -292,6 +292,7 @@ export async function runReview(
     const situation = {
       repo: repoName(root),
       root,
+      url,
       branch,
       base: options.base,
       commitMessage: response?.commitMessage ?? "",

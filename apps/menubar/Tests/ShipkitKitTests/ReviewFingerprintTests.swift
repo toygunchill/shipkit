@@ -11,7 +11,7 @@ import Testing
 /// like a refusal nobody can explain.
 private struct ReviewVector: Decodable {
     struct Sit: Decodable {
-        let repo, root, branch, base, commitMessage, diffstat: String
+        let repo, root, url, branch, base, commitMessage, diffstat: String
         let items: [OfferedItem]
         let files: [OfferedFile]
     }
@@ -31,6 +31,7 @@ private func situation(_ vector: ReviewVector) -> ReviewSituation {
     ReviewSituation(
         repo: vector.situation.repo,
         root: vector.situation.root,
+        url: vector.situation.url,
         branch: vector.situation.branch,
         base: vector.situation.base,
         commitMessage: vector.situation.commitMessage,
@@ -57,7 +58,7 @@ private func situation(_ vector: ReviewVector) -> ReviewSituation {
     let ordered = try #require(vectors.first { $0.situation.items.count == 2 })
     let forward = situation(ordered)
     let reversed = ReviewSituation(
-        repo: forward.repo, root: forward.root, branch: forward.branch, base: forward.base,
+        repo: forward.repo, root: forward.root, url: forward.url, branch: forward.branch, base: forward.base,
         commitMessage: forward.commitMessage, diffstat: forward.diffstat,
         items: forward.items.reversed(), files: forward.files
     )
@@ -80,7 +81,7 @@ private func situation(_ vector: ReviewVector) -> ReviewSituation {
 /// collide even if every shared field happened to agree.
 @Test func aReviewIsNeverAnApproval() {
     let review = ReviewSituation(
-        repo: "x", root: "/tmp/x", branch: "b", base: "develop",
+        repo: "x", root: "/tmp/x", url: "http://127.0.0.1:1/", branch: "b", base: "develop",
         commitMessage: "", diffstat: "", items: [], files: []
     )
     let approval = Situation(
@@ -96,12 +97,12 @@ private func situation(_ vector: ReviewVector) -> ReviewSituation {
 /// a side effect must not be changeable between the hash and the click.
 @Test func twoCheckoutsOfTheSameBranchAreTwoReviews() {
     let one = ReviewSituation(
-        repo: "example-app", root: "/Users/x/example-app", branch: "b", base: "develop",
+        repo: "example-app", root: "/Users/x/example-app", url: "http://127.0.0.1:1/", branch: "b", base: "develop",
         commitMessage: "", diffstat: "",
         items: [], files: [OfferedFile(path: "A.swift", status: "modified", line: 1)]
     )
     let other = ReviewSituation(
-        repo: "example-app", root: "/Users/x/second-checkout", branch: "b", base: "develop",
+        repo: "example-app", root: "/Users/x/second-checkout", url: "http://127.0.0.1:1/", branch: "b", base: "develop",
         commitMessage: "", diffstat: "",
         items: [], files: [OfferedFile(path: "A.swift", status: "modified", line: 1)]
     )

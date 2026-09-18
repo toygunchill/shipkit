@@ -96,6 +96,8 @@ export type ReviewOffer = {
   repo: string;
   /** The checkout's absolute path. The panel's editor button resolves against it. */
   root: string;
+  /** shipkit's own review page, token and all. The panel's primary action opens it. */
+  url: string;
   branch: string;
   base: string;
   /** Empty when the review is running without an agent's answer. */

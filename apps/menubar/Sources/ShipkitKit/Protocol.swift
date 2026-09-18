@@ -115,6 +115,8 @@ public struct ReviewRequest: Codable, Equatable, Sendable {
     public let repo: String
     /// The checkout's absolute path. The editor button resolves a file against it.
     public let root: String
+    /// shipkit's own review page, token and all. The panel's primary action opens it.
+    public let url: String
     public let branch: String
     public let base: String
     /// Empty when the review is running without an agent's answer.
@@ -125,12 +127,12 @@ public struct ReviewRequest: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case protocolVersion = "protocol"
-        case kind, fingerprint, repo, root, branch, base, commitMessage, diffstat, items, files
+        case kind, fingerprint, repo, root, url, branch, base, commitMessage, diffstat, items, files
     }
 
     public init(
         protocolVersion: Int, kind: String, fingerprint: String,
-        repo: String, root: String, branch: String, base: String,
+        repo: String, root: String, url: String, branch: String, base: String,
         commitMessage: String, diffstat: String,
         items: [OfferedItem], files: [OfferedFile]
     ) {
@@ -139,6 +141,7 @@ public struct ReviewRequest: Codable, Equatable, Sendable {
         self.fingerprint = fingerprint
         self.repo = repo
         self.root = root
+        self.url = url
         self.branch = branch
         self.base = base
         self.commitMessage = commitMessage

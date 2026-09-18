@@ -83,6 +83,32 @@ struct InboxPane: View {
             }
             HStack {
                 Text("Pull requests").font(.headline)
+                // Which GitHub these came from. Shown whenever there is more
+                // than one to choose between, and not otherwise: with a single
+                // host it is the only possible answer and saying it is noise.
+                // With two it is the difference between "I have no pull
+                // requests" and "you are looking at the wrong account", which a
+                // person cannot tell from a row of zeroes.
+                if model.ghHosts.count > 1 {
+                    Menu {
+                        ForEach(model.ghHosts, id: \.self) { host in
+                            Button {
+                                model.chooseHost(host)
+                            } label: {
+                                if host == model.ghHost {
+                                    Label(host, systemImage: "checkmark")
+                                } else {
+                                    Text(host)
+                                }
+                            }
+                        }
+                    } label: {
+                        Text(model.ghHost ?? "choose a host")
+                            .font(.caption)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                }
                 Spacer()
                 if model.inboxRefreshing {
                     ProgressView()
@@ -112,7 +138,18 @@ struct InboxPane: View {
             // One short line, and only when there is one. A count that could
             // not be established is shown as an em dash above; this says why,
             // so the answer is never a silent zero.
-            if let reason = model.inbox?.reason {
+            // Said before the counts are read as an answer. `gh` can reach more
+            // than one GitHub and nothing on this machine says which one this
+            // person means, so the app asks rather than picking the one `gh`
+            // happens to default to — which is a global setting, and moves the
+            // moment somebody logs in anywhere else.
+            if model.ghHost == nil && model.ghHosts.count > 1 {
+                Text("gh is signed in to \(model.ghHosts.count) GitHubs. Choose which one these "
+                     + "pull requests should come from, above.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let reason = model.inbox?.reason {
                 Text(reason)
                     .font(.caption)
                     .foregroundStyle(.secondary)

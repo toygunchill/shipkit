@@ -43,6 +43,18 @@ final class AppModel: ObservableObject {
     @Published private(set) var inboxRefreshing: Bool = false
     private var inboxLastCompleted: Date?
 
+    /// Which GitHub the inbox asks about, and the hosts it could ask.
+    ///
+    /// Stored rather than left to `gh`'s default. That default is a global
+    /// setting this application does not own: a person who logs in to a second
+    /// host — a personal account beside a company one — moves it, and the inbox
+    /// then reports on a GitHub they were not asking about. Measured, on this
+    /// machine: `gh api user` answered `ACME12345` in the morning and
+    /// `toygunchill` in the afternoon, with nothing changed in the app.
+    @Published private(set) var ghHost: String?
+    @Published private(set) var ghHosts: [String] = []
+    private static let hostDefaultsKey = "shipkit.inbox.host"
+
     private let keychain = Keychain()
     private let journal = Journal()
     private let queue = ApprovalQueue()
@@ -201,6 +213,59 @@ final class AppModel: ObservableObject {
         finishReview(ReviewOutcome(answer: .selected, items: items))
     }
 
+    /// Reads which hosts `gh` can reach, and settles which one the inbox asks.
+    ///
+    /// One host needs no decision — it is the only possible answer, and asking
+    /// would be ceremony. More than one is a question this application cannot
+    /// answer for a person: which of their GitHubs they mean is not derivable
+    /// from anything on the machine. So it keeps whatever was chosen before, and
+    /// where nothing was, it leaves the inbox pointed at nothing and says so.
+    func refreshHosts() {
+        Task { [weak self] in
+            let output = await GhCommand.live()(authStatusArguments)
+            let text: String
+            switch output {
+            case .success(let data): text = String(decoding: data, as: UTF8.self)
+            case .failure: text = ""
+            }
+            let hosts = parseHosts(text)
+            await MainActor.run {
+                guard let self else { return }
+                self.ghHosts = hosts
+                let stored = UserDefaults.standard.string(forKey: Self.hostDefaultsKey)
+                if let stored, hosts.contains(stored) {
+                    self.ghHost = stored
+                } else if hosts.count == 1 {
+                    self.ghHost = hosts[0]
+                } else {
+                    self.ghHost = nil
+                }
+                // Only now, with the host settled. A refresh before this point
+                // asks `gh`'s default, which is what this whole mechanism
+                // exists to stop depending on.
+                guard self.ghHost != nil else {
+                    // Nothing to ask until a person says which GitHub they mean.
+                    self.inboxRefreshing = false
+                    return
+                }
+                self.refreshInbox()
+            }
+        }
+    }
+
+    /// Chooses which GitHub the inbox asks about, and asks again at once.
+    func chooseHost(_ host: String?) {
+        ghHost = host
+        if let host {
+            UserDefaults.standard.set(host, forKey: Self.hostDefaultsKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.hostDefaultsKey)
+        }
+        inbox = nil
+        inboxLastCompleted = nil
+        refreshInbox(ignoringInterval: true)
+    }
+
     /// Opens shipkit's own review page — the diff, the findings, and a note
     /// field per item, which is the surface this popover is a glance at.
     ///
@@ -313,7 +378,11 @@ final class AppModel: ObservableObject {
     /// disappearance rather than left running, because every tick is two
     /// processes spawned to answer a question nobody is looking at.
     func inboxAppeared() {
-        refreshInbox()
+        // `refreshHosts` asks the inbox itself once it has settled which GitHub
+        // to ask. Calling `refreshInbox` here as well would fire one query
+        // before that answer exists — against `gh`'s default, which is the very
+        // thing this is here to stop relying on.
+        refreshHosts()
         inboxTimer?.cancel()
         inboxTimer = Task { [weak self] in
             while Task.isCancelled == false {
@@ -346,8 +415,9 @@ final class AppModel: ObservableObject {
         }
         inboxRefreshing = true
         let source = pullRequests
+        let host = ghHost
         inboxTask = Task { [weak self] in
-            let outcome = await source.load()
+            let outcome = await source.load(host: host)
             guard Task.isCancelled == false else { return }
             // Replaced wholesale, including when the answer is `undetermined`:
             // keeping the previous numbers on a failed refresh would present

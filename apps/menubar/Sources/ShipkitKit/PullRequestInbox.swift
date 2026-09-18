@@ -484,11 +484,51 @@ public func inboxQuery(login: String) -> String {
 public let reviewWindow = 20
 public let commentWindow = 10
 
-public func inboxArguments(login: String) -> [String] {
-    ["api", "graphql", "-f", "query=\(inboxQuery(login: login))"]
+/// Which GitHub this inbox is about.
+///
+/// Passed explicitly rather than left to `gh`'s default, which is a global
+/// setting this application does not own. A person who logs in to a second host
+/// — a personal account beside a company one — silently moves that default, and
+/// the inbox then reports on a GitHub they were not asking about. It reads as
+/// "my pull requests vanished", with nothing on screen to say the question
+/// changed underneath the answer.
+///
+/// `nil` means "whatever `gh` would do", which is right when there is exactly
+/// one host and there is nothing to disambiguate.
+public typealias GhHost = String?
+
+private func hostArguments(_ host: GhHost) -> [String] {
+    guard let host, host.isEmpty == false else { return [] }
+    return ["--hostname", host]
 }
 
-public let userArguments = ["api", "user"]
+public func inboxArguments(login: String, host: GhHost = nil) -> [String] {
+    ["api", "graphql"] + hostArguments(host) + ["-f", "query=\(inboxQuery(login: login))"]
+}
+
+public func userArguments(host: GhHost = nil) -> [String] {
+    ["api", "user"] + hostArguments(host)
+}
+
+/// The hosts `gh` is logged in to, as `gh auth status` reports them.
+///
+/// Parsed from the plain output rather than from a config file: `gh` keeps
+/// tokens in the keychain and the file does not always name every host it can
+/// reach. A host line is unindented and carries a dot; everything `gh` prints
+/// about an account is indented under it.
+public func parseHosts(_ output: String) -> [String] {
+    var hosts: [String] = []
+    for line in output.split(separator: "\n", omittingEmptySubsequences: false) {
+        let text = String(line)
+        guard text.isEmpty == false, text.first?.isWhitespace == false else { continue }
+        let candidate = text.trimmingCharacters(in: .whitespaces)
+        guard candidate.contains("."), candidate.contains(" ") == false else { continue }
+        if hosts.contains(candidate) == false { hosts.append(candidate) }
+    }
+    return hosts
+}
+
+public let authStatusArguments = ["auth", "status"]
 
 // MARK: - The evidence rule
 
@@ -1050,9 +1090,9 @@ public struct PullRequestInbox: Sendable {
         PullRequestInbox(run: GhCommand.live(timeoutSeconds: timeoutSeconds))
     }
 
-    public func load() async -> InboxOutcome {
+    public func load(host: GhHost = nil) async -> InboxOutcome {
         let user: Data
-        switch await run(userArguments) {
+        switch await run(userArguments(host: host)) {
         case .failure(let failure): return .undetermined(reason: failure.shortReason)
         case .success(let data): user = data
         }
@@ -1062,7 +1102,7 @@ public struct PullRequestInbox: Sendable {
         case .success(let value): login = value
         }
 
-        switch await run(inboxArguments(login: login)) {
+        switch await run(inboxArguments(login: login, host: host)) {
         case .failure(let failure): return .undetermined(reason: failure.shortReason)
         case .success(let data): return parseInbox(data, myLogin: login)
         }

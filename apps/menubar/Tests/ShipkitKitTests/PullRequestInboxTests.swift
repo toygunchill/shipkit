@@ -1195,3 +1195,68 @@ private actor RunSpy {
     #expect(outcome.reason?.contains("no title came back") == true)
     #expect(outcome.list(.waitingOnMe) == nil)
 }
+
+// MARK: - Which GitHub the inbox asks about
+
+/// Measured, not imagined: on the machine this was written on, `gh api user`
+/// answered `ACME12345` in the morning and `toygunchill` in the afternoon, with
+/// nothing changed in the app. A second `gh auth login` had moved gh's default
+/// host, and the inbox — which named no host — followed it to a GitHub the
+/// person was not asking about. It read as "my pull requests vanished".
+@Test func namesTheHostSoGhsDefaultCannotMoveTheAnswer() {
+    let args = inboxArguments(login: "someone", host: "git.example.com")
+
+    #expect(args.contains("--hostname"))
+    #expect(args.contains("git.example.com"))
+    // Before `-f`, because `gh` reads flags for itself and `-f` belongs to the
+    // graphql subcommand's payload.
+    let hostAt = try! #require(args.firstIndex(of: "--hostname"))
+    let payloadAt = try! #require(args.firstIndex(of: "-f"))
+    #expect(hostAt < payloadAt)
+}
+
+@Test func asksTheUserEndpointOnTheSameHost() {
+    #expect(userArguments(host: "git.example.com") == ["api", "user", "--hostname", "git.example.com"])
+}
+
+/// One host needs no decision, and naming it would be ceremony. `nil` is how
+/// the caller says so, and it must produce exactly the arguments this shipped
+/// with before hosts were a question at all.
+@Test func namesNoHostWhenThereIsNothingToDisambiguate() {
+    #expect(userArguments(host: nil) == ["api", "user"])
+    #expect(inboxArguments(login: "x", host: nil).contains("--hostname") == false)
+    #expect(inboxArguments(login: "x", host: "").contains("--hostname") == false)
+}
+
+@Test func readsEveryHostGhSaysItCanReach() {
+    let output = """
+    git.example.com
+      ✓ Logged in to git.example.com account ACME12345 (keyring)
+      - Active account: true
+      - Token scopes: 'gist', 'read:org', 'repo'
+
+    github.com
+      ✓ Logged in to github.com account toygunchill (keyring)
+      - Active account: true
+    """
+
+    #expect(parseHosts(output) == ["git.example.com", "github.com"])
+}
+
+/// Everything `gh` prints about an account is indented under its host, and a
+/// host is a bare domain. A line that is neither must not become a host — the
+/// menu would then offer a GitHub that does not exist.
+@Test func takesOnlyBareDomainsAsHosts() {
+    let output = """
+    github.com
+      ✓ Logged in to github.com account toygunchill (keyring)
+    You are not logged into any GitHub hosts. To log in, run: gh auth login
+    Some other sentence with a period.
+    """
+
+    #expect(parseHosts(output) == ["github.com"])
+}
+
+@Test func saysThereIsNoHostWhenGhSaysNothing() {
+    #expect(parseHosts("").isEmpty)
+}

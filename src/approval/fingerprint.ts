@@ -120,3 +120,76 @@ function canonicalWarnings(warnings: Warning[]): string {
     .map((warning) => `${field(warning.check)}\n${field(warning.message)}`)
     .join("\n");
 }
+
+/**
+ * Everything a review offer is bound to.
+ *
+ * The same property the approval situation has, for the same reason: what the person sees is
+ * what was hashed, so a panel cannot display one review and answer a different one. `head` is
+ * absent because a review happens before there is a commit to name, and `title` because
+ * nothing has been drafted when a review runs without `--input`.
+ */
+export type ReviewSituation = {
+  /** The repository's name, as the panel displays it. */
+  repo: string;
+  /**
+   * The checkout's absolute path, which the panel never displays and the editor
+   * button resolves a file against.
+   *
+   * Bound into the hash even though nobody reads it, because the property this
+   * fingerprint protects is not only "what is shown" but "what happens when a
+   * button is pressed": `root` decides which file on this machine opens, and a
+   * field that steers a side effect is exactly a field that must not be
+   * changeable between the hash and the click.
+   */
+  root: string;
+  branch: string;
+  base: string;
+  /** Empty when the review is running without an agent's answer. */
+  commitMessage: string;
+  diffstat: string;
+  items: readonly { kind: string; id: string; message: string; severity: string }[];
+  files: readonly { path: string; status: string; line: number }[];
+};
+
+/** The marker for the review canonical form, versioned separately from the approval one. */
+const REVIEW_VERSION = "shipkit-review-v1";
+
+/**
+ * Renders a review offer so that two implementations in two languages produce identical
+ * bytes. Length-prefixed exactly like `canonical`, and for exactly the same reason: a
+ * delimiter that can occur inside a message is a disagreement waiting for the first message
+ * that contains one.
+ *
+ * Nothing is sorted. Warnings are sorted in an approval because their order is arbitrary and
+ * two runs could produce it differently; review items arrive in a deliberate order —
+ * refusals first, then warnings, then advice — and that order is part of what the person
+ * reads. Sorting here would hash something other than what is shown, which is the one thing
+ * a fingerprint exists to prevent.
+ */
+export function canonicalReview(situation: ReviewSituation): string {
+  const field = (value: string) => `${Buffer.byteLength(value, "utf8")}:${value}`;
+  const lines = [
+    REVIEW_VERSION,
+    field(situation.repo),
+    field(situation.root),
+    field(situation.branch),
+    field(situation.base),
+    field(situation.commitMessage),
+    field(situation.diffstat),
+    String(situation.items.length),
+  ];
+  for (const item of situation.items) {
+    lines.push(field(item.kind), field(item.id), field(item.message), field(item.severity));
+  }
+  lines.push(String(situation.files.length));
+  for (const file of situation.files) {
+    lines.push(field(file.path), field(file.status), String(file.line));
+  }
+  return lines.join("\n");
+}
+
+/** Lowercase hex SHA-256 of the review canonical form's UTF-8 bytes. */
+export function reviewFingerprint(situation: ReviewSituation): string {
+  return createHash("sha256").update(canonicalReview(situation), "utf8").digest("hex");
+}

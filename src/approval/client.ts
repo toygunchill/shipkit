@@ -2,7 +2,15 @@ import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ApprovalAnswer } from "./policy.js";
-import { decodeResponse, encodeRequest, type ApprovalRequest } from "./protocol.js";
+import {
+  decodeResponse,
+  decodeReviewResponse,
+  encodeRequest,
+  encodeReviewOffer,
+  type ApprovalRequest,
+  type ReviewOffer,
+  type ReviewResponse,
+} from "./protocol.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
@@ -77,4 +85,87 @@ export function requestApproval(
     // Closed without a full line. Not an answer, so not permission.
     socket.on("close", () => finish({ outcome: "denied" }));
   });
+}
+
+/**
+ * What the menu bar said about a review, or why it said nothing.
+ *
+ * `no-surface` is not a failure: most people run `shipkit review` with no application
+ * installed, and the page is a complete answer on its own. `withdrawn` is the ordinary end of
+ * the losing surface — the page was answered first, so this connection was closed.
+ */
+export type ReviewOfferOutcome =
+  | { outcome: "answered"; response: ReviewResponse }
+  | { outcome: "no-surface" }
+  | { outcome: "withdrawn" }
+  | { outcome: "failed"; detail: string };
+
+/**
+ * Offers a running review to the menu bar and waits for an answer.
+ *
+ * Never throws, and never times out on its own. The timeout belongs to `runReview`, which is
+ * already racing this against the page and against its own ten minutes; a second timer here
+ * would be a second deadline nobody set and nobody could see.
+ *
+ * Returns a `cancel` so the winning surface can close the losing one. The application
+ * notices the peer going away and withdraws the review from the panel without asking anyone
+ * anything — see docs/superpowers/specs/2026-09-18-shipkit-review-on-the-panel.md.
+ */
+export function offerReview(
+  offer: ReviewOffer,
+  options: { socketPath?: string } = {},
+): { answer: Promise<ReviewOfferOutcome>; cancel: () => void } {
+  const path = options.socketPath ?? defaultSocketPath();
+  let cancel = (): void => undefined;
+
+  const answer = new Promise<ReviewOfferOutcome>((resolve) => {
+    let settled = false;
+    let buffer = "";
+    let cancelled = false;
+
+    const socket = createConnection({ path });
+
+    const finish = (result: ReviewOfferOutcome) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(result);
+    };
+
+    cancel = () => {
+      cancelled = true;
+      finish({ outcome: "withdrawn" });
+    };
+
+    socket.on("connect", () => {
+      socket.write(encodeReviewOffer(offer));
+    });
+
+    socket.on("data", (chunk) => {
+      buffer += chunk.toString("utf8");
+      const newline = buffer.indexOf("\n");
+      if (newline === -1) return;
+      try {
+        finish({
+          outcome: "answered",
+          response: decodeReviewResponse(buffer.slice(0, newline), offer.fingerprint),
+        });
+      } catch (error) {
+        finish({ outcome: "failed", detail: error instanceof Error ? error.message : String(error) });
+      }
+    });
+
+    // ENOENT when there is no socket, ECONNREFUSED when it is stale. Both mean nobody is
+    // home, which is the ordinary case and not a failure.
+    socket.on("error", () => finish({ outcome: "no-surface" }));
+
+    // Closed without a full line. Either the application went away, or this very call closed
+    // it because the page won — and those want different words, since only one of them is
+    // something going wrong.
+    socket.on("close", () =>
+      finish(cancelled ? { outcome: "withdrawn" } : { outcome: "failed", detail: "the approval surface closed the connection" }),
+    );
+  });
+
+  return { answer, cancel };
 }

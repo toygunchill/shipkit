@@ -1,0 +1,152 @@
+[
+  {
+    "name": "nothing to say",
+    "situation": {
+      "repo": "example-app",
+      "root": "/Users/x/example-app",
+      "branch": "bugfix/squadb/31087-invoice",
+      "base": "develop",
+      "commitMessage": "",
+      "diffstat": " 1 file changed, 2 insertions(+)",
+      "items": [],
+      "files": []
+    },
+    "fingerprint": "17114e79232e22c88743279f4bd50fbaf7646c64d88d0d52690dd327683958e9"
+  },
+  {
+    "name": "all four channels and three files",
+    "situation": {
+      "repo": "example-app",
+      "root": "/Users/x/example-app",
+      "branch": "bugfix/squadb/31087-invoice",
+      "base": "release/3.76.0",
+      "commitMessage": "fix(invoice): default citizenship",
+      "diffstat": " 12 files changed, 148 insertions(+), 37 deletions(-)",
+      "items": [
+        {
+          "kind": "finding",
+          "id": "title-pattern",
+          "message": "The title does not match",
+          "severity": "refuses"
+        },
+        {
+          "kind": "readiness",
+          "id": "readiness-design-tokens",
+          "message": "Answer design-tokens",
+          "severity": "warns"
+        },
+        {
+          "kind": "warning",
+          "id": "untracked-files",
+          "message": "Staging will sweep in .env.local",
+          "severity": "warns"
+        },
+        {
+          "kind": "advice",
+          "id": "uikit-to-swiftui",
+          "message": "This change converts UIKit to SwiftUI",
+          "severity": "informs"
+        }
+      ],
+      "files": [
+        {
+          "path": "Sources/Scenes/Payment/Invoice/AddInvoiceViewModel.swift",
+          "status": "modified",
+          "line": 42
+        },
+        {
+          "path": "Sources/Scenes/Payment/Invoice/AddInvoiceView.swift",
+          "status": "added",
+          "line": 1
+        },
+        {
+          "path": "Sources/Scenes/Payment/Invoice/AddInvoiceViewController.swift",
+          "status": "deleted",
+          "line": 1
+        }
+      ]
+    },
+    "fingerprint": "a7953af4050e2d6560de33744a34b1bcc822e33177318dfdfa0db5ee2cf266ba"
+  },
+  {
+    "name": "a message carrying the delimiters",
+    "situation": {
+      "repo": "x",
+      "root": "/tmp/a\nb",
+      "branch": "b",
+      "base": "develop",
+      "commitMessage": "line one\nline two",
+      "diffstat": "1:2\n3",
+      "items": [
+        {
+          "kind": "warning",
+          "id": "a:b",
+          "message": "before\nafter: 12:ok",
+          "severity": "warns"
+        }
+      ],
+      "files": [
+        {
+          "path": "a\nb.swift",
+          "status": "modified",
+          "line": 7
+        }
+      ]
+    },
+    "fingerprint": "5901a9742404fbefb17feae4815eb4d058f00dc605ebccb0bb43605fd468ce5f"
+  },
+  {
+    "name": "Turkish and an astral character",
+    "situation": {
+      "repo": "example-app",
+      "root": "/Users/x/Belgeler/example-app",
+      "branch": "bugfix/İstanbul",
+      "base": "develop",
+      "commitMessage": "fix(fatura): vatandaşlık varsayılanı",
+      "diffstat": " 1 dosya değişti",
+      "items": [
+        {
+          "kind": "advice",
+          "id": "yorum",
+          "message": "Şişli🚢 güncellendi",
+          "severity": "informs"
+        }
+      ],
+      "files": [
+        {
+          "path": "Kaynaklar/Görünüm.swift",
+          "status": "modified",
+          "line": 3
+        }
+      ]
+    },
+    "fingerprint": "0ca5cfb5fdcd55ef979d532697e92aff477b944dbc338b55592abdfafbe77bbf"
+  },
+  {
+    "name": "order is not sorted, so two orders are two fingerprints",
+    "situation": {
+      "repo": "x",
+      "root": "/tmp/x",
+      "branch": "b",
+      "base": "develop",
+      "commitMessage": "",
+      "diffstat": "",
+      "items": [
+        {
+          "kind": "advice",
+          "id": "zzz",
+          "message": "last alphabetically, first in order",
+          "severity": "informs"
+        },
+        {
+          "kind": "finding",
+          "id": "aaa",
+          "message": "first alphabetically, last in order",
+          "severity": "refuses"
+        }
+      ],
+      "files": []
+    },
+    "fingerprint": "8f8dbe490dbf84804b3aaa622f9367d1e3daaa46b1cc823ba37aed5d62960da2"
+  }
+]

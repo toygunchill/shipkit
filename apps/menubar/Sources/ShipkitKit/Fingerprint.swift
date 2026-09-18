@@ -121,3 +121,101 @@ public extension ApprovalRequest {
         )
     }
 }
+
+/// Everything a review offer is bound to. The mirror of `ReviewSituation` in
+/// `src/approval/fingerprint.ts`; the two must render identically.
+///
+/// `head` is absent because a review happens before there is a commit to name,
+/// and `title` because nothing has been drafted when a review runs without
+/// `--input`.
+public struct ReviewSituation: Sendable, Equatable {
+    /// The repository's name, as the panel displays it.
+    public let repo: String
+    /// The checkout's absolute path, which the panel never displays and the
+    /// editor button resolves a file against.
+    ///
+    /// Bound into the hash even though nobody reads it, because the property
+    /// this fingerprint protects is not only "what is shown" but "what happens
+    /// when a button is pressed": `root` decides which file on this machine
+    /// opens, and a field that steers a side effect must not be changeable
+    /// between the hash and the click.
+    public let root: String
+    public let branch: String
+    public let base: String
+    public let commitMessage: String
+    public let diffstat: String
+    public let items: [OfferedItem]
+    public let files: [OfferedFile]
+
+    public init(
+        repo: String, root: String, branch: String, base: String,
+        commitMessage: String, diffstat: String,
+        items: [OfferedItem], files: [OfferedFile]
+    ) {
+        self.repo = repo
+        self.root = root
+        self.branch = branch
+        self.base = base
+        self.commitMessage = commitMessage
+        self.diffstat = diffstat
+        self.items = items
+        self.files = files
+    }
+}
+
+/// The marker for the review canonical form, versioned separately from the
+/// approval one so that changing what a review binds cannot invalidate an
+/// approval hash, or the other way round.
+private let reviewVersion = "shipkit-review-v1"
+
+/// Length-prefixed like `canonical`, and nothing is sorted.
+///
+/// Warnings are sorted in an approval because their order is arbitrary and two
+/// runs could produce it differently. Review items arrive in a deliberate order
+/// — refusals first, then warnings, then advice — and that order is part of
+/// what the person reads. Sorting here would hash something other than what is
+/// shown, which is the one thing a fingerprint exists to prevent.
+public func canonicalReview(_ situation: ReviewSituation) -> String {
+    func field(_ value: String) -> String { "\(value.utf8.count):\(value)" }
+
+    var lines = [
+        reviewVersion,
+        field(situation.repo),
+        field(situation.root),
+        field(situation.branch),
+        field(situation.base),
+        field(situation.commitMessage),
+        field(situation.diffstat),
+        String(situation.items.count),
+    ]
+    for item in situation.items {
+        lines.append(field(item.kind))
+        lines.append(field(item.id))
+        lines.append(field(item.message))
+        lines.append(field(item.severity))
+    }
+    lines.append(String(situation.files.count))
+    for file in situation.files {
+        lines.append(field(file.path))
+        lines.append(field(file.status))
+        lines.append(String(file.line))
+    }
+    return lines.joined(separator: "\n")
+}
+
+public func reviewFingerprint(_ situation: ReviewSituation) -> String {
+    let digest = SHA256.hash(data: Data(canonicalReview(situation).utf8))
+    return digest.map { String(format: "%02x", $0) }.joined()
+}
+
+public extension ReviewRequest {
+    /// The situation this offer claims. Re-hashed by the listener, which refuses
+    /// anything whose fields do not produce the fingerprint it carries.
+    var situation: ReviewSituation {
+        ReviewSituation(
+            repo: repo, root: root, branch: branch, base: base,
+            commitMessage: commitMessage, diffstat: diffstat,
+            items: items, files: files
+        )
+    }
+}

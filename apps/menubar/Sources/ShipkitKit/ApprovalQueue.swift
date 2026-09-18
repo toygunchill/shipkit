@@ -62,6 +62,29 @@ public final class ApprovalQueue {
     /// Returns whatever is now at the head — `nil` once nobody is left
     /// waiting. Does nothing, rather than trapping, when the queue is
     /// already empty: there is nobody to have decided about.
+    /// Removes every entry with `id`, resuming each with `.pending`, and
+    /// returns whatever is at the head afterwards.
+    ///
+    /// For a run that has gone away — a `shipkit submit` that hit its own
+    /// timeout, a person pressing Ctrl-C. `.pending` because that is what it
+    /// is: nobody decided. A withdrawn request is not recorded in the journal
+    /// either, or the next ten minutes of identical requests would be answered
+    /// with a refusal nobody made.
+    ///
+    /// Unlike `decide`, this reaches entries anywhere in the queue, not only
+    /// the head: the connection that vanished is whichever one it is, and it
+    /// may well be queued behind a request a person is still reading.
+    @discardableResult
+    public func withdraw(id: String) -> PendingRequest? {
+        // Backward, so that removing an entry cannot skip the one after it.
+        for index in stride(from: entries.count - 1, through: 0, by: -1) {
+            if entries[index].request.id == id {
+                entries.remove(at: index).continuation(.pending)
+            }
+        }
+        return entries.first?.request
+    }
+
     @discardableResult
     public func decide(_ decision: Decision) -> PendingRequest? {
         guard entries.isEmpty == false else { return nil }

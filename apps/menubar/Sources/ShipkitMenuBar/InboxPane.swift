@@ -64,6 +64,23 @@ struct InboxPane: View {
 
     private var inbox: some View {
         VStack(alignment: .leading, spacing: 12) {
+            // A review that was on this panel a moment ago and is not any more.
+            // Said out loud rather than left as a pane that silently changed
+            // underneath someone: the usual cause is that they answered it in
+            // the browser, and the second is that the run stopped — and a
+            // person who ticked six boxes here deserves to know which.
+            if model.reviewWithdrawn {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "info.circle")
+                    Text("The review was closed — answered elsewhere, or the run stopped.")
+                        .font(.caption)
+                    Spacer(minLength: 4)
+                    Button("OK") { model.acknowledgeWithdrawnReview() }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                }
+                .foregroundStyle(.secondary)
+            }
             HStack {
                 Text("Pull requests").font(.headline)
                 Spacer()

@@ -1,4 +1,7 @@
 import { randomBytes } from "node:crypto";
+import { reviewFingerprint } from "../approval/fingerprint.js";
+import { PROTOCOL_VERSION, type ReviewOffer } from "../approval/protocol.js";
+import type { ReviewOfferOutcome } from "../approval/client.js";
 import type { Advice } from "../advice/types.js";
 import { assessChange, assessReadiness } from "../assess/change.js";
 import { repoRelative } from "../assess/paths.js";
@@ -94,6 +97,16 @@ export type ReviewDeps = {
   notes?: (() => string[]) | undefined;
   /** Binds the handler to a loopback socket. Injected so no test opens a port. */
   listen: (handler: ReviewHandler, port: number) => Promise<Listening>;
+  /**
+   * Offers the same review to the menu bar, so it can be answered from either surface.
+   *
+   * Optional: most people run this with no application installed, and the page is a complete
+   * answer on its own. Returns a `cancel` the winning surface uses to close the losing one —
+   * the application notices the peer going away and withdraws the review from the panel.
+   */
+  offerReview?:
+    | ((offer: ReviewOffer) => { answer: Promise<ReviewOfferOutcome>; cancel: () => void })
+    | undefined;
   openBrowser?: ((url: string) => void) | undefined;
   openEditor?: ((path: string, line: number) => void) | undefined;
   now: () => Date;
@@ -231,35 +244,74 @@ export async function runReview(
       resolveAnswer = resolve;
     });
 
+    /**
+     * One answer, from whichever surface got there first.
+     *
+     * The disk work happens here, inside the request that carried the selection, rather than
+     * after the wait returns. It used to happen after, which meant the page's "Sent to
+     * shipkit. You can close this tab." was printed before anything had been written — and
+     * when the write failed the person had already closed the tab. A throw from here reaches
+     * the page's handler, which answers 500 with the reason and leaves the review answerable.
+     *
+     * The menu bar has no such retry: it sends its answer and the connection closes, so it
+     * cannot be told that a write failed afterwards. That is why the panel's confirmation
+     * says the selection was sent rather than saved, and why a failure from that path is
+     * printed here — the person is at the terminal that started the review.
+     */
+    const accept = (selection: FixRequestItem[]): void => {
+      if (selection.length > 0) {
+        written = deps.writeFixRequest({
+          version: 1,
+          createdAt: deps.now().toISOString(),
+          base: options.base,
+          branch,
+          items: selection,
+        });
+      } else {
+        cleared = deps.clearFixRequest?.() ?? { kind: "none" };
+      }
+      answered = selection;
+      resolveAnswer();
+    };
+
     const handler = createHandler({
       token,
       page,
-      // The disk work happens here, inside the request, rather than after the wait returns.
-      // It used to happen after, which meant the page's "Sent to shipkit. You can close this
-      // tab." was printed before anything had been written — and when the write failed the
-      // person had already closed the tab. A throw from here reaches the handler, which
-      // answers 500 with the reason and leaves the review answerable.
-      submit: (selection) => {
-        if (selection.length > 0) {
-          written = deps.writeFixRequest({
-            version: 1,
-            createdAt: deps.now().toISOString(),
-            base: options.base,
-            branch,
-            items: selection,
-          });
-        } else {
-          cleared = deps.clearFixRequest?.() ?? { kind: "none" };
-        }
-        answered = selection;
-        resolveAnswer();
-      },
+      submit: accept,
       openEditor: deps.openEditor,
       openable: new Set(files.map((file) => file.path)),
     });
 
     const server = await deps.listen(handler, options.port);
     const url = `${server.origin}/?token=${token}`;
+
+    // Built from the same `items` and `files` the page draws, and hashed over exactly the
+    // fields the panel displays: what the person sees is what was bound, so a panel cannot
+    // show one review and answer a different one.
+    const root = deps.readRepoRoot();
+    const situation = {
+      repo: repoName(root),
+      root,
+      branch,
+      base: options.base,
+      commitMessage: response?.commitMessage ?? "",
+      diffstat,
+      items: items.map((item) => ({
+        kind: item.kind,
+        id: item.id,
+        message: item.message,
+        severity: item.severity,
+      })),
+      files: files.map((file) => ({ path: file.path, status: file.status, line: file.line })),
+    };
+    const offer: ReviewOffer = {
+      protocol: PROTOCOL_VERSION,
+      kind: "review",
+      fingerprint: reviewFingerprint(situation),
+      ...situation,
+    };
+    const offered = deps.offerReview?.(offer);
+
     try {
       deps.out(url);
       deps.err(
@@ -267,8 +319,38 @@ export async function runReview(
           "Nothing is committed, pushed, or sent anywhere.",
       );
       if (options.open) deps.openBrowser?.(url);
+
+      // Deliberately not part of the race below. The panel's answer goes through the very
+      // `accept` the page's does, and `accept` resolves the promise the race is already
+      // waiting on — so adding this promise would only add a second way to end the review,
+      // one that fires on *any* settlement including "there is no application installed",
+      // which is the ordinary case and would end every review the moment it started.
+      //
+      // Everything that is not an answer is reported and otherwise ignored: the page is
+      // still open and still able to answer, so one broken surface must not end a review
+      // the other could finish.
+      void offered?.answer.then((outcome) => {
+        if (outcome.outcome === "failed") {
+          deps.err(`The menu bar could not answer this review: ${outcome.detail}`);
+          return;
+        }
+        if (outcome.outcome !== "answered") return;
+        try {
+          accept(outcome.response.answer === "nothing" ? [] : outcome.response.items);
+        } catch (error) {
+          deps.err(
+            "The selection sent from the menu bar could not be written: " +
+              `${error instanceof Error ? error.message : String(error)}. ` +
+              "The page is still open; answering there reports the failure where you can act on it.",
+          );
+        }
+      });
+
       await Promise.race([answer, deps.wait(REVIEW_TIMEOUT_MS)]);
     } finally {
+      // Closes the losing surface. When the page won, the application sees its peer go away
+      // and withdraws the review from the panel without asking anyone anything.
+      offered?.cancel();
       await server.close();
     }
 

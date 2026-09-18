@@ -4,7 +4,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFil
 import { join, resolve } from "node:path";
 import { Command, CommanderError } from "commander";
 import { observedChangedFiles } from "./advice/observe.js";
-import { requestApproval } from "./approval/client.js";
+import { offerReview, requestApproval } from "./approval/client.js";
 import { assembleBrief } from "./brief/assemble.js";
 import {
   cliRemedy,
@@ -426,6 +426,10 @@ function realReviewDeps(cwd: string, configPath: string, rules: string[] | undef
     clearFixRequest: () => archiveFixRequest(readRepoRoot(cwd), new Date()),
     notes: () => notes,
     listen,
+    // The same socket `submit` already uses for approvals. When no application is listening
+    // this comes straight back as `no-surface`, which is the ordinary case and changes
+    // nothing: the page is a complete answer on its own.
+    offerReview,
     // `open` is what macOS uses to hand a URL to the default browser. Detached and ignored:
     // the command's job is to wait for the page, not for the browser process.
     openBrowser: (url: string) => {

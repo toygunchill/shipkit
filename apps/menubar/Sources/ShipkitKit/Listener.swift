@@ -15,6 +15,30 @@ public struct PendingRequest: Sendable, Identifiable {
     }
 }
 
+/// A review offered while `shipkit review` is also serving its page, waiting
+/// for this person to answer it here instead of in the browser.
+public struct PendingReview: Sendable, Identifiable {
+    /// The fingerprint. Two offers about the same review are the same question.
+    public let id: String
+    public let request: ReviewRequest
+
+    public init(request: ReviewRequest) {
+        self.id = request.fingerprint
+        self.request = request
+    }
+}
+
+/// What the person said about a review here, as opposed to on the page.
+public struct ReviewOutcome: Sendable, Equatable {
+    public let answer: ReviewAnswer
+    public let items: [SelectedItem]
+
+    public init(answer: ReviewAnswer, items: [SelectedItem]) {
+        self.answer = answer
+        self.items = items
+    }
+}
+
 /// A second kind of request, alongside an approval. An item this application
 /// writes through `SecItemAdd` cannot be read back by `/usr/bin/security` —
 /// see `Keychain.swift` — so the token travels over the socket that already
@@ -53,12 +77,29 @@ private struct TokenResponse: Encodable {
     }
 }
 
-/// True when the line carries a `kind` field at all, regardless of its value
-/// or whether the rest of the line parses. An approval request never has one;
-/// routing on presence, rather than on successful decoding, keeps a malformed
-/// token request from being mistaken for an approval request (and so from
-/// ever reaching the presenter).
-private func hasKind(_ line: Data) -> Bool {
+/// The line's `kind`, or `nil` when it has none.
+///
+/// An approval request never carries one, so `nil` *is* the approval route.
+/// Read straight off the JSON rather than by decoding the whole request, and
+/// for the reason the presence check had before a third kind existed: a
+/// malformed request of any kind must not be mistaken for an approval request,
+/// and so must never reach the presenter.
+///
+/// `kindPresent` and this are two questions: a `kind` whose value is not one
+/// this application knows is still not an approval, and answering it as one
+/// would present a person with a request assembled from a line nobody parsed.
+private func kindOf(_ line: Data) -> String? {
+    guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
+        return nil
+    }
+    return object["kind"] as? String
+}
+
+/// True when the line carries a `kind` field at all, whatever its value and
+/// whether or not it is a string. Routes everything that is not an approval
+/// away from the approval path, including a `kind` this application does not
+/// recognise and a `kind` that is not even a string.
+private func kindPresent(_ line: Data) -> Bool {
     guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
         return false
     }
@@ -90,11 +131,106 @@ private func sendAll(_ client: Int32, _ data: Data) async {
     }
 }
 
+/// A flag the watcher below reads and its owner sets, across two concurrency
+/// domains. `nonisolated(unsafe)` on a `Bool` would be a data race; this is the
+/// smallest thing that is not one.
+private final class StopFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var running = true
+
+    var isRunning: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return running
+    }
+
+    func halt() {
+        lock.lock()
+        running = false
+        lock.unlock()
+    }
+}
+
+/// Runs `work` while watching `client` for its peer going away, and joins the
+/// watcher before returning — so the caller may close the descriptor the moment
+/// this call comes back.
+///
+/// `serve` reads one line and then awaits a human, and for as long as that takes
+/// nothing is reading the socket. A client that vanishes — `shipkit submit`
+/// hitting its own timeout, a person pressing Ctrl-C, or `shipkit review`
+/// closing this connection because its page was answered first — used to go
+/// unnoticed until the eventual `send`, which fails silently because
+/// `SO_NOSIGPIPE` is set. The request stayed on screen, the person decided, and
+/// the decision reached nobody.
+///
+/// A bounded `poll` rather than a `DispatchSourceRead`. Two reasons, both
+/// measured: end-of-file leaves a descriptor readable *forever*, so a
+/// level-triggered source re-fires in a tight loop and saturates the global
+/// queue — every other connection in the process then times out. And a source
+/// must not have its descriptor closed before its cancel handler has run, which
+/// is a lifetime this function would have to thread through every early return
+/// in `serve`. Joining a polling task has neither problem, and costs one wakeup
+/// every 200ms per connection that is actually waiting on a person.
+private func whileWatchingForAVanishedPeer<T: Sendable>(
+    client: Int32,
+    onVanish: @escaping @Sendable () -> Void,
+    _ work: () async -> T
+) async -> T {
+    let stop = StopFlag()
+    let watcher = Task.detached {
+        while stop.isRunning {
+            // `poll` with a zero timeout: it answers from the kernel's own state
+            // and returns at once, so this costs no thread at all. The first
+            // version of this blocked in `poll` on a GCD thread for 200ms at a
+            // time — measured, that exhausts the global queue's thread limit as
+            // soon as a few connections are waiting on a person, and then *every*
+            // other connection in the process stalls behind the parked threads.
+            // The sleep below is what waits, and a sleeping `Task` holds nothing.
+            let descriptor = UnsafeMutablePointer<pollfd>.allocate(capacity: 1)
+            descriptor.pointee = pollfd(fd: client, events: Int16(POLLIN), revents: 0)
+            let ready = poll(descriptor, 1, 0)
+            descriptor.deallocate()
+
+            guard stop.isRunning else { return }
+            if ready > 0 {
+                // Readable with nothing to read is end-of-file. `MSG_PEEK` leaves
+                // anything else exactly where it is: this watcher must never
+                // consume a byte the protocol might still want.
+                var byte: UInt8 = 0
+                if recv(client, &byte, 1, MSG_PEEK | MSG_DONTWAIT) == 0 { onVanish() }
+                return
+            }
+            // Negative means the descriptor is not usable at all, which is not
+            // something to keep asking about.
+            if ready < 0 { return }
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+    }
+
+    let result = await work()
+    stop.halt()
+    // Joined, not merely cancelled: `poll` is already in flight on a thread that
+    // holds this descriptor, and returning before it finishes would let the
+    // caller close a descriptor another thread is still naming.
+    await watcher.value
+    return result
+}
+
 public actor Listener {
     private let socketPath: String
     private let journal: Journal
     private let present: @Sendable (PendingRequest) async -> Decision
     private let readSecret: @Sendable (String) -> String?
+    /// Shows a review and waits. `nil` means it was withdrawn rather than
+    /// answered — the person never decided, so there is nothing to send.
+    private let presentReview: @Sendable (PendingReview) async -> ReviewOutcome?
+    /// Takes a review off the panel because the run that offered it has gone.
+    /// Must resume whatever `presentReview` is suspended on, or this connection
+    /// never finishes.
+    private let withdrawReview: @Sendable (String) -> Void
+    /// Takes an approval off the panel because the run that asked for it has
+    /// gone. Resumes whatever `present` is suspended on with `.pending`.
+    private let withdrawApproval: @Sendable (String) -> Void
     private var descriptor: Int32 = -1
     private var source: DispatchSourceRead?
 
@@ -102,12 +238,22 @@ public actor Listener {
         socketPath: String,
         journal: Journal,
         present: @escaping @Sendable (PendingRequest) async -> Decision,
-        readSecret: @escaping @Sendable (String) -> String? = { _ in nil }
+        readSecret: @escaping @Sendable (String) -> String? = { _ in nil },
+        // Defaulted so a listener built for approvals alone stays one line. A
+        // presenter that answers nothing declines every review offer by closing
+        // the connection, which `shipkit review` reads as "no surface here" and
+        // carries on serving its page.
+        presentReview: @escaping @Sendable (PendingReview) async -> ReviewOutcome? = { _ in nil },
+        withdrawReview: @escaping @Sendable (String) -> Void = { _ in },
+        withdrawApproval: @escaping @Sendable (String) -> Void = { _ in }
     ) {
         self.socketPath = socketPath
         self.journal = journal
         self.present = present
         self.readSecret = readSecret
+        self.presentReview = presentReview
+        self.withdrawReview = withdrawReview
+        self.withdrawApproval = withdrawApproval
     }
 
     public static func defaultSocketPath() -> String {
@@ -282,13 +428,27 @@ public actor Listener {
         guard let newline = collected.firstIndex(of: 0x0A) else { return }
         let line = Data(collected[collected.startIndex..<newline])
 
-        if hasKind(line) {
+        if kindOf(line) == "review" {
+            await serveReview(client: client, line: line, on: listener)
+            return
+        }
+
+        if kindPresent(line) {
             guard let data = await listener.tokenResponseData(line: line) else { return }
             await sendAll(client, data)
             return
         }
 
-        let decision = await listener.decide(line: line)
+        // An approval, and the one path that watches for its peer going away.
+        // Before this, a `shipkit submit` that timed out and exited left its
+        // request on the panel: the person read it, clicked Approve, and the
+        // answer reached nobody, with nothing on screen to say so.
+        let decision = await whileWatchingForAVanishedPeer(
+            client: client,
+            onVanish: { Task { await listener.abandonApproval(line: line) } }
+        ) {
+            await listener.decide(line: line)
+        }
         let fingerprintOfRequest = (try? decodeRequest(line))?.fingerprint ?? ""
         let response = ApprovalResponse(
             protocolVersion: protocolVersion,
@@ -296,6 +456,34 @@ public actor Listener {
             decision: decision
         )
         if let data = try? encodeResponse(response) {
+            await sendAll(client, data)
+        }
+    }
+
+    /// Reads a review offer, shows it, and sends back whatever the person said.
+    ///
+    /// Deliberately never journalled. The journal exists so the same push is not
+    /// approved twice inside ten minutes; a review is a person reading a diff,
+    /// and running one again after answering is an ordinary thing to do, not a
+    /// repetition to suppress.
+    private static func serveReview(client: Int32, line: Data, on listener: Listener) async {
+        guard let pending = await listener.review(line: line) else { return }
+
+        let answered = await whileWatchingForAVanishedPeer(
+            client: client,
+            onVanish: { Task { await listener.abandonReview(pending.id) } }
+        ) {
+            await listener.show(pending)
+        }
+        guard let outcome = answered else { return }
+
+        let response = ReviewResponse(
+            protocolVersion: protocolVersion,
+            fingerprint: pending.id,
+            answer: outcome.answer,
+            items: outcome.items
+        )
+        if let data = try? encodeReviewResponse(response) {
             await sendAll(client, data)
         }
     }
@@ -311,8 +499,46 @@ public actor Listener {
         if let known = await journal.decision(for: request.fingerprint) { return known }
 
         let decision = await present(PendingRequest(request: request))
-        await journal.record(decision, for: request.fingerprint)
+        // A withdrawal is not a decision, so it is not recorded. The journal
+        // answers a repeated request from its record without asking anyone, and
+        // a recorded `pending` would answer the next ten minutes of identical
+        // requests with a refusal nobody ever made.
+        if decision != .pending {
+            await journal.record(decision, for: request.fingerprint)
+        }
         return decision
+    }
+
+    /// The run that asked for this approval has gone. Nothing is sent and
+    /// nothing is recorded; the panel simply stops showing a question whose
+    /// answer could no longer reach anybody.
+    fileprivate func abandonApproval(line: Data) {
+        guard let request = try? decodeRequest(line) else { return }
+        withdrawApproval(request.fingerprint)
+    }
+
+    /// Shows a review, or refuses it without showing it.
+    ///
+    /// Everything it cannot verify is refused by closing rather than by
+    /// answering: a review response is a person's words about their own change,
+    /// and a line this application could not make sense of is not those words.
+    /// `shipkit review` reads the closed connection as "this surface could not
+    /// answer" and keeps serving its page, which is the right outcome — one
+    /// broken surface must not end a review the other could finish.
+    fileprivate func review(line: Data) -> PendingReview? {
+        guard let request = try? decodeReviewRequest(line) else { return nil }
+        guard request.protocolVersion == protocolVersion else { return nil }
+        // What the person will see must be what was hashed.
+        guard reviewFingerprint(request.situation) == request.fingerprint else { return nil }
+        return PendingReview(request: request)
+    }
+
+    fileprivate func show(_ pending: PendingReview) async -> ReviewOutcome? {
+        await presentReview(pending)
+    }
+
+    fileprivate func abandonReview(_ id: String) {
+        withdrawReview(id)
     }
 
     /// Never touches the presenter or the journal: a token is not a decision,

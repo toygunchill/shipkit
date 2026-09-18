@@ -565,3 +565,135 @@ describe("a selection that cannot be written", () => {
     expect(result.path).toBe(`/repo/${FIX_REQUEST_PATH}`);
   });
 });
+
+describe("a review answered from the menu bar", () => {
+  /** A stand-in for the application: answers when the test tells it to. */
+  function panel(): {
+    offerReview: NonNullable<ReviewDeps["offerReview"]>;
+    say: (response: { answer: "selected" | "nothing"; items: FixRequestItem[] }) => void;
+    cancelled: () => boolean;
+    offered: () => number;
+  } {
+    let resolveAnswer: (outcome: { outcome: "answered"; response: { protocol: number; kind: "review"; fingerprint: string; answer: "selected" | "nothing"; items: FixRequestItem[] } }) => void = () => undefined;
+    let wasCancelled = false;
+    let count = 0;
+    let fingerprint = "";
+    return {
+      offerReview: (offer) => {
+        count += 1;
+        fingerprint = offer.fingerprint;
+        return {
+          answer: new Promise((resolve) => {
+            resolveAnswer = resolve;
+          }),
+          cancel: () => {
+            wasCancelled = true;
+          },
+        };
+      },
+      say: (response) =>
+        resolveAnswer({
+          outcome: "answered",
+          response: { protocol: 1, kind: "review", fingerprint, ...response },
+        }),
+      cancelled: () => wasCancelled,
+      offered: () => count,
+    };
+  }
+
+  // The selection is written once, by the same `accept` the page reaches. The
+  // menu bar is a second way to say the same thing, not a second thing to say.
+  it("writes what was ticked there, through the very path the page uses", async () => {
+    const surface = panel();
+    const harness = makeDeps({ offerReview: surface.offerReview });
+
+    const result = await review(harness, () => surface.say({ answer: "selected", items: [ITEM] }));
+
+    expect(result.code).toBe(0);
+    expect(result.selected).toEqual([ITEM]);
+    expect(harness.written).toEqual([
+      expect.objectContaining({ items: [ITEM], branch: BRANCH, base: OPTIONS.base }),
+    ]);
+  });
+
+  it("clears a pending selection when nothing was ticked there", async () => {
+    let cleared = 0;
+    const surface = panel();
+    const harness = makeDeps({
+      offerReview: surface.offerReview,
+      fixRequestExclusions: () => [FIX_REQUEST_PATH],
+      clearFixRequest: (): ArchiveOutcome => {
+        cleared += 1;
+        return { kind: "moved", path: "/archive/x.json" };
+      },
+    });
+
+    await review(harness, () => surface.say({ answer: "nothing", items: [] }));
+
+    expect(cleared).toBe(1);
+    expect(harness.written).toEqual([]);
+  });
+
+  // The losing surface has to be closed, or the panel keeps showing a review
+  // whose buttons would reach nobody.
+  it("closes the offer when the page answered first", async () => {
+    const surface = panel();
+    const harness = makeDeps({ offerReview: surface.offerReview });
+
+    await review(harness, (h) => h.answer([ITEM]));
+
+    expect(surface.cancelled()).toBe(true);
+  });
+
+  it("closes the offer when the wait ran out with nobody answering", async () => {
+    const surface = panel();
+    const harness = makeDeps({ offerReview: surface.offerReview });
+
+    await review(harness, (h) => h.abandon());
+
+    expect(surface.cancelled()).toBe(true);
+  });
+
+  // The offer settling is not an answer. `no-surface` comes back the instant
+  // there is no application installed, which is most runs — and a race that
+  // treated any settlement as an answer would end every review on the spot.
+  it("keeps waiting when there is no application to offer it to", async () => {
+    const harness = makeDeps({
+      offerReview: () => ({ answer: Promise.resolve({ outcome: "no-surface" as const }), cancel: () => undefined }),
+    });
+
+    const result = await review(harness, (h) => h.answer([ITEM]));
+
+    expect(result.code).toBe(0);
+    expect(result.selected).toEqual([ITEM]);
+  });
+
+  it("reports a surface that could not answer, and lets the page finish the review", async () => {
+    const harness = makeDeps({
+      offerReview: () => ({
+        answer: Promise.resolve({ outcome: "failed" as const, detail: "speaks protocol 2" }),
+        cancel: () => undefined,
+      }),
+    });
+
+    const result = await review(harness, (h) => h.answer([ITEM]));
+
+    expect(harness.err.join("\n")).toContain("speaks protocol 2");
+    expect(result.selected).toEqual([ITEM]);
+  });
+
+  it("offers each review once, and binds what the panel will show", async () => {
+    let seen: { items: unknown[]; files: unknown[]; fingerprint: string } | undefined;
+    const harness = makeDeps({
+      offerReview: (offer) => {
+        seen = { items: offer.items, files: offer.files, fingerprint: offer.fingerprint };
+        return { answer: new Promise(() => undefined), cancel: () => undefined };
+      },
+    });
+
+    await review(harness, (h) => h.abandon());
+
+    expect(seen?.files).toEqual([{ path: "app.ts", status: "modified", line: 1 }]);
+    expect(seen?.fingerprint).toMatch(/^[0-9a-f]{64}$/);
+  });
+});

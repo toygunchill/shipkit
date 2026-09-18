@@ -27,6 +27,11 @@ struct ShipkitMenuBarApp: App {
                     queuedBehind: model.queuedBehind,
                     actionsEnabled: model.actionsEnabled
                 ) { model.decide($0) }
+            } else if let review = model.review {
+                // Below an approval and above the inbox. An approval is a push
+                // standing still until somebody says yes; a review is a person
+                // reading, which can wait the few seconds that yes takes.
+                ReviewPane(model: model, offer: review)
             } else {
                 // Not the settings pane: a pending decision outranks
                 // everything, and when there is none the panel's subject is
@@ -42,7 +47,7 @@ struct ShipkitMenuBarApp: App {
             // Rasterised, not drawn live: `MenuBarExtra` reliably renders only
             // `Text` and `Image` labels, and the composed-`Path` view this used
             // to be came up blank — see `ShipkitMark.statusImage`.
-            Image(nsImage: ShipkitMark.statusImage(isPending: model.pending != nil))
+            Image(nsImage: ShipkitMark.statusImage(isPending: model.pending != nil || model.review != nil))
         }
         .menuBarExtraStyle(.window)
     }

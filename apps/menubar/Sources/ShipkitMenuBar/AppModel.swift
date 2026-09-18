@@ -11,6 +11,20 @@ import ShipkitKit
 final class AppModel: ObservableObject {
     @Published private(set) var pending: PendingRequest?
     @Published private(set) var queuedBehind: Int = 0
+    /// The review waiting to be answered here, if `shipkit review` is running
+    /// and offered one. At most one: a second offer is refused rather than
+    /// queued, because a review is a person reading a diff and two of them on
+    /// one popover is a way to answer the wrong one.
+    @Published private(set) var review: PendingReview?
+    /// Which items are ticked, and what was written about each, keyed by item
+    /// id. Cleared when the review leaves, however it leaves.
+    @Published var reviewPicks: [String: Bool] = [:]
+    @Published var reviewNotes: [String: String] = [:]
+    /// Set when a review was taken off the panel by the run that offered it
+    /// going away, so the person is told rather than left wondering where it
+    /// went. Cleared the moment anything else happens.
+    @Published private(set) var reviewWithdrawn: Bool = false
+    private var reviewContinuation: CheckedContinuation<ReviewOutcome?, Never>?
     @Published private(set) var actionsEnabled: Bool = true
     @Published var tokenDraft: String = ""
     @Published private(set) var tokenSaved: Bool = false
@@ -94,6 +108,15 @@ final class AppModel: ObservableObject {
             },
             readSecret: { account in
                 try? keychain.read(account: account)
+            },
+            presentReview: { [weak self] offer in
+                await self?.show(offer) ?? nil
+            },
+            withdrawReview: { [weak self] id in
+                Task { @MainActor in self?.withdrawReview(id) }
+            },
+            withdrawApproval: { [weak self] id in
+                Task { @MainActor in self?.withdrawApproval(id) }
             }
         )
         self.listener = listener
@@ -134,6 +157,94 @@ final class AppModel: ObservableObject {
             pending = head
             queuedBehind = queue.waitingCount
         }
+    }
+
+    /// Puts a review on screen and suspends until a button is pressed, or until
+    /// the run that offered it goes away.
+    ///
+    /// A second offer arriving while one is up is declined outright — `nil`,
+    /// which closes that connection and leaves that review to its own page.
+    /// Queueing was rejected: an approval is a yes-or-no about a push and
+    /// queueing two is sound, but a review is a list of things wrong with a
+    /// particular change, and a second one sliding into the same popover behind
+    /// the first is how a person sends the wrong notes about the wrong diff.
+    private func show(_ offer: PendingReview) async -> ReviewOutcome? {
+        guard review == nil else { return nil }
+        return await withCheckedContinuation { continuation in
+            reviewContinuation = continuation
+            reviewWithdrawn = false
+            reviewPicks = [:]
+            reviewNotes = [:]
+            review = offer
+        }
+    }
+
+    /// Sends what is ticked. `nothing` when nothing is — which is a decision,
+    /// not the absence of one: it tells `shipkit review` to clear whatever
+    /// selection was pending from a previous run.
+    func sendReview() {
+        guard let offer = review else { return }
+        let picked = offer.request.items.filter { reviewPicks[$0.id] == true }
+        let items = picked.map { item in
+            SelectedItem(
+                kind: item.kind,
+                id: item.id,
+                message: item.message,
+                note: (reviewNotes[item.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+        finishReview(ReviewOutcome(answer: items.isEmpty ? .nothing : .selected, items: items))
+    }
+
+    /// The run that offered this review has gone — answered on its page, or
+    /// stopped. Takes it off screen and says so, rather than leaving a panel
+    /// whose buttons would reach nobody.
+    private func withdrawReview(_ id: String) {
+        guard review?.id == id else { return }
+        finishReview(nil)
+        reviewWithdrawn = true
+    }
+
+    /// Dismisses the withdrawal notice. Anything the person does next clears it.
+    func acknowledgeWithdrawnReview() {
+        reviewWithdrawn = false
+    }
+
+    private func finishReview(_ outcome: ReviewOutcome?) {
+        review = nil
+        reviewPicks = [:]
+        reviewNotes = [:]
+        reviewContinuation?.resume(returning: outcome)
+        reviewContinuation = nil
+    }
+
+    /// The run that asked for an approval has gone. Resolves it as `pending` —
+    /// nobody decided — and promotes whatever was queued behind it.
+    private func withdrawApproval(_ id: String) {
+        let next = queue.withdraw(id: id)
+        if pending?.id == id || next?.id != pending?.id {
+            pending = next
+            queuedBehind = queue.waitingCount
+        }
+    }
+
+    /// Opens one of the review's files in the editor.
+    ///
+    /// The path must be one the offer named. The panel has no way to name any
+    /// other — the buttons are built from `offer.request.files` — and this
+    /// checks anyway, because "the caller cannot ask for that" is an argument
+    /// about today's callers and this launches a process.
+    func openInEditor(_ path: String) {
+        guard let offer = review else { return }
+        guard let file = offer.request.files.first(where: { $0.path == path }) else { return }
+        let process = Process()
+        // Absolute, not resolved through PATH: which program opens a person's
+        // file must not depend on the environment this application inherited.
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xed")
+        // `--` before the path, and the path joined to the repository root the
+        // offer named, so a name beginning with a dash is a file and not a flag.
+        process.arguments = ["--line", String(file.line), "--", offer.request.root + "/" + file.path]
+        try? process.run()
     }
 
     /// Applies `decision` to the head (and, per `ApprovalQueue.decide`, to

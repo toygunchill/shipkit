@@ -192,3 +192,58 @@ private func pendingRequest(fingerprint: String) -> PendingRequest {
     #expect(await taskB2.value == .denied)
     #expect(await taskC.value == .approved)
 }
+
+/// A run that goes away takes its own request off the queue, wherever it sits —
+/// which is not necessarily the head: the connection that vanished may well be
+/// queued behind a request a person is still reading.
+@Test @MainActor func withdrawingReachesAQueuedRequestAndNotOnlyTheHead() async {
+    let queue = ApprovalQueue()
+    let head = pendingRequest(fingerprint: "head")
+    let behind = pendingRequest(fingerprint: "behind")
+
+    let firstTask = Task { await queue.wait(for: head) { _ in } }
+    await Task.yield()
+    let secondTask = Task { await queue.wait(for: behind) { _ in } }
+    await Task.yield()
+
+    let nowAtHead = queue.withdraw(id: "behind")
+
+    #expect(nowAtHead?.id == "head")
+    #expect(queue.waitingCount == 0)
+    #expect(await secondTask.value == .pending)
+
+    queue.decide(.approved)
+    #expect(await firstTask.value == .approved)
+}
+
+/// `.pending` is what a withdrawal means: nobody decided. The caller already
+/// reads it as "no answer", so nothing new had to be invented for it.
+@Test @MainActor func aWithdrawnRequestIsResumedAsPending() async {
+    let queue = ApprovalQueue()
+    let only = pendingRequest(fingerprint: "only")
+
+    let task = Task { await queue.wait(for: only) { _ in } }
+    await Task.yield()
+    let nowAtHead = queue.withdraw(id: "only")
+
+    #expect(nowAtHead == nil)
+    #expect(await task.value == .pending)
+}
+
+/// Two connections carrying the same question are the same question. One of
+/// them going away takes both, exactly as answering one answers both.
+@Test @MainActor func withdrawingTakesEveryConnectionAskingTheSameQuestion() async {
+    let queue = ApprovalQueue()
+    let same = pendingRequest(fingerprint: "same")
+
+    let firstTask = Task { await queue.wait(for: same) { _ in } }
+    await Task.yield()
+    let secondTask = Task { await queue.wait(for: same) { _ in } }
+    await Task.yield()
+
+    queue.withdraw(id: "same")
+
+    #expect(await firstTask.value == .pending)
+    #expect(await secondTask.value == .pending)
+    #expect(queue.waitingCount == 0)
+}

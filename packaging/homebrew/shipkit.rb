@@ -1,21 +1,40 @@
 # Homebrew formula for shipkit.
 #
-# The url and sha256 below are placeholders. `scripts/release.sh` fills them in
-# from a tarball it builds, and prints what to do next. Nothing here works until
-# the repository is published somewhere Homebrew can fetch from — see
-# packaging/README.md.
+# `scripts/release.sh` keeps the tag and the pinned revision in step with the
+# repository. See packaging/README.md for how a release is cut and why this
+# fetches over git rather than from a release tarball.
 class Shipkit < Formula
   desc "Holds AI coding agents to a team's pull-request conventions"
   homepage "https://github.com/toygunchill/shipkit"
-  url "https://github.com/toygunchill/shipkit/releases/download/v0.1.0/shipkit-0.1.0.tgz"
-  sha256 "b2770773439a4063c8fde7ff94fa86f6c6502817273b92ac278b05bedc9880c3"
-  # Matches LICENSE and package.json. `brew audit` compares the three and
-  # complains when they disagree, which is the check that keeps them together.
+  # Fetched over git, not as a release tarball.
+  #
+  # Measured, not chosen: this repository is private, and Homebrew downloads a
+  # release asset with an anonymous `curl` — which gets a 404 and reports it as
+  # a failed download, with nothing to say it was a permissions problem. Git is
+  # the one channel that carries the person's own credentials (`brew tap`
+  # already clones this tap the same way), so a private formula has to fetch
+  # this way or not at all.
+  #
+  # `revision:` pins the commit so the tag cannot be moved under an install, and
+  # `tag:` is what a person reads.
+  url "https://github.com/toygunchill/shipkit.git",
+      tag:      "v0.1.0",
+      revision: "ef8fc06c49324ee58ab0d28bebf4190a91c9535d"
   license "MIT"
+  head "https://github.com/toygunchill/shipkit.git", branch: "main"
 
   depends_on "node"
 
   def install
+    # `dist/` is git-ignored, so a git checkout carries source and no build. The
+    # published tarball carried `dist` already; this does not, so the compile
+    # that `prepublishOnly` used to do at pack time happens here instead.
+    system "npm", "ci"
+    system "npm", "run", "build"
+
+    # Development dependencies were needed for that build and are dead weight in
+    # the installed tree — `npm install` below re-resolves from package.json, so
+    # what lands in libexec is the runtime set only.
     system "npm", "install", *std_npm_args
     bin.install_symlink Dir["#{libexec}/bin/*"]
   end

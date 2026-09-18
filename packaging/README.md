@@ -2,33 +2,51 @@
 
 What is here, what is missing, and what to run when it stops being missing.
 
-## Why nothing installs yet
-
-Homebrew installs from a URL. shipkit has no remote, so there is nothing to
-fetch. Everything below is ready except that one fact.
-
-`scripts/release.sh` reflects this honestly: it builds the tarball, computes the
-checksum, fills the checksum into the formula, and leaves the url as a named
-placeholder rather than a plausible-looking guess. A formula carrying a wrong
-url fails at install time, in front of whoever tried; a formula that says
-`REPLACE_WITH_TARBALL_URL` fails here, in front of us.
-
-## When the repository is published
+## How it installs
 
 ```bash
-git remote add origin <url>
-scripts/release.sh            # reads the url from the remote
-```
-
-It then prints the four steps in order: tag, attach the tarball to the release,
-copy the formula into a tap, install. The tap is an ordinary git repository
-named `homebrew-<something>` — `homebrew-tools`, say — with the formula at
-`Formula/shipkit.rb`. Consumers then run:
-
-```bash
-brew tap <owner>/tools
+brew tap toygunchill/tools
+brew trust toygunchill/tools
 brew install shipkit
 ```
+
+The `brew trust` line is not optional and not ours: current Homebrew refuses to
+load a formula from a third-party tap until the tap is trusted, and says so with
+the exact command. Anyone installing this will meet it, so it belongs in the
+instructions rather than in a surprise.
+
+The tap is `toygunchill/homebrew-tools`, an ordinary private repository with the
+formula at `Formula/shipkit.rb`.
+
+## Why it fetches over git rather than from a release tarball
+
+Measured, not preferred. The repository is private, and Homebrew downloads a
+release asset with an anonymous `curl`:
+
+```
+Error: Failed to download resource "shipkit (0.1.0)"
+curl: (56) The requested URL returned error: 404
+```
+
+A 404, with nothing to say it was a permissions problem. `brew tap` had worked
+moments earlier because a tap is a `git clone`, and git carries the person's own
+credentials. So git is the only channel a private formula can use, and the
+formula's `url` is the repository with `tag:` and a pinned `revision:`.
+
+Two consequences worth naming. The checkout carries no `dist/` — it is
+git-ignored — so the formula builds: `npm ci`, `npm run build`, then
+`npm install`. And the release tarball `scripts/release.sh` still produces is now
+a convenience for anyone who wants one, not the install channel.
+
+## Cutting a release
+
+```bash
+scripts/release.sh            # reads the url from the remote
+git tag vX.Y.Z && git push origin vX.Y.Z
+```
+
+Then update `tag:` and `revision:` in the formula and push the tap. `revision:`
+pins the commit so a moved tag cannot change what an install gets.
 
 ## The formula
 

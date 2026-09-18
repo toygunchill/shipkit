@@ -105,6 +105,19 @@ brew install shipkit
 Needs Node, which Homebrew pulls in. From a checkout instead:
 `npm install && npm run build && node dist/cli.js --help`.
 
+The menu-bar app is a second formula, kept separate so that installing the
+command line does not drag in a Swift toolchain:
+
+```bash
+brew install shipkit-menubar
+open $(brew --prefix shipkit-menubar)/shipkit.app
+```
+
+It builds from source and is ad-hoc signed, so the first launch needs Finder's
+right-click → Open, once per machine. You only need it if your config sets
+`pr.approval: human`, or if you want reviews answerable from the menu bar as
+well as the browser.
+
 shipkit runs **inside the repository you are opening the pull request for**, not
 in its own. That repository already has the remote and the `gh` login; shipkit
 needs neither of its own.

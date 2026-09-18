@@ -71,19 +71,27 @@ compares all three — which is what keeps them from drifting apart. `npm pack`
 includes `LICENSE` in the tarball on its own, whatever `files` says, so the
 license travels with every install.
 
-## The menu-bar cask
+## The menu-bar app
 
-Not written yet. The app itself exists — `apps/menubar`, assembled into a
-bundle by `scripts/app.sh` — but it is not yet packaged, because a cask is the
-normal channel for a `.app` and that channel is only worth opening once the
-signing question below is answered.
+`homebrew/shipkit-menubar.rb`, installed with `brew install shipkit-menubar`.
 
-**Signing is unresolved and it affects this.** An unsigned app installed by cask
-is blocked by Gatekeeper on first launch: the user must right-click and choose
-Open, once per machine. Signing and notarising with an Apple Developer account
-removes that, at the cost of a signing step in the release.
+**A formula, not a cask** — the opposite of the usual answer for a `.app`, for
+two measured reasons. A cask downloads a file with an anonymous `curl`, and this
+repository is private: the same 404 that made the CLI formula fetch over git.
+Casks have no git download strategy. And a git checkout has to be built, which
+casks cannot do and formulas can.
 
-`scripts/release.sh` is written so the step slots in between packing and the
-checksum — the checksum must be taken *after* signing, because signing rewrites
-the bundle. Until the account question is settled, the app is ad-hoc signed and
-the right-click is documented for whoever installs it.
+Kept separate from `shipkit` so that installing the command line does not
+require a Swift toolchain. It depends on `shipkit`, though — the app answers
+what the CLI asks, and installing it alone would be a menu-bar icon with nothing
+to say.
+
+**Signing is still ad-hoc.** The bundle is signed with `-`, which is enough for
+Gatekeeper to offer the right-click-open path instead of refusing outright; the
+caveats say so in the words a person needs at that moment. Real signing needs an
+Apple Developer account and would remove that one-time step — the formula is the
+place it slots in, right before `prefix.install`.
+
+`design/icon/generated/shipkit.icns` is git-ignored, so a checkout has no icon
+and the formula copies one only if it is there. It costs nothing: `LSUIElement`
+means there is no Dock icon, and the menu-bar mark is drawn in code.

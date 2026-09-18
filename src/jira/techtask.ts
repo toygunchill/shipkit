@@ -30,17 +30,50 @@ export type TechTaskInput = {
 };
 
 /**
- * `Portfolio / Servis Bilgisi`. A cascading select: its payload is
- * `{value, child: {value}}`, and a bare `{value}` is rejected. The parent has exactly one
- * allowed value and lives in config; the child varies with the work and is derived.
+ * Which custom field is which, in the Jira this repository is configured against.
+ *
+ * Read from `techTask.fieldIds` rather than held as constants here. The ids this was built
+ * against are real but they are *that* instance's — a custom field id is assigned per Jira,
+ * so a constant would make this command write a sprint into whatever field 10005 happens to
+ * be somewhere else. Every id is optional and every one is refused where it is needed,
+ * naming itself, so a team with no epics never has to discover their epic field's id.
+ *
+ * The values measured on the Jira this was built against, for whoever is filling in a config
+ * against the same one:
+ *
+ *   portfolio  customfield_10101  Portfolio / Servis Bilgisi, a cascading select whose
+ *                                 payload is `{value, child: {value}}`; a bare `{value}`
+ *                                 is rejected.
+ *   team       customfield_10102  Digital Team, a plain option: `{value}`.
+ *   epic       customfield_10006  The epic link. A bare key string, not an object.
+ *   sprint     customfield_10005  The sprint. A bare numeric id, not an object and not a name.
  */
-export const PORTFOLIO_FIELD = "customfield_10101";
-/** `Digital Team`, a plain option: `{value}`. Derived — it is the team, and it varies per person. */
-export const TEAM_FIELD = "customfield_10102";
-/** The epic link. A bare key string, not an object. */
-export const EPIC_FIELD = "customfield_10006";
-/** The sprint. A bare numeric id, not an object and not a name. */
-export const SPRINT_FIELD = "customfield_10005";
+export type FieldIds = {
+  portfolio?: string | undefined;
+  team?: string | undefined;
+  epic?: string | undefined;
+  sprint?: string | undefined;
+};
+
+export function fieldIdsOf(config: TechTaskConfig): FieldIds {
+  return config.fieldIds ?? {};
+}
+
+/**
+ * What `tech-task` cannot do without, and what it is called in config.
+ *
+ * Returned rather than thrown so the caller can report every missing id at once: a person
+ * filling in a config should learn all of what is missing in one run, not one id per run.
+ */
+export function missingFieldIds(config: TechTaskConfig): string[] {
+  const ids = fieldIdsOf(config);
+  const missing: string[] = [];
+  if (ids.portfolio === undefined) missing.push("portfolio");
+  if (ids.team === undefined) missing.push("team");
+  // Only when there is an epic to link. A team that uses none needs no epic field.
+  if (config.epic !== undefined && ids.epic === undefined) missing.push("epic");
+  return missing;
+}
 
 /**
  * The request body for `POST /rest/api/2/issue`.
@@ -64,15 +97,20 @@ export function buildCreatePayload(input: TechTaskInput): Record<string, unknown
   //
   // The portfolio parent is the one owned id whose config value is still read — not copied
   // through, but taken apart and rebuilt with the derived child under it, just below.
+  const ids = fieldIdsOf(config);
   const extra: Record<string, unknown> = { ...(config.fields ?? {}) };
-  for (const owned of [PORTFOLIO_FIELD, TEAM_FIELD, EPIC_FIELD, SPRINT_FIELD]) delete extra[owned];
+  for (const owned of [ids.portfolio, ids.team, ids.epic, ids.sprint]) {
+    if (owned !== undefined) delete extra[owned];
+  }
 
   const fields: Record<string, unknown> = {
     ...extra,
     project: { key: config.project },
     issuetype: { name: config.issueType },
     summary: config.summaryPattern.replaceAll("{subject}", subject),
-    [TEAM_FIELD]: { value: team },
+    // `missingFieldIds` refuses before this is reached without a team id; the guard is the
+    // safe reading of that, not a route anyone takes.
+    ...(ids.team === undefined ? {} : { [ids.team]: { value: team } }),
   };
 
   // The child is nested under whatever parent the repository configured. With no parent
@@ -84,20 +122,22 @@ export function buildCreatePayload(input: TechTaskInput): Record<string, unknown
   // `!Array.isArray` because `typeof [] === "object"`: a YAML list under
   // `customfield_10101:` is not a cascading-select parent, and spreading one would build
   // `{0: …, child: {…}}` — a child with no parent value, in a shape Jira rejects.
-  const parent = config.fields?.[PORTFOLIO_FIELD];
-  if (typeof parent === "object" && parent !== null && !Array.isArray(parent)) {
-    fields[PORTFOLIO_FIELD] = { ...parent, child: { value: portfolioChild } };
+  const parent = ids.portfolio === undefined ? undefined : config.fields?.[ids.portfolio];
+  if (ids.portfolio !== undefined && typeof parent === "object" && parent !== null && !Array.isArray(parent)) {
+    fields[ids.portfolio] = { ...parent, child: { value: portfolioChild } };
   }
 
   // Measured: 1 of the 2 existing conversion tickets has no epic link. A human doing this
   // by hand forgets, which is most of why this command exists — but the epic is optional
   // in config, and an absent one is omitted rather than sent as an empty key.
-  if (config.epic !== undefined) fields[EPIC_FIELD] = config.epic;
+  if (config.epic !== undefined && ids.epic !== undefined) fields[ids.epic] = config.epic;
 
   // Omitted, never null. Six teams exist and four had an active sprint when this was
   // measured, so "no sprint" is an ordinary outcome, and `customfield_10005: null` is a
   // different request from one that leaves the sprint alone.
-  if (sprintId !== undefined) fields[SPRINT_FIELD] = sprintId;
+  // Both must be known. Without a sprint field id there is nowhere to put it, and the
+  // command has already said so rather than leaving a person to wonder.
+  if (sprintId !== undefined && ids.sprint !== undefined) fields[ids.sprint] = sprintId;
 
   return { fields };
 }
@@ -223,12 +263,21 @@ function parseSprint(entry: unknown): { id: number; name: string; active: boolea
 export async function fetchRecentWork(
   baseUrl: string,
   token: string,
+  /** Which field is which in this Jira — see `FieldIds`. */
+  ids: FieldIds,
   fetcher: Fetcher = defaultFetcher,
 ): Promise<RecentWork> {
+  // Only the ids this configuration actually names. Asking Jira for `undefined` would send
+  // the literal string, and Jira answers a request naming an unknown field with a 400 — so a
+  // repository that configures no sprint field would fail the whole read rather than simply
+  // getting no sprints.
+  const wanted = [ids.team, ids.portfolio, ids.sprint].filter(
+    (id): id is string => id !== undefined,
+  );
   const query = new URLSearchParams({
     jql: "assignee = currentUser() ORDER BY updated DESC",
     maxResults: String(SAMPLE_SIZE),
-    fields: [TEAM_FIELD, PORTFOLIO_FIELD, SPRINT_FIELD].join(","),
+    fields: wanted.join(","),
   });
   const url = `${baseUrl.replace(/\/$/, "")}/rest/api/2/search?${query.toString()}`;
 
@@ -253,14 +302,15 @@ export async function fetchRecentWork(
     const fields = asRecord(asRecord(issue)?.fields);
     if (fields === undefined) continue;
 
-    const team = optionValue(fields[TEAM_FIELD]);
-    const portfolioChild = cascadingChild(fields[PORTFOLIO_FIELD]);
+    const team = ids.team === undefined ? undefined : optionValue(fields[ids.team]);
+    const portfolioChild =
+      ids.portfolio === undefined ? undefined : cascadingChild(fields[ids.portfolio]);
     sample.push({
       ...(team !== undefined ? { team } : {}),
       ...(portfolioChild !== undefined ? { portfolioChild } : {}),
     });
 
-    const sprints = fields[SPRINT_FIELD];
+    const sprints = ids.sprint === undefined ? undefined : fields[ids.sprint];
     if (!Array.isArray(sprints)) continue;
     for (const entry of sprints) {
       const sprint = parseSprint(entry);

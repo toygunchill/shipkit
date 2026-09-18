@@ -4,6 +4,15 @@ import { buildCreatePayload } from "../../src/jira/techtask.js";
 const config = {
   project: "DCP", issueType: "Story", epic: "ABC-12154",
   summaryPattern: "iOS - {subject} swift ui dönüşümü",
+  // Which field is which, in this Jira. No defaults anywhere in the product — see
+  // `missingFieldIds`: a custom field id is assigned per instance, so guessing one writes a
+  // real value into the wrong field on somebody else's Jira and nobody finds out.
+  fieldIds: {
+    portfolio: "customfield_10101",
+    team: "customfield_10102",
+    epic: "customfield_10006",
+    sprint: "customfield_10005",
+  },
   fields: { customfield_10101: { value: "Commercial" } },
 };
 
@@ -93,5 +102,54 @@ describe("buildCreatePayload", () => {
       config: { ...config, fields: { customfield_10101: [{ value: "Commercial" }] } },
     }) as any).fields;
     expect("customfield_10101" in f).toBe(false);
+  });
+});
+
+describe("a Jira that spells its fields differently", () => {
+  // The whole point of taking the ids out of the code: this tool is not one company's.
+  const elsewhere = {
+    project: "WEB", issueType: "Task", epic: "WEB-1",
+    summaryPattern: "chore: {subject}",
+    fieldIds: {
+      portfolio: "customfield_20001",
+      team: "customfield_20002",
+      epic: "customfield_20003",
+      sprint: "customfield_20004",
+    },
+    fields: { customfield_20001: { value: "Platform" } },
+  };
+
+  it("writes every value into the field that Jira calls it", () => {
+    const f = (buildCreatePayload({ ...input, config: elsewhere }) as any).fields;
+
+    expect(f.customfield_20002).toEqual({ value: "Squad B" });
+    expect(f.customfield_20003).toBe("WEB-1");
+    expect(f.customfield_20004).toBe(1234);
+    expect(f.customfield_20001).toEqual({
+      value: "Platform",
+      child: { value: "Portfolio B" },
+    });
+  });
+
+  // The ids this build was written against must not leak into somebody else's payload.
+  it("writes nothing into the ids it was originally built against", () => {
+    const f = (buildCreatePayload({ ...input, config: elsewhere }) as any).fields;
+
+    for (const old of ["customfield_10101", "customfield_10102", "customfield_10006", "customfield_10005"]) {
+      expect(old in f, `${old} leaked into a payload for another Jira`).toBe(false);
+    }
+  });
+
+  // Without a sprint id there is nowhere to put the sprint. Omitted rather than written
+  // somewhere plausible — the command has already said the field is not configured.
+  it("omits the sprint when this Jira's sprint field is not configured", () => {
+    const { sprint: _sprint, ...noSprint } = elsewhere.fieldIds;
+    const f = (buildCreatePayload({
+      ...input,
+      config: { ...elsewhere, fieldIds: noSprint },
+    }) as any).fields;
+
+    expect(f.customfield_20004).toBeUndefined();
+    expect(f.customfield_10005).toBeUndefined();
   });
 });

@@ -25,7 +25,8 @@ import { pickSprint } from "./jira/derive.js";
 import {
   buildCreatePayload,
   fetchRecentWork,
-  PORTFOLIO_FIELD,
+  fieldIdsOf,
+  missingFieldIds,
   portfolioChildFrom,
   teamFrom,
 } from "./jira/techtask.js";
@@ -665,8 +666,13 @@ const TECH_TASK_BLOCK = `techTask:
   issueType: Story
   epic: ABC-12154
   summaryPattern: "iOS - {subject} swift ui dönüşümü"
+  fieldIds:
+    portfolio: customfield_10101
+    team: customfield_10102
+    epic: customfield_10006
+    sprint: customfield_10005
   fields:
-    ${PORTFOLIO_FIELD}:
+    customfield_10101:
       value: "Commercial"`;
 
 /**
@@ -691,24 +697,53 @@ function missingTechTaskBlock(path: string): string {
     "  epic                 optional, and worth setting: half the existing conversion tickets",
     "                       were never attached to theirs.",
     "  summaryPattern       must contain {subject}, which --subject fills in.",
-    `  ${PORTFOLIO_FIELD}    Portfolio / Servis Bilgisi, a cascading select. This is its parent,`,
-    `                       whose only allowed value is "Commercial".`,
+    "  fieldIds             which custom field is which, in your Jira. The ids above are the",
+    "                       ones measured on the Jira this was built against; a custom field",
+    "                       id is assigned per instance, so check yours rather than trusting",
+    "                       these. There are no defaults, deliberately: a wrong id writes a",
+    "                       real value into the wrong field and nobody finds out.",
+    "  fields               the values shipkit cannot derive. The portfolio parent is a",
+    '                       cascading select; its only allowed value here is "Commercial".',
     "",
-    "Digital Team, the portfolio child and the sprint are deliberately not in the block: they",
+    "The team, the portfolio child and the sprint are deliberately not in the block: they",
     "differ per person, and .shipkit.yml is committed and shared.",
   ].join("\n");
 }
 
-/** The one field in the block that cannot be defaulted or derived, missing on its own. */
-function missingPortfolioParent(path: string): string {
+/**
+ * Which custom field is which, when the config has not said.
+ *
+ * Every missing id at once, because a person filling in a config should learn all of what is
+ * missing in one run rather than one id per run.
+ */
+function missingIds(path: string, missing: string[]): string {
   return [
-    `The techTask block in ${path} has no ${PORTFOLIO_FIELD}, which Jira requires to create this`,
-    "issue, and it has no derivable value — its parent is a fixed choice about the repository.",
-    "Nothing was created.",
+    `The techTask block in ${path} does not say which Jira custom field is ` +
+      `${missing.length === 1 ? "its" : "each of"} ${missing.join(", ")}. Nothing was created.`,
+    "",
+    "A custom field id is assigned by the Jira instance, so shipkit cannot guess one: a wrong",
+    "id writes a real value into the wrong field and nobody finds out. Add them under",
+    "techTask.fieldIds — these were the ids on the Jira this was built against, so check",
+    "yours against them rather than trusting them:",
+    "",
+    "    fieldIds:",
+    "      portfolio: customfield_10101   # Portfolio / Servis Bilgisi, a cascading select",
+    "      team: customfield_10102        # Digital Team",
+    "      epic: customfield_10006        # only needed when epic: is set above",
+    "      sprint: customfield_10005      # without it, no sprint is set",
+  ].join("\n");
+}
+
+/** The one value in the block that cannot be defaulted or derived, missing on its own. */
+function missingPortfolioParent(path: string, portfolioId: string): string {
+  return [
+    `The techTask block in ${path} has no value for ${portfolioId}, which Jira requires to`,
+    "create this issue, and it has no derivable one — its parent is a fixed choice about the",
+    "repository. Nothing was created.",
     "",
     "Add it under techTask.fields:",
     "",
-    `    ${PORTFOLIO_FIELD}:`,
+    `    ${portfolioId}:`,
     `      value: "Commercial"`,
     "",
     "The child of that cascading field is derived per person, or given with --portfolio.",
@@ -778,16 +813,26 @@ program
           process.exitCode = 2;
           return;
         }
-        // `Array.isArray` because `typeof [] === "object"`: a YAML list under
-        // `customfield_10101:` is not a cascading-select parent, and without this it slips
-        // past the refusal and builds a child with no parent value.
-        const portfolioParent = techTask.fields?.[PORTFOLIO_FIELD];
+        // Before the parent's value, because "which field is the portfolio" has to be
+        // answered before "what is in it" can be.
+        const absent = missingFieldIds(techTask);
+        if (absent.length > 0) {
+          console.error(missingIds(configFile, absent));
+          process.exitCode = 2;
+          return;
+        }
+        const ids = fieldIdsOf(techTask);
+
+        // `Array.isArray` because `typeof [] === "object"`: a YAML list under the portfolio
+        // id is not a cascading-select parent, and without this it slips past the refusal
+        // and builds a child with no parent value.
+        const portfolioParent = techTask.fields?.[ids.portfolio as string];
         if (
           typeof portfolioParent !== "object" ||
           portfolioParent === null ||
           Array.isArray(portfolioParent)
         ) {
-          console.error(missingPortfolioParent(configFile));
+          console.error(missingPortfolioParent(configFile, ids.portfolio as string));
           process.exitCode = 2;
           return;
         }
@@ -822,7 +867,7 @@ program
         // learns both at once instead of running the command again to find the second.
         const refusals: { unresolved: string; candidates: string[] }[] = [];
         if (needsDerivation && token !== undefined) {
-          const work = await fetchRecentWork(config.jira.baseUrl, token);
+          const work = await fetchRecentWork(config.jira.baseUrl, token, ids);
           const sampled = `derived from your ${work.sample.length} most recent issues`;
 
           if (team === undefined) {

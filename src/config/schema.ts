@@ -72,12 +72,31 @@ export const configSchema = z.object({
         .refine((pattern) => pattern.includes("{subject}"), {
           message: 'must contain "{subject}"',
         }),
-      // Extra Jira fields beyond project/issuetype/epic/summary, keyed by
-      // field id since that's what the Jira API takes. Known ids seen so far:
-      //   customfield_10101  Portfolio / Servis Bilgisi (a cascading select;
-      //                      its parent has exactly one allowed value,
-      //                      "Commercial")
-      //   customfield_10102  Digital Team
+      // Which custom field is which, in *this* Jira.
+      //
+      // No defaults, deliberately. A custom field id is assigned by the Jira instance, so
+      // `customfield_10006` is the epic link on the one this was built against and is
+      // something else entirely on the next. Defaulting them would make `tech-task` write a
+      // sprint id into whatever field 10005 happens to be somewhere else — a silently wrong
+      // value in a created ticket, which is the exact class this command exists to prevent.
+      //
+      // Each is optional and each is refused at the point it is needed, naming itself, so a
+      // team that uses no epics never has to find out what their epic field is called.
+      fieldIds: z
+        .object({
+          /** The cascading select whose child is derived. Required to run `tech-task`. */
+          portfolio: z.string().min(1).optional(),
+          /** The team field, derived from the person's own recent issues. Required. */
+          team: z.string().min(1).optional(),
+          /** The epic link. Required only when `epic:` above names one. */
+          epic: z.string().min(1).optional(),
+          /** The sprint. Without it no sprint is set, and the command says so. */
+          sprint: z.string().min(1).optional(),
+        })
+        .optional(),
+      // Extra Jira fields beyond project/issuetype/epic/summary, keyed by field id since
+      // that is what the Jira API takes. The ids named in `fieldIds` are owned by shipkit
+      // and are stripped from here — see buildCreatePayload.
       fields: z.record(z.string(), z.unknown()).optional(),
     })
     .optional(),

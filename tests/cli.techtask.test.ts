@@ -55,6 +55,13 @@ const WELL_FORMED = [
   "  issueType: Story",
   "  epic: ABC-12154",
   '  summaryPattern: "iOS - {subject} swift ui dönüşümü"',
+  // Which field is which, in this Jira. There are no defaults: an id is assigned per
+  // instance, so guessing one writes a real value into the wrong field somewhere else.
+  "  fieldIds:",
+  "    portfolio: customfield_10101",
+  "    team: customfield_10102",
+  "    epic: customfield_10006",
+  "    sprint: customfield_10005",
   "  fields:",
   "    customfield_10101:",
   '      value: "Commercial"',
@@ -113,5 +120,56 @@ describe("shipkit tech-task --dry-run", () => {
     expect(result.stderr).toContain("customfield_10101");
     expect(result.stderr).toContain("Nothing was created.");
     expect(result.stdout).not.toContain("child");
+  });
+});
+
+describe("a techTask block that does not say which field is which", () => {
+  // The refusal that makes this tool honest anywhere but the Jira it was built against.
+  it("refuses, naming every id it is missing at once", () => {
+    const config = configWith(
+      [
+        "techTask:",
+        "  project: DCP",
+        "  issueType: Story",
+        "  epic: ABC-12154",
+        '  summaryPattern: "iOS - {subject} swift ui dönüşümü"',
+        "  fields:",
+        "    customfield_10101:",
+        '      value: "Commercial"',
+      ].join("\n"),
+    );
+
+    const result = run(["tech-task", "--subject", "x", "--config", config, "--dry-run", ...DECIDED]);
+
+    expect(result.status).toBe(2);
+    // All three in one run, not one per run.
+    expect(result.stderr).toContain("portfolio");
+    expect(result.stderr).toContain("team");
+    expect(result.stderr).toContain("epic");
+    expect(result.stderr).toContain("Nothing was created");
+  });
+
+  // A team that links no epics never has to find out what their epic field is called.
+  it("does not ask for an epic field when the block links no epic", () => {
+    const config = configWith(
+      [
+        "techTask:",
+        "  project: WEB",
+        "  issueType: Task",
+        '  summaryPattern: "chore: {subject}"',
+        "  fieldIds:",
+        "    portfolio: customfield_20001",
+        "    team: customfield_20002",
+        "  fields:",
+        "    customfield_20001:",
+        '      value: "Platform"',
+      ].join("\n"),
+    );
+
+    const result = run(["tech-task", "--subject", "x", "--config", config, "--dry-run", ...DECIDED]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("customfield_20002");
+    expect(result.stdout).not.toContain("customfield_10102");
   });
 });

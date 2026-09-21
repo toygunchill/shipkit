@@ -1,3 +1,4 @@
+import { basename, dirname, join } from "node:path";
 import { parse } from "yaml";
 import { configSchema } from "../config/schema.js";
 import { boilerplateLines, MIN_BODIES_TO_GENERALISE, sectionSkeleton } from "../infer/bodies.js";
@@ -42,6 +43,18 @@ export type InitDeps = {
   write: (path: string, text: string) => void;
   out: (line: string) => void;
   err: (line: string) => void;
+  /**
+   * Proposes a readiness checklist from the code, as `shipkit rules` does.
+   *
+   * Optional so a caller can set shipkit up without one — and so tests can leave it out.
+   * It is part of `init` because a repository needs both halves to be set up, and a person
+   * who runs one command reasonably expects to be set up. Leaving the second to be
+   * discovered later means it is discovered by nobody.
+   *
+   * Returns `undefined` when there is nothing to propose, which is a real answer: the
+   * catalogue found no rule whose subject is in this repository.
+   */
+  proposeReadiness?: (() => string | undefined) | undefined;
 };
 
 export type InitResult = {
@@ -49,9 +62,22 @@ export type InitResult = {
   wrote: boolean;
   /** Fields nothing could determine. Named to a human rather than invented. */
   unresolved: string[];
+  /** Where the readiness checklist was written, when one was proposed. */
+  readinessPath?: string;
 };
 
-export type InitOptions = { config: string; force: boolean; limit: number };
+export type InitOptions = {
+  config: string;
+  force: boolean;
+  limit: number;
+  /**
+   * Where a proposed readiness checklist goes, beside the config.
+   *
+   * Sibling-relative, because that is how `readiness:` is resolved — against the realpath
+   * of the config, so a symlinked deployment finds the rules beside the link's target.
+   */
+  readinessFile?: string;
+};
 
 /**
  * Accepts every branch name. Written only when no branch rule could be read.
@@ -463,6 +489,22 @@ export function runInit(options: InitOptions, deps: InitDeps): InitResult {
     unresolved.push("jira.section");
   }
 
+  // Proposed before the config is rendered, so the config can name it. Nothing is written
+  // yet: `proposeReadiness` returns text, and both writes happen below with the config
+  // first — a failure writing the checklist must leave a usable config behind.
+  const readinessTarget = options.readinessFile ?? join(dirname(options.config), "readiness.yml");
+  const proposed =
+    deps.proposeReadiness === undefined
+      ? undefined
+      : attempt("a readiness checklist", () => deps.proposeReadiness?.(), deps.err).value;
+  const willWriteReadiness =
+    proposed !== undefined && (!deps.exists(readinessTarget) || options.force);
+  if (willWriteReadiness) {
+    // Sibling-relative: `readiness:` resolves against the realpath of the config, which is
+    // what lets a repository keep both files together and link to them from elsewhere.
+    draft.readinessFile = `./${basename(readinessTarget)}`;
+  }
+
   const text = renderConfig(draft);
 
   // What this command infers must load. The unit tests put every path through
@@ -490,14 +532,35 @@ export function runInit(options: InitOptions, deps: InitDeps): InitResult {
   for (const [field, inferred] of summaryOrder(draft)) {
     deps.out(`  ${field}: ${inferred.provenance} — ${inferred.why}`);
   }
-  if (unresolved.length > 0) {
-    deps.err(
-      `Could not be determined and needs a human: ${unresolved.join(", ")}. ` +
-        `Each is a placeholder in ${options.config}, not a convention shipkit read anywhere.`,
-    );
+
+  // The second half of being set up. Written after the config and never before: a failure
+  // here must leave a usable config behind rather than nothing at all.
+  let readinessPath: string | undefined;
+  if (deps.proposeReadiness !== undefined) {
+    if (proposed === undefined) {
+      deps.err(
+        "No readiness checklist was proposed: nothing in this repository matched a rule " +
+          "shipkit knows how to look for. That is a statement about the catalogue, not " +
+          "about your code — write one by hand from what your own reviews keep asking.",
+      );
+    } else if (!willWriteReadiness) {
+      deps.err(`${readinessTarget} already exists, so it was left alone. Pass --force to replace it.`);
+    } else {
+      try {
+        deps.write(readinessTarget, proposed);
+        readinessPath = readinessTarget;
+        deps.out(`Wrote ${readinessTarget}`);
+        deps.out(
+          "  every rule is `advise`, which never gates a push, and every line says what it " +
+            "was derived from. Read it before raising any of them.",
+        );
+      } catch (error) {
+        deps.err(`Cannot write ${readinessTarget}: ${reason(error)}`);
+      }
+    }
   }
 
-  return { code: 0, wrote: true, unresolved };
+  return { code: 0, wrote: true, unresolved, ...(readinessPath === undefined ? {} : { readinessPath }) };
 }
 
 function summaryOrder(draft: InitDraft): [string, Inferred<unknown>][] {

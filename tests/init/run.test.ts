@@ -603,3 +603,94 @@ describe("runInit provenance", () => {
     expect(written[0]).toContain("one body cannot show that a line recurs");
   });
 });
+
+describe("init sets up both halves", () => {
+  const CHECKLIST = "version: 1\nrules:\n  - id: x\n    ask: q\n    severity: advise\n";
+
+  function withPaths(over: Partial<InitDeps> = {}) {
+    const files: Record<string, string> = {};
+    const out: string[] = [];
+    const err: string[] = [];
+    const base = deps().deps;
+    return {
+      files,
+      out,
+      err,
+      deps: {
+        ...base,
+        write: (path: string, text: string) => void (files[path] = text),
+        out: (line: string) => void out.push(line),
+        err: (line: string) => void err.push(line),
+        ...over,
+      } as InitDeps,
+    };
+  }
+
+  // A person who runs one setup command expects to be set up. A second half left to be
+  // discovered later is discovered by nobody.
+  it("writes the checklist beside the config and points the config at it", () => {
+    const h = withPaths({ proposeReadiness: () => CHECKLIST });
+
+    const result = runInit({ ...OPTIONS, config: "/repo/.shipkit.yml" }, h.deps);
+
+    expect(result.readinessPath).toBe("/repo/readiness.yml");
+    expect(h.files["/repo/readiness.yml"]).toContain("id: x");
+    // Sibling-relative, because `readiness:` resolves against the realpath of the config.
+    expect(h.files["/repo/.shipkit.yml"]).toContain("readiness: ./readiness.yml");
+  });
+
+  // A key pointing at a file that is not there makes every later run refuse. An absent key
+  // is the correct state for a repository with no checklist.
+  it("writes no readiness key when nothing could be proposed", () => {
+    const h = withPaths({ proposeReadiness: () => undefined });
+
+    const result = runInit({ ...OPTIONS, config: "/repo/.shipkit.yml" }, h.deps);
+
+    expect(result.readinessPath).toBeUndefined();
+    expect(h.files["/repo/.shipkit.yml"]).not.toContain("readiness:");
+    expect(Object.keys(h.files)).toEqual(["/repo/.shipkit.yml"]);
+  });
+
+  it("leaves an existing checklist alone, and says so", () => {
+    const h = withPaths({
+      exists: (path: string) => path === "/repo/readiness.yml",
+      proposeReadiness: () => CHECKLIST,
+    });
+
+    runInit({ ...OPTIONS, config: "/repo/.shipkit.yml" }, h.deps);
+
+    expect(h.files["/repo/readiness.yml"]).toBeUndefined();
+    expect(h.err.join("\n")).toContain("already exists");
+    // And the config must not claim a file this run did not write.
+    expect(h.files["/repo/.shipkit.yml"]).not.toContain("readiness:");
+  });
+
+  // The config is the half that makes shipkit usable at all. A failure writing the
+  // checklist must not cost it.
+  it("still leaves a usable config when the checklist cannot be written", () => {
+    const h = withPaths({ proposeReadiness: () => CHECKLIST });
+    const deny = {
+      ...h.deps,
+      write: (path: string, text: string) => {
+        if (path.endsWith("readiness.yml")) throw new Error("EACCES");
+        h.files[path] = text;
+      },
+    };
+
+    const result = runInit({ ...OPTIONS, config: "/repo/.shipkit.yml" }, deny);
+
+    expect(result.wrote).toBe(true);
+    expect(h.files["/repo/.shipkit.yml"]).toBeDefined();
+    expect(result.readinessPath).toBeUndefined();
+  });
+
+  // Unchanged for every caller that does not ask for one — which is every caller that
+  // existed before this.
+  it("writes only the config when no proposer is supplied", () => {
+    const h = withPaths();
+
+    runInit({ ...OPTIONS, config: "/repo/.shipkit.yml" }, h.deps);
+
+    expect(Object.keys(h.files)).toEqual(["/repo/.shipkit.yml"]);
+  });
+});

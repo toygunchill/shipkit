@@ -91,6 +91,32 @@ The scope is derived too: rules are limited to the languages the repository is
 actually written in, and the shared-layer rule names the shared directory it
 found. A change touching only a README is asked nothing.
 
+## shipkit holds no rules of its own
+
+This is the thing to understand before anything else. shipkit does not know what a good
+pull-request title looks like, which sections a body needs, which branch names your team
+allows, or which Jira level to link. It knows *how to check* those things against values
+you supply.
+
+Those values live in your repository, in two files:
+
+| | What it holds |
+|---|---|
+| `.shipkit.yml` | the title pattern, the body's sections, the branch pattern, the Jira level, which labels block a merge, who answers a warning |
+| a readiness checklist (optional) | the questions worth asking before a change is ready — the ones your own reviews keep asking |
+
+**Without the first, shipkit does nothing.** Every command that reads your conventions —
+`check`, `brief`, `review`, `submit` — refuses and tells you to run `shipkit init`.
+
+That separation is deliberate. A tool carrying one team's conventions is a tool the next
+team has to fork. It also means changing your mind is a pull request in *your* repository,
+not a release of somebody else's software.
+
+Where the two files sit is up to you. `init` writes them side by side and points the first
+at the second; a repository that keeps its conventions with its architecture decisions can
+put them anywhere and leave `.shipkit.yml` as a symbolic link, because `readiness:` is
+resolved against the *realpath* of the config it was loaded from.
+
 ## Getting started
 
 ### 1. Install it
@@ -129,25 +155,22 @@ cd /path/to/your/checkout
 shipkit init
 ```
 
-`init` reads what your forge can actually prove — the merged pull requests, the
-branch ruleset, the merge gate — and writes a starter `.shipkit.yml` with a
-label on every value saying where it came from: `read` is a fact, `observed` is
-a pattern in what people did (not the same as what they intended), `proposed` is
-shipkit's guess and yours to overrule. Read it before you trust it. It never
-opts you into anything: `pr.approval` defaults to `echo`.
+`init` sets up both halves and writes nothing you have to wire together yourself.
 
-If your team also has a readiness checklist — the questions worth asking before
-a change is ready, not the ones your linter already asks — you can have one
-proposed from the code:
+It reads what your forge can actually prove — the merged pull requests, the branch
+ruleset, the merge gate — and writes a starter `.shipkit.yml` with a label on every value
+saying where it came from: `read` is a fact, `observed` is a pattern in what people did
+(not the same as what they intended), `proposed` is shipkit's guess and yours to overrule.
+Read it before you trust it. It never opts you into anything: `pr.approval` defaults to
+`echo`.
 
-```bash
-shipkit rules --out readiness.yml
-```
+Then it proposes a readiness checklist from your code, writes it beside the config, and
+points `readiness:` at it. That half selects; it does not invent — only rules whose subject
+is actually in your repository, with the evidence above each line, everything at `advise`
+so nothing starts gating anyone's work before a person has read it. If nothing in your
+repository matches the catalogue, `init` says so rather than writing an empty file.
 
-It selects; it does not invent. Only rules whose subject is actually in your
-repository, with the evidence written above each line, everything at `advise`
-so nothing starts gating anyone's work before a person has read it. Point
-`.shipkit.yml` at it with `readiness: ./readiness.yml` when you are happy.
+`shipkit rules` does that second half on its own, if you want to redo it later.
 
 ### 3. Try it without letting it act
 

@@ -33,6 +33,8 @@ import {
 import type { IssueFacts } from "./jira/types.js";
 import { applicable, observedPaths } from "./readiness/apply.js";
 import { loadReadiness, loadReadinessFiles } from "./readiness/load.js";
+import { propose } from "./rules/propose.js";
+import { renderRules } from "./rules/render.js";
 import { runRules } from "./rules/run.js";
 import { surveyRepository } from "./rules/survey.js";
 import type { ReadinessRule } from "./readiness/types.js";
@@ -647,6 +649,25 @@ program
       { config: configPath({ repo: root, config: options.config }), force: options.force, limit },
       {
         sources: realInitSources(root),
+        // The other half of being set up. `shipkit rules` alone does the same thing; this
+        // is here because a person who runs one setup command expects to be set up, and a
+        // second half left to be discovered later is discovered by nobody.
+        proposeReadiness: () => {
+          const survey = surveyRepository({
+            trackedPaths: () => readTrackedFiles(root),
+            read: (path: string) => {
+              try {
+                return readFileSync(join(root, path), "utf8");
+              } catch {
+                return undefined;
+              }
+            },
+          });
+          const proposals = propose(survey);
+          return proposals.rules.length === 0
+            ? undefined
+            : renderRules(proposals, survey.files.length, survey.capped);
+        },
         exists: (path: string) => existsSync(path),
         write: (path: string, text: string) => writeFileSync(path, text, "utf8"),
         out: (line: string) => console.log(line),

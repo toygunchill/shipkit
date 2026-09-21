@@ -4,6 +4,8 @@ import type { JiraGuess } from "./jira.js";
 
 /** Everything `init` writes, each field carrying where it came from. */
 export type InitDraft = {
+  /** Where the readiness checklist went, sibling-relative. Absent when none was proposed. */
+  readinessFile?: string | undefined;
   titlePattern: Inferred<string>;
   branchPattern: Inferred<string>;
   forbidden: Inferred<string[]>;
@@ -93,6 +95,10 @@ export function renderConfig(draft: InitDraft): string {
       approval: APPROVAL.value,
       approvalTimeoutSeconds: APPROVAL_TIMEOUT.value,
     },
+    // Only when one was proposed. An absent key means no checklist, which is the correct
+    // state for a repository that has none — a key pointing at a file that is not there
+    // makes every later run refuse.
+    ...(draft.readinessFile === undefined ? {} : { readiness: draft.readinessFile }),
     branch: { pattern: draft.branchPattern.value },
     jira: {
       baseUrl: draft.jira.value.baseUrl ?? "https://jira.example.com",

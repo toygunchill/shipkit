@@ -54,6 +54,18 @@ export const configSchema = z.object({
     keyPattern: regexPatternSchema,
     linkPolicy: z.enum(["story", "any"]).default("story"),
     section: z.string().min(1).default("Issues Addressed"),
+    /**
+     * Branch patterns whose pull requests need no issue key.
+     *
+     * Some work genuinely has no ticket — tooling, documentation, a dependency bump — and
+     * a repository that names such branches (`chore/…`) has already said so. Without this,
+     * `issue-key-missing` refuses every one of them, and the only ways out are inventing a
+     * ticket or turning the rule off for everybody.
+     *
+     * Empty by default: a repository that has not said which branches are exempt has not
+     * exempted any, which is what every existing config already means.
+     */
+    keyOptionalOnBranches: z.array(regexPatternSchema).default([]),
   }),
   // Absent from every `.shipkit.yml` that exists today, and loading one of
   // those must not change: this block only matters to a repository that opts

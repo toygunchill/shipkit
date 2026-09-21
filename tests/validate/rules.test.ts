@@ -203,3 +203,72 @@ describe("issue-level", () => {
     expect(result.findings.map((f) => f.rule)).not.toContain("issue-level");
   });
 });
+
+describe("a branch the repository has declared ticketless", () => {
+  const body = [
+    "## Summary",
+    "docs only",
+    "## Screenshots / Screen Recordings",
+    "Nothing to show.",
+    "## What to Test",
+    "- one",
+    "- two",
+    "- three",
+    "## Issues Addressed",
+    "- None — chore, no ticket.",
+  ].join("\n\n");
+
+  const exempting = (exempt: string[]) => ({
+    ...config,
+    jira: { ...config.jira, keyOptionalOnBranches: exempt },
+  });
+
+  // Some work genuinely has no ticket. Without this the only ways out are inventing one or
+  // turning the rule off for everybody.
+  it("is not reported as missing a key", () => {
+    const found = validate({
+      title: "chore(adr): x",
+      body,
+      branch: "chore/pr-readiness-adrs",
+      config: exempting(["^chore/"]),
+    });
+
+    expect(found.findings.map((f) => f.rule)).not.toContain("issue-key-missing");
+  });
+
+  // The exemption is about the key, not the section. An unanswered Issues Addressed is
+  // still a section nobody answered.
+  it("still has to answer the section", () => {
+    const found = validate({
+      title: "chore(adr): x",
+      body: body.replace("- None — chore, no ticket.", ""),
+      branch: "chore/pr-readiness-adrs",
+      config: exempting(["^chore/"]),
+    });
+
+    expect(found.findings.map((f) => f.rule)).toContain("section-empty");
+  });
+
+  it("does not exempt a branch the pattern does not name", () => {
+    const found = validate({
+      title: "fix(x): y",
+      body,
+      branch: "bugfix/squad/1-thing",
+      config: exempting(["^chore/"]),
+    });
+
+    expect(found.findings.map((f) => f.rule)).toContain("issue-key-missing");
+  });
+
+  // Every config that existed before this key means "exempt nothing".
+  it("exempts nothing when the repository has not said", () => {
+    const found = validate({
+      title: "chore(adr): x",
+      body,
+      branch: "chore/pr-readiness-adrs",
+      config,
+    });
+
+    expect(found.findings.map((f) => f.rule)).toContain("issue-key-missing");
+  });
+});

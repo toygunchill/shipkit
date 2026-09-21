@@ -44,7 +44,13 @@ export function validate({ title, body, config, branch, issues }: ValidateInput)
 
   const issuesSection = config.jira.section;
   const issuesText = parsed.sections[issuesSection];
-  if (issuesText !== undefined && !new RegExp(config.jira.keyPattern).test(issuesText)) {
+  // A branch the repository has declared ticketless is not missing a key — see
+  // `jira.keyOptionalOnBranches`. The section is still required and still has to be
+  // answered; what is excused is inventing a ticket that does not exist.
+  const keyOptional =
+    branch !== undefined &&
+    config.jira.keyOptionalOnBranches.some((pattern) => new RegExp(pattern).test(branch));
+  if (!keyOptional && issuesText !== undefined && !new RegExp(config.jira.keyPattern).test(issuesText)) {
     findings.push({
       rule: "issue-key-missing",
       message: `${issuesSection} has no key matching ${config.jira.keyPattern}`,

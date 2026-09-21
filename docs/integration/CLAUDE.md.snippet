@@ -21,11 +21,14 @@ approvals.
    }
    ```
 
-   Fill every required section. Write in English. Keep Summary to five or six lines,
-   aimed at someone who has not opened the diff — not a restatement of it. Keep
-   What to Test to the checks a QA engineer needs plus the obvious regressions, in
-   their language, not an exhaustive list of edge cases. Use `###` for sub-headings;
-   a `##` line would split the body into a new section.
+   Fill every required section, and **write each one to the `hint` the brief gives
+   for it**. Those hints are the repository's own words about what a good answer
+   looks like — how long a Summary should be, whose language *What to Test* is
+   written in — and they are the only place that guidance belongs.
+
+   Use `###` for sub-headings. This one is not the repository's choice but shipkit's:
+   a `##` line is read as a section boundary, so a `##` inside a section silently
+   splits it.
 
 3. Submit:
 

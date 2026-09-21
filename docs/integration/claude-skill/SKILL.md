@@ -31,12 +31,13 @@ Write `response.json` in the repository root:
 ```
 
 Every key under `sections` must be a section name the brief lists, spelled exactly.
-Use `###` for sub-headings — a `##` line reads as a new section.
+Use `###` for sub-headings — a `##` line reads as a new section, so a `##` inside
+one silently splits it.
 
-Write in English. Summary is five or six lines for someone who has not opened the
-diff: what was wrong, what changed, and anything a reviewer would otherwise ask —
-not a walk through the implementation. What to Test is the handful of checks a QA
-engineer needs plus the obvious regressions, in their language.
+Write each section to the `hint` the brief gives for it. The hints come from the
+repository's own configuration and are where it says what a good answer looks
+like — how long a Summary should be, whose language *What to Test* is written in.
+shipkit has no opinion of its own about either.
 
 Then run `npx shipkit submit --input response.json --base <target>`.
 

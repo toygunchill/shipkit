@@ -102,20 +102,37 @@ Those values live in your repository, in two files:
 
 | | What it holds |
 |---|---|
-| `.shipkit.yml` | the title pattern, the body's sections, the branch pattern, the Jira level, which labels block a merge, who answers a warning |
+| a conventions file | the title pattern, the body's sections, the branch pattern, the Jira level, which labels block a merge, who answers a warning |
 | a readiness checklist (optional) | the questions worth asking before a change is ready — the ones your own reviews keep asking |
 
 **Without the first, shipkit does nothing.** Every command that reads your conventions —
-`check`, `brief`, `review`, `submit` — refuses and tells you to run `shipkit init`.
+`check`, `brief`, `review`, `submit`, `tech-task` — stops, and at a terminal offers to
+write one.
 
 That separation is deliberate. A tool carrying one team's conventions is a tool the next
 team has to fork. It also means changing your mind is a pull request in *your* repository,
 not a release of somebody else's software.
 
-Where the two files sit is up to you. `init` writes them side by side and points the first
-at the second; a repository that keeps its conventions with its architecture decisions can
-put them anywhere and leave `.shipkit.yml` as a symbolic link, because `readiness:` is
-resolved against the *realpath* of the config it was loaded from.
+### Name it whatever you call it
+
+shipkit finds the conventions file **by shape, not by name**: any YAML that parses as a
+shipkit config is one. `.shipkit.yml` still works and is tried first, but
+`pull-request-conventions.yml` is a better name for what the file actually holds — it is
+your team's decision, not this tool's, and it should not be named after whatever reads it
+today.
+
+It looks in `.`, `docs`, `docs/adr`, `.github`, `config` and `.config` — a bounded list
+rather than a walk of your repository, so nothing is read that nobody offered. Anywhere
+else, pass `--config`.
+
+If two files both read as a config, shipkit refuses and names them. Two answers to "what
+are this repository's conventions" is not something to settle by which filename sorts
+first.
+
+Where the files sit is up to you. `init` writes them side by side and points the first at
+the second; a repository keeping its conventions beside its architecture decisions can put
+them anywhere, because `readiness:` is resolved against the *realpath* of the config it was
+loaded from — a symbolic link works.
 
 ## Getting started
 

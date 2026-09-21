@@ -36,6 +36,7 @@ import { loadReadiness, loadReadinessFiles } from "./readiness/load.js";
 import { propose } from "./rules/propose.js";
 import { renderRules } from "./rules/render.js";
 import { runRules } from "./rules/run.js";
+import { askOnTerminal, offerSetup } from "./config/offer.js";
 import { surveyRepository } from "./rules/survey.js";
 import type { ReadinessRule } from "./readiness/types.js";
 import { jiraToken } from "./secrets/keychain.js";
@@ -72,6 +73,46 @@ import { commitAll, createPullRequest, pushBranch } from "./vcs/mutate.js";
 
 const program = new Command();
 program.name("shipkit").version("0.1.0").exitOverride();
+
+/**
+ * Runs `work`, and when the repository has no conventions file, offers to write one.
+ *
+ * Wrapped around the commands that *read* conventions, never around `init` or `rules`,
+ * which are how a repository gets set up in the first place. The offer happens only at a
+ * terminal: an agent or a CI job reaching a prompt is a process that hangs — see
+ * src/config/offer.ts.
+ */
+function needsConventions(command: Command): Command {
+  return command.hook("preAction", async (_this, actionCommand) => {
+    const options = actionCommand.opts<{ repo?: string; config?: string }>();
+    // `--config` names a file explicitly, so there is nothing to discover and nothing to
+    // offer: if it is wrong, the loader says so in words about that path.
+    if (options.config) return;
+
+    let root: string;
+    try {
+      root = repoOf(options);
+    } catch {
+      // A bad --repo is the action's to report, in its own words.
+      return;
+    }
+
+    const outcome = await offerSetup(root, {
+      // Both ends, because a prompt needs somewhere to read from and somewhere to show.
+      // An agent pipes at least one of them, and a prompt it cannot see is a hang.
+      isInteractive: () => process.stdin.isTTY === true && process.stderr.isTTY === true,
+      ask: askOnTerminal,
+      runInit: async () => runInitHere(root, { config: ".shipkit.yml", force: false, limit: 50 }),
+      err: (line: string) => console.error(line),
+    });
+    if (outcome !== "ready") {
+      process.exitCode = 2;
+      // Commander has no "stop here" from a hook, and letting the action run would print a
+      // second, worse version of what was just explained.
+      throw new CommanderError(2, "shipkit.noConventions", "");
+    }
+  });
+}
 
 /**
  * This repository's readiness rules, or `undefined` when it configures none.
@@ -123,16 +164,15 @@ function readinessRules(
   return config.readiness === undefined ? undefined : loadReadiness(configPath, config.readiness);
 }
 
-program
-  .command("check")
+needsConventions(program.command("check"))
   .description("Validate a pull-request title and body against .shipkit.yml")
   .requiredOption("--title <title>", "pull-request title")
   .requiredOption("--body-file <path>", "file holding the pull-request body")
   .option("--repo <path>", "the repository to work in", ".")
-  .option("--config <path>", "path to .shipkit.yml, relative to --repo", ".shipkit.yml")
+  .option("--config <path>", "the conventions file; found automatically when omitted")
   .option("--branch <name>", "branch name to validate (defaults to the checked-out branch)")
   .option("--issue <key>", "override which cited issue key to check against Jira")
-  .action(async (options: { title: string; bodyFile: string; repo: string; config: string; branch?: string; issue?: string }) => {
+  .action(async (options: { title: string; bodyFile: string; repo: string; config?: string; branch?: string; issue?: string }) => {
     let body: string;
     try {
       body = readFileSync(options.bodyFile, "utf8");
@@ -201,14 +241,13 @@ program
     }
   });
 
-program
-  .command("brief")
+needsConventions(program.command("brief"))
   .description("Emit the JSON brief an agent fills in")
   .option("--base <branch>", "target branch for the pull request")
   .option("--repo <path>", "the repository to work in", ".")
-  .option("--config <path>", "path to .shipkit.yml, relative to --repo", ".shipkit.yml")
+  .option("--config <path>", "the conventions file; found automatically when omitted")
   .option("--rules <path...>", "readiness ruleset(s) to apply, replacing the config's")
-  .action(async (options: { base?: string; repo: string; config: string; rules?: string[] }) => {
+  .action(async (options: { base?: string; repo: string; config?: string; rules?: string[] }) => {
     if (options.base === undefined && !process.stdin.isTTY) {
       console.error(
         "--base is required when stdin is not a terminal. Valid targets are the repository's " +
@@ -318,16 +357,15 @@ function realSubmitDeps(cwd: string): SubmitDeps {
   };
 }
 
-program
-  .command("submit")
+needsConventions(program.command("submit"))
   .description("Validate the agent's answer, warn, then commit, push and open the pull request")
   .requiredOption("--input <path>", "file holding the agent's answer")
   .requiredOption("--base <branch>", "target branch for the pull request")
   .option("--repo <path>", "the repository to work in", ".")
-  .option("--config <path>", "path to .shipkit.yml, relative to --repo", ".shipkit.yml")
+  .option("--config <path>", "the conventions file; found automatically when omitted")
   .option("--rules <path...>", "readiness ruleset(s) to apply, replacing the config's")
   .option("--yes", "proceed despite pre-flight warnings", false)
-  .action(async (options: { input: string; base: string; repo: string; config: string; rules?: string[]; yes: boolean }) => {
+  .action(async (options: { input: string; base: string; repo: string; config?: string; rules?: string[]; yes: boolean }) => {
     try {
       const repo = repoOf(options);
       const config = configPath({ repo, config: options.config });
@@ -471,17 +509,16 @@ function realReviewDeps(cwd: string, configPath: string, rules: string[] | undef
   };
 }
 
-program
-  .command("review")
+needsConventions(program.command("review"))
   .description("Show the change and what shipkit found, and take a person's answer. Pushes nothing.")
   .option("--repo <path>", "the repository to work in", ".")
-  .option("--config <path>", "path to .shipkit.yml, relative to --repo", ".shipkit.yml")
+  .option("--config <path>", "the conventions file; found automatically when omitted")
   .option("--rules <path...>", "readiness ruleset(s) to apply, replacing the config's")
   .option("--base <branch>", "target branch for the pull request")
   .option("--input <path>", "the agent's answer, if one has been drafted")
   .option("--port <n>", "port to serve on; the default asks the kernel for a free one")
   .option("--no-open", "print the URL instead of opening a browser")
-  .action(async (options: { repo: string; config: string; rules?: string[]; base?: string; input?: string; port?: string; open: boolean }) => {
+  .action(async (options: { repo: string; config?: string; rules?: string[]; base?: string; input?: string; port?: string; open: boolean }) => {
     let port = 0;
     if (options.port !== undefined) {
       const parsed = Number(options.port);
@@ -622,6 +659,46 @@ function realInitSources(cwd: string): InitSources {
   };
 }
 
+/**
+ * Writes a starter config, and the readiness checklist beside it.
+ *
+ * Shared by the `init` command and by the offer a read command makes when a repository has
+ * none — the same setup either way, so that accepting the offer is not a lesser version of
+ * running the command.
+ */
+function runInitHere(root: string, options: { config: string; force: boolean; limit: number }): number {
+  const result = runInit(
+    { config: join(root, options.config), force: options.force, limit: options.limit },
+    {
+      sources: realInitSources(root),
+      // The other half of being set up. `shipkit rules` alone does the same thing; this is
+      // here because a person who runs one setup command expects to be set up, and a second
+      // half left to be discovered later is discovered by nobody.
+      proposeReadiness: () => {
+        const survey = surveyRepository({
+          trackedPaths: () => readTrackedFiles(root),
+          read: (path: string) => {
+            try {
+              return readFileSync(join(root, path), "utf8");
+            } catch {
+              return undefined;
+            }
+          },
+        });
+        const proposals = propose(survey);
+        return proposals.rules.length === 0
+          ? undefined
+          : renderRules(proposals, survey.files.length, survey.capped);
+      },
+      exists: (path: string) => existsSync(path),
+      write: (path: string, text: string) => writeFileSync(path, text, "utf8"),
+      out: (line: string) => console.log(line),
+      err: (line: string) => console.error(line),
+    },
+  );
+  return result.code;
+}
+
 program
   .command("init")
   .description("Write a starter .shipkit.yml, reading what the forge can prove")
@@ -645,36 +722,11 @@ program
       process.exitCode = 2;
       return;
     }
-    const result = runInit(
-      { config: configPath({ repo: root, config: options.config }), force: options.force, limit },
-      {
-        sources: realInitSources(root),
-        // The other half of being set up. `shipkit rules` alone does the same thing; this
-        // is here because a person who runs one setup command expects to be set up, and a
-        // second half left to be discovered later is discovered by nobody.
-        proposeReadiness: () => {
-          const survey = surveyRepository({
-            trackedPaths: () => readTrackedFiles(root),
-            read: (path: string) => {
-              try {
-                return readFileSync(join(root, path), "utf8");
-              } catch {
-                return undefined;
-              }
-            },
-          });
-          const proposals = propose(survey);
-          return proposals.rules.length === 0
-            ? undefined
-            : renderRules(proposals, survey.files.length, survey.capped);
-        },
-        exists: (path: string) => existsSync(path),
-        write: (path: string, text: string) => writeFileSync(path, text, "utf8"),
-        out: (line: string) => console.log(line),
-        err: (line: string) => console.error(line),
-      },
-    );
-    process.exitCode = result.code;
+    process.exitCode = runInitHere(root, {
+      config: options.config ?? ".shipkit.yml",
+      force: options.force,
+      limit,
+    });
   });
 
 /**
@@ -770,12 +822,11 @@ function missingPortfolioParent(path: string, portfolioId: string): string {
   ].join("\n");
 }
 
-program
-  .command("tech-task")
+needsConventions(program.command("tech-task"))
   .description("Open the technical item for work the ticket did not ask for, or say why it cannot")
   .requiredOption("--subject <text>", "what was converted, as it should read in the summary")
   .option("--repo <path>", "the repository to work in", ".")
-  .option("--config <path>", "path to .shipkit.yml, relative to --repo", ".shipkit.yml")
+  .option("--config <path>", "the conventions file; found automatically when omitted")
   .option("--team <name>", "Digital Team, instead of deriving it from your recent issues")
   .option("--sprint <id>", 'sprint id, instead of deriving it — or "none" to open it without a sprint')
   .option("--portfolio <child>", "portfolio child, instead of deriving it")
@@ -784,7 +835,7 @@ program
     async (options: {
       subject: string;
       repo: string;
-      config: string;
+      config?: string;
       team?: string;
       sprint?: string;
       portfolio?: string;
@@ -1039,6 +1090,8 @@ try {
   if (error instanceof CommanderError) {
     const isHelpOrVersion =
       error.code === "commander.helpDisplayed" || error.code === "commander.version";
+    // `shipkit.noConventions` is the hook above stopping the run after it has already
+    // explained itself. Printing anything more here would be a second, worse telling.
     process.exitCode = isHelpOrVersion ? 0 : 2;
   } else {
     throw error;

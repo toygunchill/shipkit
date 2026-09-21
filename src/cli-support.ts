@@ -2,6 +2,8 @@
 // directly. src/cli.ts itself runs `program.parse()` at import time and must not be
 // imported from tests.
 import { isAbsolute, join } from "node:path";
+import { ConfigError } from "./config/load.js";
+import { discoverConfig, explainDiscovery } from "./config/discover.js";
 import { fetchIssue, type Fetcher } from "./jira/client.js";
 import type { IssueFacts } from "./jira/types.js";
 import type { SubmitResult } from "./submit/run.js";
@@ -118,6 +120,20 @@ export function cliRemedy(result: SubmitResult, yesGiven: boolean): string | und
  */
 export function configPath(args: { repo: string; config?: string | undefined }): string {
   // "" is absent too — `??` alone would read it as an explicit path and fail open.
-  if (!args.config) return join(args.repo, ".shipkit.yml");
-  return isAbsolute(args.config) ? args.config : join(args.repo, args.config);
+  if (args.config) return isAbsolute(args.config) ? args.config : join(args.repo, args.config);
+
+  // No `--config`: find the file by what it is rather than by what it is called. shipkit
+  // used to demand `.shipkit.yml`, which asked every repository to name a file after the
+  // tool reading it — see src/config/discover.ts.
+  const found = discoverConfig(args.repo);
+  if (found.found === "one") return found.path;
+
+  // Two files that both read as a config is the one case with no path to return: picking
+  // between them by filename order is exactly the dependency this removes.
+  if (found.found === "several") throw new ConfigError(explainDiscovery(found, args.repo));
+
+  // Nothing found. The conventional name is returned rather than a refusal, so the failure
+  // comes from `loadConfig` — which reports the path it could not read and names
+  // `shipkit init`. A repository that has no config gets one message about it, not two.
+  return join(args.repo, ".shipkit.yml");
 }

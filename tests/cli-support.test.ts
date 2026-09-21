@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   cliRemedy,
@@ -216,5 +218,28 @@ describe("cliRemedy", () => {
       updated: false,
     };
     expect(cliRemedy(ok, false)).toBeUndefined();
+  });
+});
+
+describe("the version shipkit reports", () => {
+  // It was a literal and stayed at 0.1.0 through three releases, so a Homebrew install of
+  // 0.1.3 answered `--version` with 0.1.0. A version a person cannot trust is worse than
+  // none: it is the first thing anyone checks when a fix does not appear.
+  it("is the one in package.json", () => {
+    const declared = JSON.parse(readFileSync("package.json", "utf8")) as { version: string };
+    const reported = execFileSync("node", ["dist/cli.js", "--version"], { encoding: "utf8" }).trim();
+
+    expect(reported).toBe(declared.version);
+  });
+
+  // The formula builds the app from the same checkout; a bundle claiming a different
+  // version from the command beside it is the same failure in a second place.
+  it("is what the app bundle would carry", () => {
+    const declared = JSON.parse(readFileSync("package.json", "utf8")) as { version: string };
+    const script = readFileSync("scripts/app.sh", "utf8");
+
+    // Read from the package at build time rather than written into the script.
+    expect(script).toContain('VERSION="$(node -p "require(\'./package.json\').version")"');
+    expect(script).not.toContain(`<string>${declared.version}</string>`);
   });
 });

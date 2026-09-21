@@ -72,7 +72,28 @@ import { baseCandidates, findPullRequest, type GhRunner } from "./vcs/github.js"
 import { commitAll, createPullRequest, pushBranch } from "./vcs/mutate.js";
 
 const program = new Command();
-program.name("shipkit").version("0.1.0").exitOverride();
+/**
+ * The version, read from the package rather than written here.
+ *
+ * It was a literal, and it stayed at 0.1.0 through three releases: `shipkit --version`
+ * reported 0.1.0 from a Homebrew install of 0.1.3. A version a person cannot trust is
+ * worse than none, because it is the first thing anyone checks when a fix does not appear.
+ *
+ * Read relative to this file, which works from `dist/` in an installed copy and from a
+ * checkout alike.
+ */
+const VERSION = ((): string => {
+  try {
+    const at = new URL("../package.json", import.meta.url);
+    return (JSON.parse(readFileSync(at, "utf8")) as { version?: string }).version ?? "0.0.0";
+  } catch {
+    // An installed tree that somehow has no package.json still runs; only `--version` is
+    // poorer for it.
+    return "0.0.0";
+  }
+})();
+
+program.name("shipkit").version(VERSION).exitOverride();
 
 /**
  * Runs `work`, and when the repository has no conventions file, offers to write one.

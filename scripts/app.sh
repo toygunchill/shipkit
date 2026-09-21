@@ -12,7 +12,11 @@ cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 APP="$ROOT/apps/menubar/build/shipkit.app"
 
-echo "app: building"
+# Read rather than written, for the reason src/cli.ts records: a literal version stayed at
+# 0.1.0 through three releases and reported 0.1.0 from a 0.1.3 install.
+VERSION="$(node -p "require('./package.json').version")"
+
+echo "app: building $VERSION"
 ( cd apps/menubar && swift build -c release )
 
 BIN="$ROOT/apps/menubar/.build/release/ShipkitMenuBar"
@@ -38,7 +42,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>ShipkitMenuBar</string>
   <key>CFBundleIconFile</key><string>shipkit</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <!-- No Dock icon and no menu bar of its own: this application is the status item. -->
   <key>LSUIElement</key><true/>

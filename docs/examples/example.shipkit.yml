@@ -1,0 +1,60 @@
+# A worked `.shipkit.yml`, invented rather than measured.
+#
+# It is deliberately not any team's real configuration: every value here is an
+# illustration of the shape, and none of it is a recommendation. Run
+# `shipkit init` in your own repository to get one built from what your forge
+# can actually prove, with a label on each value saying where it came from.
+#
+# Note `pr.approval: human` below — this file sets it to show what it looks
+# like, and copying the file wholesale opts you into it. `init` defaults to
+# `echo`, which is the safe starting point.
+pr:
+  # A conventional-commits title. The leading ticket tag is absent on purpose:
+  # many repositories have a workflow that prepends one when the pull request
+  # opens, and requiring it here too makes authors write a second.
+  titlePattern: '^(feat|fix|chore|ref|refactor|docs|test)(\([a-z0-9-]+\))?: .+'
+  # Instruction lines a pull-request template injects. Left in place they mean
+  # the author answered nothing, so they are treated as unfilled placeholders.
+  # Spell yours exactly as your template writes them.
+  forbidden:
+    - "TBD"
+    - "TODO"
+    - "<!--"
+    - "Briefly describe what this PR does"
+    - "Describe **what should be tested**"
+  # A label your merge gate blocks on, if you have one.
+  blockingLabels: ["in test"]
+  # `echo` (the default) accepts the caller's own acknowledgement of a warning.
+  # `human` asks a person every time, through the menu-bar app. Shown here so
+  # the key is discoverable; choose it deliberately, not by copying.
+  approval: human
+  sections:
+    - name: Summary
+      required: true
+      hint: "5-6 lines: what was wrong and what changed, for someone who has not opened the diff"
+    - name: Screenshots / Screen Recordings
+      required: true
+      hint: "Before/after, or one sentence saying why there is nothing to show"
+    - name: What to Test
+      required: true
+      minItems: 3
+      hint: "The checks a QA engineer needs, plus the obvious regressions"
+    - name: Issues Addressed
+      required: true
+      minItems: 1
+      hint: "Link at Story/Bug level, not the Development sub-task"
+# The readiness checklist, if you have one. The path is sibling-relative and
+# resolved against the **realpath** of this file, which is what makes the shared
+# deployment work: a product repository carries `.shipkit.yml` as a symbolic
+# link into a conventions repository, and the rules are found next to the link's
+# target rather than looked for in the product repository, where they are not.
+#
+# `shipkit rules` will propose a starting one from your own code.
+readiness: ./example.readiness.yml
+branch:
+  pattern: '^(feature|bugfix|hotfix)/[a-z0-9]+/[0-9]+-[a-z0-9]+(-[a-z0-9]+)*$'
+jira:
+  baseUrl: https://jira.example.com
+  keyPattern: 'ABC-\d+'
+  section: Issues Addressed
+  linkPolicy: story

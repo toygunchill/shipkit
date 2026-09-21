@@ -224,7 +224,7 @@ warning without the application running. On a developer's own machine — which 
 the only place either the CLI or an MCP server runs — that is a small price. In
 CI there is no `submit`, only `check`, so nothing changes there.
 
-`docs/examples/example-app.shipkit.yml` sets `human`. This repository stays on
+`docs/examples/example.shipkit.yml` sets `human`. This repository stays on
 the default.
 
 ## With no application running

@@ -2,7 +2,7 @@
  * The team's PR-readiness rules, as data.
  *
  * The rules are not shipkit's: they live in a file the team owns (see
- * docs/examples/example-app.readiness.yml), and adding or relaxing one is a pull request
+ * docs/examples/example.readiness.yml), and adding or relaxing one is a pull request
  * against that file rather than a shipkit release. What shipkit owns is the carrying and
  * the enforcing — the question reaches the agent in the brief, the answer is required back
  * in the response, and the answer is routed by severity. The judgement in between stays

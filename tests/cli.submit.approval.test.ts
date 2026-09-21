@@ -36,7 +36,7 @@ function buildRepo(): string {
   writeFileSync(join(repo, "a.txt"), "one\n");
   git(["add", "."], repo);
   git(["commit", "-q", "-m", "base"], repo);
-  git(["checkout", "-q", "-b", "bugfix/squadb/31087-invoice"], repo);
+  git(["checkout", "-q", "-b", "bugfix/squad/31087-invoice"], repo);
   writeFileSync(join(repo, "a.txt"), "two\n");
   git(["add", "."], repo);
   git(["commit", "-q", "-m", "work"], repo);

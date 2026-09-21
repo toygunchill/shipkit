@@ -16,7 +16,7 @@ import { renderBody, type SubmitResponse } from "../../src/submit/response.js";
 import { VcsError } from "../../src/vcs/git.js";
 
 const CONFIG = loadConfig("tests/fixtures/valid.shipkit.yml");
-const BRANCH = "bugfix/squadb/31087-invoice";
+const BRANCH = "bugfix/squad/31087-invoice";
 
 const RESPONSE: SubmitResponse = {
   title: "[ABC-1] fix(x): y",

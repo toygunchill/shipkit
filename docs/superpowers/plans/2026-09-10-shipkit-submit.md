@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-10-shipkit-design.md`
 **Merged plans:** `docs/superpowers/plans/2026-09-10-shipkit-check.md`, `docs/superpowers/plans/2026-09-10-shipkit-brief.md`
-**Reference examples:** `docs/examples/example-app-pr-bodies.md`, `docs/examples/example-app.shipkit.yml`
+**Reference examples:** `docs/examples/example-app-pr-bodies.md`, `docs/examples/example.shipkit.yml`
 
 ## Global Constraints
 
@@ -1063,4 +1063,4 @@ stray file with no commit of its own is invisible to it. This one goes first.
 
 ## Next plan
 
-**`init` and `branch`:** `init` reconstructs a `.shipkit.yml` the way `docs/examples/example-app.shipkit.yml` was reconstructed by hand — reading the branch pattern from the repository ruleset, the required approvals from branch protection, the blocking labels from the merge-gate workflow, and the template's boilerplate from the bodies of merged pull requests. `branch` suggests a name that satisfies the pattern.
+**`init` and `branch`:** `init` reconstructs a `.shipkit.yml` the way `docs/examples/example.shipkit.yml` was reconstructed by hand — reading the branch pattern from the repository ruleset, the required approvals from branch protection, the blocking labels from the merge-gate workflow, and the template's boilerplate from the bodies of merged pull requests. `branch` suggests a name that satisfies the pattern.

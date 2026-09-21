@@ -24,7 +24,7 @@ import {
 import { commitAll, pushBranch } from "../../src/vcs/mutate.js";
 
 const CONFIG = `pr:
-  titlePattern: '^\\[DCP-\\d+\\] (feat|fix|chore|ref|docs)(\\([a-z0-9-]+\\))?: .+'
+  titlePattern: '^\\[ABC-\\d+\\] (feat|fix|chore|ref|docs)(\\([a-z0-9-]+\\))?: .+'
   forbidden: ["TBD", "TODO"]
   sections:
     - name: Summary
@@ -40,7 +40,7 @@ branch:
   pattern: '^(feature|bugfix|livebug)/[a-z0-9]+/[0-9]+-[a-z0-9]+(-[a-z0-9]+)*$'
 jira:
   baseUrl: https://jira.example.com
-  keyPattern: 'DCP-\\d+'
+  keyPattern: 'ABC-\\d+'
   linkPolicy: story
 `;
 
@@ -99,14 +99,14 @@ function scratch(): { repo: string; config: string } {
   git(["add", "--all"], repo);
   git(["commit", "-m", "base"], repo);
   git(["push", "--set-upstream", "origin", "develop"], repo);
-  git(["checkout", "-b", "bugfix/squadb/1-invoice"], repo);
+  git(["checkout", "-b", "bugfix/squad/1-invoice"], repo);
 
   symlinkSync(join(conventions, "shipkit.yml"), join(repo, ".shipkit.yml"));
   // The change itself: written into the working tree and left entirely uncommitted, which
   // is the state `commitAll` exists to sweep up and the state an `appliesTo` filter has to
   // be able to see.
-  mkdirSync(join(repo, "Example"), { recursive: true });
-  writeFileSync(join(repo, "Example", "View.swift"), "import SwiftUI\n", "utf8");
+  mkdirSync(join(repo, "Sources"), { recursive: true });
+  writeFileSync(join(repo, "Sources", "View.swift"), "import SwiftUI\n", "utf8");
 
   return { repo, config: join(repo, ".shipkit.yml") };
 }

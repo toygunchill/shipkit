@@ -8,7 +8,7 @@ import { runSubmit, type SubmitDeps, type SubmitOptions } from "../../src/submit
 import type { PullRequestState, RepoState } from "../../src/vcs/types.js";
 
 const CONFIG = loadConfig("tests/fixtures/valid.shipkit.yml");
-const BRANCH = "bugfix/squadb/31087-invoice";
+const BRANCH = "bugfix/squad/31087-invoice";
 
 const REPO: RepoState = { branch: BRANCH, changedFiles: [], diffstat: "", commits: [] };
 

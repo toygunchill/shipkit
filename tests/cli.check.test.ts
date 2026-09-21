@@ -86,7 +86,7 @@ const goodBody = [
 // only and do not incidentally depend on whichever branch the test runner happens to be
 // checked out on (check now defaults --branch to the real checked-out branch — see the
 // dedicated "defaulting --branch" tests below).
-const CONFORMING_BRANCH = "bugfix/squadb/31087-invoice-default-citizenship";
+const CONFORMING_BRANCH = "bugfix/squad/31087-invoice-default-citizenship";
 
 describe("shipkit check", () => {
   it("exits 0 on a compliant PR and prints exactly 'ok' on stdout", () => {
@@ -107,7 +107,7 @@ describe("shipkit check", () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe(
-      "title-pattern: Title does not match ^\\[DCP-\\d+\\] (feat|fix|chore|ref|docs)(\\([a-z0-9-]+\\))?: .+\n",
+      "title-pattern: Title does not match ^\\[ABC-\\d+\\] (feat|fix|chore|ref|docs)(\\([a-z0-9-]+\\))?: .+\n",
     );
   });
 
@@ -249,7 +249,7 @@ describe("shipkit check --issue token gating", () => {
         "  pattern: '.*'",
         "jira:",
         "  baseUrl: http://127.0.0.1:1/jira",
-        "  keyPattern: 'DCP-\\d+'",
+        "  keyPattern: 'ABC-\\d+'",
         "  linkPolicy: story",
       ].join("\n"),
       "utf8",

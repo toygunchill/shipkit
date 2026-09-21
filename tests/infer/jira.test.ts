@@ -8,7 +8,7 @@ describe("inferJira", () => {
       "## Issues Addressed\nhttps://jira.example.com/browse/ABC-31444",
     ]);
     expect(got.value.baseUrl).toBe("https://jira.example.com");
-    expect(got.value.keyPattern).toBe("DCP-\\d+");
+    expect(got.value.keyPattern).toBe("ABC-\\d+");
   });
 
   it("picks the host that most bodies agree on, not the first seen", () => {
@@ -69,7 +69,7 @@ describe("inferJira", () => {
   it.each(WRAPPED)("sees a browse link written as %s", (_shape, body) => {
     const got = inferJira([body]);
     expect(got.value.baseUrl).toBe("https://x.example.com/jira");
-    expect(got.value.keyPattern).toBe("DCP-\\d+");
+    expect(got.value.keyPattern).toBe("ABC-\\d+");
   });
 
   it("keeps a project prefix that carries its own hyphen", () => {
@@ -84,7 +84,7 @@ describe("inferJira", () => {
     // gives it to the twenty.
     const ordinary = Array.from(
       { length: 20 },
-      (_, i) => `- [DCP-${i + 1}](https://real.example.com/jira/browse/DCP-${i + 1})`,
+      (_, i) => `- [ABC-${i + 1}](https://real.example.com/jira/browse/ABC-${i + 1})`,
     );
     const rollup = Array.from(
       { length: 30 },
@@ -99,14 +99,14 @@ describe("inferJira", () => {
     const bodies = [
       ...Array.from(
         { length: 20 },
-        (_, i) => `## Issues Addressed\n- [DCP-${i + 1}](https://real.example.com/jira/browse/DCP-${i + 1})`,
+        (_, i) => `## Issues Addressed\n- [ABC-${i + 1}](https://real.example.com/jira/browse/ABC-${i + 1})`,
       ),
       "https://sandbox.atlassian.net/browse/TEST-1",
       "https://sandbox.atlassian.net/browse/TEST-2",
     ];
     const got = inferJira(bodies);
     expect(got.value.baseUrl).toBe("https://real.example.com/jira");
-    expect(got.value.keyPattern).toBe("DCP-\\d+");
+    expect(got.value.keyPattern).toBe("ABC-\\d+");
   });
 
   it("does not split one host's vote over the case of its scheme", () => {

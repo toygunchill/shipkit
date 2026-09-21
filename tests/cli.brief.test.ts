@@ -213,7 +213,7 @@ describe("shipkit check with branch and issue", () => {
       "check", "--title", "[ABC-1] fix(x): y",
       "--body-file", "tests/fixtures/complete-body.md",
       "--config", CONFIG,
-      "--branch", "bugfix/squadb/1-ok",
+      "--branch", "bugfix/squad/1-ok",
     ]);
     expect(result.status).toBe(0);
   });

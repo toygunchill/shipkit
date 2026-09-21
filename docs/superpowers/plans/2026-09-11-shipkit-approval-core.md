@@ -746,7 +746,7 @@ Two small additions, both prerequisites for the wiring in Task 6, batched becaus
 **Files:**
 - Modify: `src/config/schema.ts`
 - Modify: `src/vcs/git.ts`
-- Modify: `docs/examples/example-app.shipkit.yml`
+- Modify: `docs/examples/example.shipkit.yml`
 - Test: `tests/config/schema.test.ts`, `tests/vcs/git.args.test.ts`
 
 **Interfaces:**
@@ -768,7 +768,7 @@ describe("pr.approval", () => {
   });
 
   it("accepts human", () => {
-    expect(loadConfig("docs/examples/example-app.shipkit.yml").pr.approval).toBe("human");
+    expect(loadConfig("docs/examples/example.shipkit.yml").pr.approval).toBe("human");
   });
 
   it("defaults the wait to 120 seconds", () => {
@@ -873,7 +873,7 @@ export function readHeadSha(cwd: string = process.cwd()): string {
 
 - [ ] **Step 5: Set the policy in the example config**
 
-In `docs/examples/example-app.shipkit.yml`, under `pr:`:
+In `docs/examples/example.shipkit.yml`, under `pr:`:
 
 ```yaml
   # A push here can dismiss four approvals or ship another squad's commits, and
@@ -890,7 +890,7 @@ Expected: PASS, no type errors.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/config/schema.ts src/vcs/git.ts docs/examples/example-app.shipkit.yml tests
+git add src/config/schema.ts src/vcs/git.ts docs/examples/example.shipkit.yml tests
 git commit -m "feat(config): add pr.approval, and read the head commit"
 ```
 

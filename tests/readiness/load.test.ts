@@ -37,33 +37,33 @@ describe("loadReadiness", () => {
     ]);
   });
 
-  it("accepts the real thirteen-rule file exactly as the team wrote it", () => {
-    // Not a fixture copy: the file the product repository will actually point at. A schema
-    // that drifts from it — a severity the team uses and this does not admit, an
-    // `appliesTo` spelling it rejects — is a broken deployment, and this is the only place
-    // that would catch it before the deployment does.
+  it("accepts the shipped example exactly as it is written", () => {
+    // Not a fixture copy: the file the README tells people to read. A schema that drifts
+    // from it — a severity the example uses and this does not admit, an `appliesTo`
+    // spelling it rejects — is a broken example, and this is the only place that catches
+    // it before a reader does.
     const rules = loadReadiness(
-      resolve("docs/examples/example-app.shipkit.yml"),
-      "./example-app.readiness.yml",
+      resolve("docs/examples/example.shipkit.yml"),
+      "./example.readiness.yml",
     );
-    expect(rules).toHaveLength(13);
-    expect(rules.map((rule) => rule.id)).toContain("design-tokens");
-    expect(new Set(rules.map((rule) => rule.severity))).toEqual(new Set(["warn", "advise"]));
-    expect(rules.find((rule) => rule.id === "tests-mean-something")?.appliesTo).toEqual([
-      "Sources/**/*.swift",
-      "AppTests/**",
-    ]);
-    // Every rule the team measured carries its evidence; the loader must not be quietly
-    // dropping it on the way through.
+
+    expect(rules.length).toBeGreaterThan(0);
+    expect(rules.map((rule) => rule.id)).toContain("tests-mean-something");
+    // Both scoped and unscoped rules, because the two take different paths through
+    // `applicable` and an example carrying only one kind would exercise only one.
+    expect(rules.some((rule) => rule.appliesTo !== undefined)).toBe(true);
+    expect(rules.some((rule) => rule.appliesTo === undefined)).toBe(true);
+    // Every rule carries its reason; the loader must not be quietly dropping it.
     expect(rules.every((rule) => (rule.why ?? "").length > 0)).toBe(true);
   });
 
   it("is reachable through the example config's own readiness key", () => {
-    const config = loadConfig("docs/examples/example-app.shipkit.yml");
-    expect(config.readiness).toBe("./example-app.readiness.yml");
+    const config = loadConfig("docs/examples/example.shipkit.yml");
+
+    expect(config.readiness).toBe("./example.readiness.yml");
     expect(
-      loadReadiness("docs/examples/example-app.shipkit.yml", config.readiness as string),
-    ).toHaveLength(13);
+      loadReadiness("docs/examples/example.shipkit.yml", config.readiness as string).length,
+    ).toBeGreaterThan(0);
   });
 
   // The deployment model, built rather than described: the product repository's

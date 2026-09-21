@@ -4,7 +4,7 @@ import type { ReviewItem } from "../../src/review/items.js";
 
 const BASE: PageInput = {
   repo: "shipkit",
-  branch: "bugfix/squadb/1-invoice",
+  branch: "bugfix/squad/1-invoice",
   base: "develop",
   commitMessage: "fix(invoice): stop double-charging",
   diffstat: " app.ts | 2 +-\n 1 file changed",
@@ -33,7 +33,7 @@ describe("the page says what shipkit found", () => {
     const html = page();
 
     expect(html).toContain("shipkit");
-    expect(html).toContain("bugfix/squadb/1-invoice");
+    expect(html).toContain("bugfix/squad/1-invoice");
     expect(html).toContain("develop");
     expect(html).toContain("fix(invoice): stop double-charging");
     expect(html).toContain("1 file changed");

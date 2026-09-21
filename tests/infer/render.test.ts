@@ -17,7 +17,7 @@ const draft: InitDraft = {
     why: "in most bodies",
   },
   jira: {
-    value: { baseUrl: "https://x.example.com/jira", keyPattern: "DCP-\\d+" },
+    value: { baseUrl: "https://x.example.com/jira", keyPattern: "ABC-\\d+" },
     provenance: "observed",
     why: "from links",
   },
@@ -38,7 +38,7 @@ describe("renderConfig", () => {
 
   it("round-trips a pattern containing backslashes without mangling it", () => {
     const parsed = configSchema.parse(parse(renderConfig(draft)));
-    expect(parsed.jira.keyPattern).toBe("DCP-\\d+");
+    expect(parsed.jira.keyPattern).toBe("ABC-\\d+");
     expect(new RegExp(parsed.jira.keyPattern).test("ABC-7")).toBe(true);
   });
 

@@ -23,8 +23,8 @@ describe("the readiness config key", () => {
   });
 
   it("is read as written when a repository names one", () => {
-    expect(loadConfig("docs/examples/example-app.shipkit.yml").readiness).toBe(
-      "./example-app.readiness.yml",
+    expect(loadConfig("docs/examples/example.shipkit.yml").readiness).toBe(
+      "./example.readiness.yml",
     );
   });
 });

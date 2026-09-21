@@ -252,7 +252,7 @@ export async function runSubmit(options: SubmitOptions, deps: SubmitDeps): Promi
 
     // `issue-level` checks the keys the body *cites* (the same source of truth `check`
     // uses), not the branch's key — see the report for why the branch cannot be trusted
-    // to carry one at all under configs like docs/examples/example-app.shipkit.yml.
+    // to carry one at all under configs like docs/examples/example.shipkit.yml.
     const citedKeys = extractIssueKeysFromBody(body, config);
     const resolvedIssues = await Promise.all(
       citedKeys.map((key) => deps.resolveIssue(key, config)),

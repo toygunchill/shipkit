@@ -242,10 +242,11 @@ Pre-flight reports. The human decides.
 
 ## Configuration
 
-`.shipkit.yml` at the repository root. `docs/examples/example-app.shipkit.yml`
-is a working one, reconstructed from a real team's rules — but note that it
-sets `pr.approval: human` (see below); a reader copying it as a starting point
-inherits that setting too.
+`.shipkit.yml` at the repository root. `docs/examples/example.shipkit.yml` is a
+worked one — invented rather than measured, showing the shape and every key
+that exists. Note that it sets `pr.approval: human` to make the key
+discoverable; a reader copying it wholesale inherits that, and `init` defaults
+to `echo` instead.
 
 `shipkit init` writes a starter one by reading what the forge can prove, and
 says where every value came from. `shipkit rules` does the same for the
@@ -279,8 +280,7 @@ be repeated with to resume the same request.
 
 MIT — see [LICENSE](LICENSE). Copyright © 2026 Toygun Çil.
 
-The worked examples under `docs/examples/` are drawn from one team's private
-repository and Jira, and they are examples, not part of the tool: nothing in
-`src/` depends on them. A team adopting shipkit writes its own, or runs
-`shipkit init` and `shipkit rules` to have them proposed from what is actually
-there.
+The worked files under `docs/examples/` are invented illustrations, not any
+team's configuration, and nothing in `src/` depends on them. A team adopting
+shipkit writes its own — `shipkit init` and `shipkit rules` propose a starting
+point from what is actually in the repository and the forge.

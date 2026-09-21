@@ -199,7 +199,7 @@ describe("runInit", () => {
         ITALIC,
         "N/A",
         "## Issues Addressed",
-        `https://x.example.com/jira/browse/DCP-${100 + i}`,
+        `https://x.example.com/jira/browse/ABC-${100 + i}`,
         "## Checklist",
         ...TICKED,
       ].join("\n"),

@@ -27,7 +27,7 @@ const REQUEST: FixRequest = {
   version: 1,
   createdAt: "2026-09-17T10:00:00.000Z",
   base: "develop",
-  branch: "bugfix/squadb/1-invoice",
+  branch: "bugfix/squad/1-invoice",
   items: [{ kind: "warning", id: "untracked-files", message: "m", note: "delete it" }],
 };
 

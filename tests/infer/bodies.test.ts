@@ -60,7 +60,7 @@ describe("boilerplateLines", () => {
     // which proposes those same words as a section to write under.
     const bodies = Array.from(
       { length: 6 },
-      (_, i) => `**Summary**\nchange ${i}\n\n**What to Test**\nrun the suite\n\n__Issues Addressed__\nDCP-${i}`,
+      (_, i) => `**Summary**\nchange ${i}\n\n**What to Test**\nrun the suite\n\n__Issues Addressed__\nABC-${i}`,
     );
     expect(boilerplateLines(bodies, 4).value).toEqual([]);
   });

@@ -11,7 +11,7 @@ describe("matchesGlob", () => {
   });
 
   it("anchors a prefixed ** at that prefix, so a sibling directory does not match", () => {
-    // The exact pair from docs/examples/example-app.readiness.yml: `tests-mean-something`
+    // The exact pair from docs/examples/example.readiness.yml: `tests-mean-something`
     // is scoped to `Sources/**` and there is a `AppTests/` next to it. Matching by
     // prefix rather than by segment would make the two indistinguishable.
     expect(matchesGlob("Sources/**/*.swift", "Sources/Scenes/Payment/View.swift")).toBe(true);
@@ -58,7 +58,7 @@ describe("matchesGlob", () => {
 
   it("matches a whole path, never a fragment of one", () => {
     expect(matchesGlob("*.swift", "A.swift.bak")).toBe(false);
-    expect(matchesGlob("Example", "Sources/App.swift")).toBe(false);
+    expect(matchesGlob("Sources", "Sources/App.swift")).toBe(false);
   });
 
   it("compiles to an anchored expression", () => {

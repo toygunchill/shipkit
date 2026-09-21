@@ -32,8 +32,8 @@ describe("readPushChangedPaths", () => {
   });
 
   it("sees a matching file that is entirely uncommitted and untracked", () => {
-    mkdirSync(join(scratch, "Example", "Scenes"), { recursive: true });
-    writeFileSync(join(scratch, "Example", "Scenes", "View.swift"), "import SwiftUI\n");
+    mkdirSync(join(scratch, "Sources", "Scenes"), { recursive: true });
+    writeFileSync(join(scratch, "Sources", "Scenes", "View.swift"), "import SwiftUI\n");
 
     expect(readPushChangedPaths("develop", [], scratch)).toEqual([
       "Sources/Scenes/View.swift",

@@ -1,0 +1,45 @@
+# A worked readiness checklist, invented rather than measured.
+#
+# This shows the shape and the three severities. It is **not** a checklist to
+# adopt: the questions worth asking are the ones your own reviews keep asking,
+# and nobody can know those but you. Two ways to get a real one:
+#
+#   shipkit rules --out readiness.yml     proposes from what is in your code
+#   by hand                               from what your review comments say
+#
+# The second is the one that produces a checklist people answer, and it is the
+# half no command can do — it means reading your team's review threads and
+# writing down what keeps coming up.
+#
+# The rule that keeps a checklist worth reading: nothing here may repeat what a
+# linter already enforces. Asking a person what the machine already refuses
+# teaches them to answer without reading.
+#
+# severity: block  → submit refuses
+#           warn   → a pre-flight warning; under approval: human it reaches the
+#                    panel, so it binds but a person can overrule it
+#           advise → informs, never gates
+version: 1
+rules:
+  - id: tests-mean-something
+    ask: >
+      Does a test here fail if the behaviour you changed goes wrong? Name one.
+      An assertion that holds either way is not one.
+    why: "A test that passes whatever the code does is a test nobody can trust to catch the next change."
+    appliesTo: ["**/*.swift", "**/*.kt", "**/*.ts"]
+    severity: warn
+
+  - id: shared-component-blast-radius
+    ask: >
+      Did you change something shared? If so, what else uses it, and did you
+      look at those places?
+    why: "A change inside a shared layer reaches screens nobody opened while making it."
+    appliesTo: ["**/Common/**", "**/Shared/**"]
+    severity: warn
+
+  - id: leftovers
+    ask: >
+      Is there anything left in this change you did not mean to ship — a stray
+      TODO, debug output, commented-out code?
+    why: "Debug output is invisible in a diff a person is reading for logic."
+    severity: advise

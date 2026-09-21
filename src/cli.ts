@@ -662,10 +662,9 @@ program
  * nothing is ever filled in from it.
  */
 const TECH_TASK_BLOCK = `techTask:
-  project: DCP
+  project: ABC
   issueType: Story
-  epic: ABC-12154
-  summaryPattern: "iOS - {subject} swift ui dönüşümü"
+  summaryPattern: "iOS - {subject} conversion"
   fieldIds:
     portfolio: customfield_10101
     team: customfield_10102
@@ -673,7 +672,7 @@ const TECH_TASK_BLOCK = `techTask:
     sprint: customfield_10005
   fields:
     customfield_10101:
-      value: "Commercial"`;
+      value: "<the parent your Jira requires>"`;
 
 /**
  * What to say when the repository has no `techTask` block.
@@ -687,23 +686,23 @@ function missingTechTaskBlock(path: string): string {
     `${path} has no techTask block, so shipkit does not know what to open. Nothing was created.`,
     "",
     "Most repositories will not have one; it is opt-in per project. Add this, changing the",
-    `values if this repository's work does not go to DCP:`,
+    "values for your own project:",
     "",
     TECH_TASK_BLOCK.split("\n")
       .map((line) => `  ${line}`)
       .join("\n"),
     "",
     "  project, issueType   where the item is opened. There is no special technical issue type.",
-    "  epic                 optional, and worth setting: half the existing conversion tickets",
-    "                       were never attached to theirs.",
+    "  epic                 optional, and worth setting. Attaching one by hand is the step",
+    "                       people forget, which is most of why this command exists.",
     "  summaryPattern       must contain {subject}, which --subject fills in.",
-    "  fieldIds             which custom field is which, in your Jira. The ids above are the",
-    "                       ones measured on the Jira this was built against; a custom field",
-    "                       id is assigned per instance, so check yours rather than trusting",
-    "                       these. There are no defaults, deliberately: a wrong id writes a",
-    "                       real value into the wrong field and nobody finds out.",
-    "  fields               the values shipkit cannot derive. The portfolio parent is a",
-    '                       cascading select; its only allowed value here is "Commercial".',
+    "  fieldIds             which custom field is which, in your Jira. The ids above are",
+    "                       placeholders: a custom field id is assigned per instance, so read",
+    "                       yours off an existing issue rather than trusting these. There are",
+    "                       no defaults, deliberately — a wrong id writes a real value into the",
+    "                       wrong field and nobody finds out.",
+    "  fields               the values shipkit cannot derive, such as a cascading select's",
+    "                       parent. Its child is derived per person, or given with --portfolio.",
     "",
     "The team, the portfolio child and the sprint are deliberately not in the block: they",
     "differ per person, and .shipkit.yml is committed and shared.",
@@ -722,15 +721,15 @@ function missingIds(path: string, missing: string[]): string {
       `${missing.length === 1 ? "its" : "each of"} ${missing.join(", ")}. Nothing was created.`,
     "",
     "A custom field id is assigned by the Jira instance, so shipkit cannot guess one: a wrong",
-    "id writes a real value into the wrong field and nobody finds out. Add them under",
-    "techTask.fieldIds — these were the ids on the Jira this was built against, so check",
-    "yours against them rather than trusting them:",
+    "id writes a real value into the wrong field and nobody finds out. Read yours off an",
+    "existing issue — `gh api` or the Jira REST browser both show them — and add them under",
+    "techTask.fieldIds:",
     "",
     "    fieldIds:",
-    "      portfolio: customfield_10101   # Portfolio / Servis Bilgisi, a cascading select",
-    "      team: customfield_10102        # Digital Team",
-    "      epic: customfield_10006        # only needed when epic: is set above",
-    "      sprint: customfield_10005      # without it, no sprint is set",
+    "      portfolio: customfield_XXXXX   # a cascading select whose child is derived",
+    "      team: customfield_XXXXX        # the team field, derived per person",
+    "      epic: customfield_XXXXX        # only needed when epic: is set above",
+    "      sprint: customfield_XXXXX      # without it, no sprint is set",
   ].join("\n");
 }
 
@@ -744,7 +743,7 @@ function missingPortfolioParent(path: string, portfolioId: string): string {
     "Add it under techTask.fields:",
     "",
     `    ${portfolioId}:`,
-    `      value: "Commercial"`,
+    `      value: "<the parent your Jira requires>"`,
     "",
     "The child of that cascading field is derived per person, or given with --portfolio.",
   ].join("\n");

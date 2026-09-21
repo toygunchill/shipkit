@@ -4,7 +4,7 @@ import { matching, pathsWhere, type Survey } from "./survey.js";
  * The candidate rules shipkit knows how to look for, and how it decides each one applies.
  *
  * This catalogue is the honest half of "derive a ruleset from the code". The measured
- * checklist in docs/examples/example-app.readiness.yml came out of reading one team's code
+ * checklist in docs/examples/example.readiness.yml came out of reading one team's code
  * *and its review comments* — that is not a thing a command can do. What a command can do is
  * decide, for each rule here, whether its subject exists in the repository in front of it,
  * and say what it saw.

@@ -44,8 +44,8 @@ export function runRules(options: RulesOptions, deps: RulesDeps): RulesResult {
       "nothing to propose. Nothing was written.",
       "",
       "That is a statement about this catalogue, not about your code. Write the checklist by",
-      "hand — docs/examples/example-app.readiness.yml is one that was extracted by reading a",
-      "team's code and its review comments, which is the part no command can do for you.",
+      "hand, from what your own review comments keep asking — which is the part no command",
+      "can do for you.",
     ].join("\n");
     deps.err(message);
     return { code: 2, message };

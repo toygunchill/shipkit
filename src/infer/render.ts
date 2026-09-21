@@ -73,8 +73,8 @@ function note(inferred: Inferred<unknown>): string {
  * comment above every field.
  *
  * Serialisation goes through the `yaml` package's `Document` rather than string
- * building. A pattern like `DCP-\d+` written by interpolation comes back from
- * the parser as `DCP-d+` — a regular expression that silently matches nothing,
+ * building. A pattern like `ABC-\d+` written by interpolation comes back from
+ * the parser as `ABC-d+` — a regular expression that silently matches nothing,
  * in the field whose whole job is matching. The comments are attached to each
  * pair's *key* node; putting them on the value node is also valid YAML but
  * pushes the value onto its own line, which reads as a mistake.

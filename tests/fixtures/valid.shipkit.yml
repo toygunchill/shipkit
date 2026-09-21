@@ -1,5 +1,5 @@
 pr:
-  titlePattern: '^\[DCP-\d+\] (feat|fix|chore|ref|docs)(\([a-z0-9-]+\))?: .+'
+  titlePattern: '^\[ABC-\d+\] (feat|fix|chore|ref|docs)(\([a-z0-9-]+\))?: .+'
   forbidden: ["TBD", "TODO", "<!--"]
   sections:
     - name: Summary
@@ -22,5 +22,5 @@ branch:
   pattern: '^(feature|bugfix|livebug)/[a-z0-9]+/[0-9]+-[a-z0-9]+(-[a-z0-9]+)*$'
 jira:
   baseUrl: https://jira.example.com
-  keyPattern: 'DCP-\d+'
+  keyPattern: 'ABC-\d+'
   linkPolicy: story

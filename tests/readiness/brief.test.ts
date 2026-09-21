@@ -7,7 +7,7 @@ import type { ReadinessRule } from "../../src/readiness/types.js";
 
 const config = loadConfig("tests/fixtures/valid.shipkit.yml");
 const repo = {
-  branch: "bugfix/squadb/31087-invoice",
+  branch: "bugfix/squad/31087-invoice",
   changedFiles: ["Sources/Scenes/Payment/View.swift"],
   diffstat: " 1 file changed",
   commits: ["fix(invoice): default citizenship"],
@@ -66,43 +66,27 @@ describe("the brief's readiness questions", () => {
     expect(JSON.stringify(brief)).not.toContain("*.swift");
   });
 
-  it("asks all thirteen of the team's rules for one Swift file under Sources/", () => {
-    // End to end against the real file. Every scoped rule in it is scoped to Swift or to
-    // `Sources/**`, so a Swift file under `Sources/` genuinely reaches all thirteen — the
-    // discriminating half of this pair is the test below, where six survive.
-    const rules = loadReadiness(
-      "docs/examples/example-app.shipkit.yml",
-      "./example-app.readiness.yml",
-    );
+  it("asks every rule whose scope the change matches, end to end against the example", () => {
+    // Against the shipped file rather than a fixture: the example is what a reader copies,
+    // so a scope in it that matches nothing is a rule nobody would ever be asked.
+    const rules = loadReadiness("docs/examples/example.shipkit.yml", "./example.readiness.yml");
     const brief = assembleBrief({
       repo,
       target,
       config,
-      readiness: applicable(rules, ["Sources/Scenes/Payment/View.swift"]),
+      readiness: applicable(rules, ["Common/Sheets/View.swift"]),
     });
 
-    expect(brief.readiness?.map((item) => item.id)).toEqual([
-      "design-tokens",
-      "tests-mean-something",
-      "concurrency",
-      "all-entry-paths",
-      "shared-component-blast-radius",
-      "swiftui-direction",
-      "layering",
-      "leftovers",
-      "constants-deliberate",
-      "localization-cms",
-      "no-new-lint-warnings",
-      "apple-alignment",
-      "accessibility-ids",
-    ]);
+    const asked = brief.readiness?.map((item) => item.id) ?? [];
+    expect(asked).toContain("tests-mean-something");
+    expect(asked).toContain("shared-component-blast-radius");
+    expect(asked).toContain("leftovers");
   });
 
-  it("drops the Swift-scoped rules for a change that touches no code", () => {
-    const rules = loadReadiness(
-      "docs/examples/example-app.shipkit.yml",
-      "./example-app.readiness.yml",
-    );
+  // The discriminating half of the pair above: a change touching no code must drop the
+  // code-scoped rules and keep only the ones about the change as a whole.
+  it("drops the scoped rules for a change that touches no code", () => {
+    const rules = loadReadiness("docs/examples/example.shipkit.yml", "./example.readiness.yml");
     const brief = assembleBrief({
       repo,
       target,
@@ -110,13 +94,9 @@ describe("the brief's readiness questions", () => {
       readiness: applicable(rules, ["README.md", "fastlane/Fastfile"]),
     });
 
-    expect(brief.readiness?.map((item) => item.id)).toEqual([
-      "all-entry-paths",
-      "shared-component-blast-radius",
-      "layering",
-      "leftovers",
-      "constants-deliberate",
-      "apple-alignment",
-    ]);
+    const asked = brief.readiness?.map((item) => item.id) ?? [];
+    expect(asked).not.toContain("tests-mean-something");
+    expect(asked).not.toContain("shared-component-blast-radius");
+    expect(asked).toContain("leftovers");
   });
 });

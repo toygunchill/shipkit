@@ -150,7 +150,7 @@ describe("branch-pattern", () => {
   it("accepts a branch matching the configured pattern", () => {
     const result = validate({
       title: TITLE, body: goodBody, config,
-      branch: "bugfix/squadb/31087-invoice-default-citizenship",
+      branch: "bugfix/squad/31087-invoice-default-citizenship",
     });
     expect(result.findings.map((f) => f.rule)).not.toContain("branch-pattern");
   });
@@ -158,7 +158,7 @@ describe("branch-pattern", () => {
   it("reports a branch that does not match", () => {
     const result = validate({
       title: TITLE, body: goodBody, config,
-      branch: "bugfix/squadb/31087-invoice-default-citizenship-3.75",
+      branch: "bugfix/squad/31087-invoice-default-citizenship-3.75",
     });
     expect(result.findings.map((f) => f.rule)).toContain("branch-pattern");
   });

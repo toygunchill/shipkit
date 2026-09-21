@@ -47,7 +47,7 @@ function run(args: string[]): { status: number; stdout: string; stderr: string }
   }
 }
 
-const DECIDED = ["--team", "Squad B", "--portfolio", "Portfolio B", "--sprint", "none"];
+const DECIDED = ["--team", "Squad A", "--portfolio", "Payments", "--sprint", "none"];
 
 const WELL_FORMED = [
   "techTask:",
@@ -78,7 +78,7 @@ describe("shipkit tech-task --dry-run", () => {
     const payload = JSON.parse(result.stdout.slice(result.stdout.indexOf("{"), result.stdout.lastIndexOf("}") + 1));
     expect(payload.fields.customfield_10101).toEqual({
       value: "Commercial",
-      child: { value: "Portfolio B" },
+      child: { value: "Payments" },
     });
   });
 
@@ -105,12 +105,17 @@ describe("shipkit tech-task --dry-run", () => {
     const config = configWith(
       [
         "techTask:",
-        "  project: DCP",
+        "  project: ABC",
         "  issueType: Story",
-        '  summaryPattern: "iOS - {subject} swift ui dönüşümü"',
+        '  summaryPattern: "iOS - {subject} conversion"',
+        // Present, so the run reaches the portfolio check rather than stopping earlier at
+        // "which field is which" — that refusal has its own test.
+        "  fieldIds:",
+        "    portfolio: customfield_10101",
+        "    team: customfield_10102",
         "  fields:",
         "    customfield_10101:",
-        '      - value: "Commercial"',
+        '      - value: "a list, which is not a cascading parent"',
       ].join("\n"),
     );
 

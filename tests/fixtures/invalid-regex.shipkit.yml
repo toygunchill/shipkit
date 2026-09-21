@@ -1,5 +1,5 @@
 pr:
-  titlePattern: '^\[DCP-\d+\] ([unclosed'
+  titlePattern: '^\[ABC-\d+\] ([unclosed'
   forbidden: ["TBD", "TODO", "<!--"]
   sections:
     - name: Summary
@@ -8,4 +8,4 @@ branch:
   pattern: '^(feature|bugfix|livebug)/[a-z0-9]+/[0-9]+-[a-z0-9]+(-[a-z0-9]+)*$'
 jira:
   baseUrl: https://jira.example.com
-  keyPattern: 'DCP-\d+'
+  keyPattern: 'ABC-\d+'

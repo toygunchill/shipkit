@@ -33,7 +33,7 @@ Three things follow from "installed once, used everywhere":
 
 ## Deriving a ruleset from the code
 
-The measured checklist in `docs/examples/example-app.readiness.yml` was extracted by reading
+The measured checklist in `docs/examples/example.readiness.yml` was extracted by reading
 one team's code and its review comments. That is not a thing a command can do. What a command
 *can* do honestly is decide, for each rule in a catalogue shipkit ships, whether its subject
 exists in this repository at all — and say what it measured.

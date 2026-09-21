@@ -5,14 +5,14 @@ const teams = (...names: string[]) => names.map((team) => ({ team }));
 
 describe("deriveTeam", () => {
   it("takes a clear majority", () => {
-    expect(deriveTeam(teams("Squad B", "Squad B", "Squad B", "Squad A"))).toEqual({ value: "Squad B" });
+    expect(deriveTeam(teams("Squad A", "Squad A", "Squad A", "Squad B"))).toEqual({ value: "Squad A" });
   });
 
-  // Measured: one issue in a Squad A sprint carried Squad B. People move.
+  // Measured: one issue in a Squad B sprint carried Squad A. People move.
   it("refuses a plurality that is not a majority, and says what it saw", () => {
-    const got = deriveTeam(teams("Squad B", "Squad B", "Squad D", "Squad D", "Squad C"));
+    const got = deriveTeam(teams("Squad A", "Squad A", "Squad D", "Squad D", "Squad C"));
     expect(got).toHaveProperty("unresolved");
-    expect((got as { candidates: string[] }).candidates).toContain("Squad B");
+    expect((got as { candidates: string[] }).candidates).toContain("Squad A");
   });
 
   it("refuses an empty sample rather than inventing a team", () => {
@@ -31,7 +31,7 @@ describe("derivePortfolioChild", () => {
     expect(derivePortfolioChild(sample)).toHaveProperty("unresolved");
   });
 
-  it("takes the Squad A shape, which is 55 of 60", () => {
+  it("takes the Squad B shape, which is 55 of 60", () => {
     const sample = [
       ...Array(55).fill({ portfolioChild: "Portfolio A" }),
       ...Array(5).fill({ portfolioChild: "Example Diğer" }),
@@ -44,12 +44,12 @@ describe("pickSprint", () => {
   const active = [
     { id: 1251, name: "Squad D Sprint 45" },
     { id: 1249, name: "Squad C Sprint 45" },
-    { id: 1243, name: "Squad A Sprint 45" },
-    { id: 1234, name: "Squad B Sprint 45" },
+    { id: 1243, name: "Squad B Sprint 45" },
+    { id: 1234, name: "Squad A Sprint 45" },
   ];
 
   it("matches the sprint belonging to the team", () => {
-    expect(pickSprint(active, "Squad A")).toEqual({ value: 1243 });
+    expect(pickSprint(active, "Squad B")).toEqual({ value: 1243 });
   });
 
   // Six teams exist; four had a sprint when this was measured.
@@ -58,8 +58,8 @@ describe("pickSprint", () => {
   });
 
   it("refuses when two sprints could match rather than taking the first", () => {
-    const ambiguous = [{ id: 1, name: "Squad A Sprint 45" }, { id: 2, name: "Squad A Hotfix 45" }];
-    expect(pickSprint(ambiguous, "Squad A")).toHaveProperty("unresolved");
+    const ambiguous = [{ id: 1, name: "Squad B Sprint 45" }, { id: 2, name: "Squad B Hotfix 45" }];
+    expect(pickSprint(ambiguous, "Squad B")).toHaveProperty("unresolved");
   });
 });
 
@@ -75,20 +75,20 @@ describe("the denominator for a majority", () => {
   // answer depend on how many unfilled issues the sample happened to sweep up —
   // noise the developer cannot act on, producing a refusal they cannot fix by
   // fixing anything. None of the four measured teams changes outcome either way
-  // (Squad D 22/58 and 22/60 both refuse; Squad A 55/60 and 55/60 both pass),
+  // (Squad D 22/58 and 22/60 both refuse; Squad B 55/60 and 55/60 both pass),
   // so the choice is settled here, on synthetic data, or it is not settled at all.
   it("counts only the issues that carry the field, not every issue sampled", () => {
     const sample = [
-      ...Array(3).fill({ team: "Squad B" }),
+      ...Array(3).fill({ team: "Squad A" }),
       ...Array(4).fill({}), // assigned, but Digital Team never filled in
     ];
     // 3 of 3 that answered, versus 3 of 7 sampled. The first is a majority.
-    expect(deriveTeam(sample)).toEqual({ value: "Squad B" });
+    expect(deriveTeam(sample)).toEqual({ value: "Squad A" });
   });
 
   it("treats a blank string as not carrying a value", () => {
-    expect(deriveTeam([{ team: "Squad B" }, { team: "" }, { team: "   " }])).toEqual({
-      value: "Squad B",
+    expect(deriveTeam([{ team: "Squad A" }, { team: "" }, { team: "   " }])).toEqual({
+      value: "Squad A",
     });
   });
 
@@ -99,7 +99,7 @@ describe("the denominator for a majority", () => {
 
 describe("what a refusal hands back", () => {
   it("names the flag that unblocks it", () => {
-    const team = deriveTeam(teams("Squad B", "Squad D"));
+    const team = deriveTeam(teams("Squad A", "Squad D"));
     expect((team as { unresolved: string }).unresolved).toContain("--team");
 
     const portfolio = derivePortfolioChild([
@@ -113,17 +113,17 @@ describe("what a refusal hands back", () => {
   });
 
   it("lists the candidates commonest first, so a person can see how close it was", () => {
-    const got = deriveTeam(teams("Squad C", "Squad D", "Squad D", "Squad B", "Squad B", "Squad B"));
-    expect((got as { candidates: string[] }).candidates).toEqual(["Squad B", "Squad D", "Squad C"]);
+    const got = deriveTeam(teams("Squad C", "Squad D", "Squad D", "Squad A", "Squad A", "Squad A"));
+    expect((got as { candidates: string[] }).candidates).toEqual(["Squad A", "Squad D", "Squad C"]);
   });
 
   it("offers the sprints that do exist when the team's own sprint does not", () => {
-    const got = pickSprint([{ id: 1251, name: "Squad D Sprint 45" }, { id: 1234, name: "Squad B Sprint 45" }], "Squad F");
-    expect((got as { candidates: string[] }).candidates).toEqual(["Squad D Sprint 45", "Squad B Sprint 45"]);
+    const got = pickSprint([{ id: 1251, name: "Squad D Sprint 45" }, { id: 1234, name: "Squad A Sprint 45" }], "Squad F");
+    expect((got as { candidates: string[] }).candidates).toEqual(["Squad D Sprint 45", "Squad A Sprint 45"]);
   });
 });
 
-describe("the Squad B portfolio split, 36 of 59", () => {
+describe("the Squad A portfolio split, 36 of 59", () => {
   // An earlier draft of the spec narrated this as one of two teams with "no
   // majority at all". The arithmetic said otherwise and the spec now agrees: 36
   // of the 59 that carry a value is 61%, a majority on every denominator the
@@ -138,37 +138,37 @@ describe("the Squad B portfolio split, 36 of 59", () => {
     // abbreviated 36/20 the sample would be 56, and the test would pin a number that
     // appears nowhere.
     const sample = [
-      ...Array(36).fill({ portfolioChild: "Portfolio B" }),
+      ...Array(36).fill({ portfolioChild: "Payments" }),
       ...Array(20).fill({ portfolioChild: "Portfolio A" }),
       ...Array(2).fill({ portfolioChild: "Portfolio MCP Tool" }),
       ...Array(1).fill({ portfolioChild: "Portfolio Ancillary" }),
     ];
     expect(sample).toHaveLength(59);
-    expect(derivePortfolioChild(sample)).toEqual({ value: "Portfolio B" });
+    expect(derivePortfolioChild(sample)).toEqual({ value: "Payments" });
   });
 });
 
 describe("the majority boundary", () => {
   it("refuses an exact half, which is not strictly more than half", () => {
-    expect(deriveTeam(teams("Squad B", "Squad B", "Squad C", "Squad C"))).toHaveProperty("unresolved");
+    expect(deriveTeam(teams("Squad A", "Squad A", "Squad C", "Squad C"))).toHaveProperty("unresolved");
   });
 
   it("takes one more than half", () => {
-    expect(deriveTeam(teams("Squad B", "Squad B", "Squad B", "Squad C", "Squad C"))).toEqual({
-      value: "Squad B",
+    expect(deriveTeam(teams("Squad A", "Squad A", "Squad A", "Squad C", "Squad C"))).toEqual({
+      value: "Squad A",
     });
   });
 });
 
 describe("pickSprint matching", () => {
   it("does not let one team's name prefix another's", () => {
-    // "Squad A" and "Squad E" are both real teams; a bare startsWith on the
-    // team name alone would make the Squad E sprint a candidate for Squad A.
-    const active = [{ id: 1, name: "Squad E Sprint 45" }, { id: 2, name: "Squad A Sprint 45" }];
-    expect(pickSprint(active, "Squad A")).toEqual({ value: 2 });
+    // "Squad B" and "Squad E" are both real teams; a bare startsWith on the
+    // team name alone would make the Squad E sprint a candidate for Squad B.
+    const active = [{ id: 1, name: "Squad E Sprint 45" }, { id: 2, name: "Squad B Sprint 45" }];
+    expect(pickSprint(active, "Squad B")).toEqual({ value: 2 });
   });
 
   it("refuses an empty board rather than inventing a sprint", () => {
-    expect(pickSprint([], "Squad A")).toHaveProperty("unresolved");
+    expect(pickSprint([], "Squad B")).toHaveProperty("unresolved");
   });
 });

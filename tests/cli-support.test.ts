@@ -10,7 +10,7 @@ import {
 } from "../src/cli-support.js";
 import type { SubmitResult } from "../src/submit/run.js";
 
-const KEY_PATTERN = "DCP-\\d+";
+const KEY_PATTERN = "ABC-\\d+";
 
 describe("firstIssueKey", () => {
   it("returns the first key matching the pattern anywhere in the text", () => {
@@ -26,7 +26,7 @@ describe("firstIssueKey", () => {
 
 describe("ticketFromBranch", () => {
   it("extracts the key embedded in a branch name", () => {
-    expect(ticketFromBranch("bugfix/squadb/31087-invoice-fix", KEY_PATTERN)).toBeUndefined();
+    expect(ticketFromBranch("bugfix/squad/31087-invoice-fix", KEY_PATTERN)).toBeUndefined();
     expect(ticketFromBranch("bugfix/ABC-31087/invoice-fix", KEY_PATTERN)).toBe("ABC-31087");
   });
 

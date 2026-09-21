@@ -34,7 +34,7 @@ import {
 import { commitAll } from "../../src/vcs/mutate.js";
 
 const CONFIG = `pr:
-  titlePattern: '^\\[DCP-\\d+\\] (feat|fix|chore|ref|docs)(\\([a-z0-9-]+\\))?: .+'
+  titlePattern: '^\\[ABC-\\d+\\] (feat|fix|chore|ref|docs)(\\([a-z0-9-]+\\))?: .+'
   forbidden: ["TBD", "TODO"]
   sections:
     - name: Summary
@@ -50,7 +50,7 @@ branch:
   pattern: '^(feature|bugfix|livebug)/[a-z0-9]+/[0-9]+-[a-z0-9]+(-[a-z0-9]+)*$'
 jira:
   baseUrl: https://jira.example.com
-  keyPattern: 'DCP-\\d+'
+  keyPattern: 'ABC-\\d+'
   linkPolicy: story
 `;
 
@@ -106,7 +106,7 @@ function scratch(): string {
   git(["add", "--all"], repo);
   git(["commit", "-m", "init"], repo);
 
-  git(["checkout", "-b", "bugfix/squadb/31087-invoice"], repo);
+  git(["checkout", "-b", "bugfix/squad/31087-invoice"], repo);
   // The conversion, entirely uncommitted — the state `commitAll` stages after the gate, and
   // the state a review of `base...HEAD` would show as empty. The two names correspond,
   // which is what `detectConversion` requires before a deleted interface file counts as
@@ -224,7 +224,7 @@ describe("shipkit review, end to end, against a real repository", () => {
     expect(result.code).toBe(0);
     const written = readFixRequest(repo);
     expect(written?.base).toBe("develop");
-    expect(written?.branch).toBe("bugfix/squadb/31087-invoice");
+    expect(written?.branch).toBe("bugfix/squad/31087-invoice");
     expect(written?.items.map((item) => item.id)).toEqual(["untracked-files", "uikit-to-swiftui"]);
     expect(written?.items[1]?.note).toBe("open the tech task before you push");
   });
@@ -238,7 +238,7 @@ describe("shipkit review, end to end, against a real repository", () => {
       version: 1,
       createdAt: "2026-09-17T10:00:00.000Z",
       base: "develop",
-      branch: "bugfix/squadb/31087-invoice",
+      branch: "bugfix/squad/31087-invoice",
       items: [
         { kind: "warning", id: "untracked-files", message: "m", note: "add it to .gitignore" },
       ],
@@ -335,7 +335,7 @@ describe("shipkit review, end to end, against a real repository", () => {
       version: 1 as const,
       createdAt: "2026-09-17T10:00:00.000Z",
       base: "develop",
-      branch: "bugfix/squadb/31087-invoice",
+      branch: "bugfix/squad/31087-invoice",
       items: [{ kind: "warning" as const, id: "untracked-files", message: "m", note: "n" }],
     };
     writeFixRequest(repo, selection);

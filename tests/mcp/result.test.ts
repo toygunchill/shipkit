@@ -26,7 +26,7 @@ const BRIEF: Brief = {
   target: { branch: "develop", reason: "given" },
   template: { sections: [{ name: "Summary", required: true }] },
   rules: {
-    titlePattern: "^x", branchPattern: "^y", keyPattern: "DCP-\\d+",
+    titlePattern: "^x", branchPattern: "^y", keyPattern: "ABC-\\d+",
     forbidden: ["TBD"], issuesSection: "Issues Addressed", linkPolicy: "story",
   },
 };
@@ -149,10 +149,10 @@ describe("applyContent", () => {
     const deps: SubmitDeps = {
       loadConfig: () => CONFIG,
       renderBody,
-      currentBranch: () => "bugfix/squadb/31087-invoice",
+      currentBranch: () => "bugfix/squad/31087-invoice",
       resolveIssue: async () => undefined,
       readRepoState: () => ({
-        branch: "bugfix/squadb/31087-invoice", changedFiles: [], diffstat: "", commits: [],
+        branch: "bugfix/squad/31087-invoice", changedFiles: [], diffstat: "", commits: [],
       }),
       readPushDiffstat: () => " .env.local | 1 +\n 1 file changed, 1 insertion(+)",
       readPushChangedFiles: () => [],

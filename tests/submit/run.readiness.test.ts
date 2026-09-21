@@ -11,7 +11,7 @@ import type { PullRequestState } from "../../src/vcs/types.js";
 
 const CONFIG = loadConfig("tests/fixtures/valid.shipkit.yml");
 const HUMAN = loadConfig("tests/fixtures/human-approval.shipkit.yml");
-const BRANCH = "bugfix/squadb/31087-invoice";
+const BRANCH = "bugfix/squad/31087-invoice";
 
 const RESPONSE: SubmitResponse = {
   title: "[ABC-1] fix(x): y",

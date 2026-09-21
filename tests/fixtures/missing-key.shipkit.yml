@@ -1,5 +1,5 @@
 pr:
-  titlePattern: '^\[DCP-\d+\] .+'
+  titlePattern: '^\[ABC-\d+\] .+'
   sections:
     - name: Summary
       required: true

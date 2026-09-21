@@ -26,7 +26,7 @@ describe("pr.approval", () => {
   });
 
   it("accepts human", () => {
-    expect(loadConfig("docs/examples/example-app.shipkit.yml").pr.approval).toBe("human");
+    expect(loadConfig("docs/examples/example.shipkit.yml").pr.approval).toBe("human");
   });
 
   it("defaults the wait to 120 seconds", () => {

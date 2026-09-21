@@ -17,7 +17,7 @@ const CONFIG = loadConfig("tests/fixtures/valid.shipkit.yml");
 
 // A branch that satisfies config.branch.pattern and contains no Jira key, so the happy path
 // below needs neither a ticket nor a Jira token to stay clean.
-const BRANCH = "bugfix/squadb/31087-invoice";
+const BRANCH = "bugfix/squad/31087-invoice";
 
 const VALID_RESPONSE: SubmitResponse = {
   title: "[ABC-1] fix(x): y",
@@ -364,7 +364,7 @@ describe("runSubmit", () => {
   describe("Finding 1: the Jira gate must not depend on the branch carrying a key", () => {
     // The exact reproduction from the review, and it has since sharpened. Under the
     // reference config, branch.pattern admits only lowercase while jira.keyPattern is
-    // `DCP-\d+`, so a branch that satisfies branch.pattern never carries a key. The title
+    // `ABC-\d+`, so a branch that satisfies branch.pattern never carries a key. The title
     // no longer carries one either: that repository's workflow derives the ticket tag from
     // the branch and prepends it when the pull request opens, so titlePattern dropped it.
     //
@@ -373,10 +373,10 @@ describe("runSubmit", () => {
     // foreign-commits and issue-unverified all fall silent together and the run exits 0 with
     // an empty stderr. This is not a synthetic fixture — it is the real reference config,
     // loaded exactly as the CLI would.
-    const REFERENCE_CONFIG = loadConfig("docs/examples/example-app.shipkit.yml");
-    const REPRO_BRANCH = "bugfix/squadb/31087-invoice"; // passes branch.pattern; carries no DCP-key at all
+    const REFERENCE_CONFIG = loadConfig("docs/examples/example.shipkit.yml");
+    const REPRO_BRANCH = "bugfix/squad/31087-invoice"; // passes branch.pattern; carries no issue key at all
     const REPRO_RESPONSE: SubmitResponse = {
-      title: "fix(x): y", // passes titlePattern; carries no DCP-key either
+      title: "fix(x): y", // passes titlePattern; carries no issue key either
       commitMessage: "fix(x): y",
       sections: {
         Summary: "It was broken; now it is not.",

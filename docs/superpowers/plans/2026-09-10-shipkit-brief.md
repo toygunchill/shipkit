@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-10-shipkit-design.md`
 **Plan 1 (merged):** `docs/superpowers/plans/2026-09-10-shipkit-check.md`
-**Reference examples:** `docs/examples/example-app-pr-bodies.md`, `docs/examples/example-app.shipkit.yml`
+**Reference examples:** `docs/examples/example-app-pr-bodies.md`, `docs/examples/example.shipkit.yml`
 
 ## Global Constraints
 
@@ -1045,7 +1045,7 @@ Expected: PASS, no type errors. All Plan 1 tests still pass.
 Run:
 
 ```bash
-node dist/cli.js brief --base main --config docs/examples/example-app.shipkit.yml | head -40
+node dist/cli.js brief --base main --config docs/examples/example.shipkit.yml | head -40
 ```
 
 Expected: valid JSON with `change`, `target`, `template`, and `rules` keys. `ticket` is absent, because this repository's branch names carry no DCP key and no Jira token is set. Record the actual output in your report.
@@ -1068,4 +1068,4 @@ git commit -m "feat(cli): add the brief command and wire the new rules into chec
 
 ## Next plan
 
-**Plan 3 — `submit`, pre-flight, `init` and `branch`:** the mutating half. Pre-flight adds `findPullRequest` and `PullRequestState` to the `vcs` adapter, to warn that a push will dismiss N approvals, that a blocking label is present, or that the branch's base disagrees with the pull request's. `init` reconstructs a config from the forge and from merged pull-request bodies, the way `docs/examples/example-app.shipkit.yml` was reconstructed by hand.
+**Plan 3 — `submit`, pre-flight, `init` and `branch`:** the mutating half. Pre-flight adds `findPullRequest` and `PullRequestState` to the `vcs` adapter, to warn that a push will dismiss N approvals, that a blocking label is present, or that the branch's base disagrees with the pull request's. `init` reconstructs a config from the forge and from merged pull-request bodies, the way `docs/examples/example.shipkit.yml` was reconstructed by hand.

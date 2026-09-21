@@ -5,14 +5,14 @@
       "repo": "example-app",
       "root": "/Users/x/example-app",
       "url": "http://127.0.0.1:53983/?token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "branch": "bugfix/squadb/31087-invoice",
+      "branch": "bugfix/squad/31087-invoice",
       "base": "develop",
       "commitMessage": "",
       "diffstat": " 1 file changed, 2 insertions(+)",
       "items": [],
       "files": []
     },
-    "fingerprint": "bf12955bbb8a9a22a9f05aa2717c72757cec59c49a6389df70eacec54000c69b"
+    "fingerprint": "9d4804314d24aab63a2ec97ba17428403b5b3d7f9235fdd60f2632c53109bf5f"
   },
   {
     "name": "all four channels and three files",
@@ -20,7 +20,7 @@
       "repo": "example-app",
       "root": "/Users/x/example-app",
       "url": "http://127.0.0.1:61120/?token=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "branch": "bugfix/squadb/31087-invoice",
+      "branch": "bugfix/squad/31087-invoice",
       "base": "release/3.76.0",
       "commitMessage": "fix(invoice): default citizenship",
       "diffstat": " 12 files changed, 148 insertions(+), 37 deletions(-)",
@@ -68,7 +68,7 @@
         }
       ]
     },
-    "fingerprint": "8b964dd8ffb857a1461d934b7e7d070bfb64b4190b71cd896514aecfab4c236e"
+    "fingerprint": "d80a390d4352b68a9d9071d368c489e19e0b7eca78aac0cfb83a2338a0e3f8e8"
   },
   {
     "name": "a message carrying the delimiters",
@@ -124,7 +124,7 @@
         }
       ]
     },
-    "fingerprint": "c17b207a5f61b860556dd21aa16705e3f28918ccd1b103ad4a525ce89c38e692"
+    "fingerprint": "101041732a2642f818c97536fc0d8aa3399fc250f5a0fdca7b42cc0b966517cf"
   },
   {
     "name": "order is not sorted, so two orders are two fingerprints",

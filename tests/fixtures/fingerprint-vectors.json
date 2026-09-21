@@ -3,7 +3,7 @@
     "name": "no warnings",
     "situation": {
       "repo": "/Users/x/example-app",
-      "branch": "bugfix/squadb/31087-invoice",
+      "branch": "bugfix/squad/31087-invoice",
       "base": "develop",
       "head": "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
       "title": "fix(invoice): default citizenship",
@@ -11,13 +11,13 @@
       "diffstat": "12 files changed, 148 insertions(+), 37 deletions(-)",
       "warnings": []
     },
-    "fingerprint": "35226206c3f123a3fcfa572ddec787f12ae9116c899772b8a25da0f74c20519a"
+    "fingerprint": "a7f226516d927c29e8d4eac35a7dd0fae77e97d13658744edc8f8f47691eeb42"
   },
   {
     "name": "two warnings",
     "situation": {
       "repo": "/Users/x/example-app",
-      "branch": "bugfix/squadb/31087-invoice",
+      "branch": "bugfix/squad/31087-invoice",
       "base": "release/3.76.0",
       "head": "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
       "title": "fix(invoice): default citizenship",
@@ -34,13 +34,13 @@
         }
       ]
     },
-    "fingerprint": "7fe2cb5c521d5d9bede9f50376d14ee862902f994bb4cfc543d9d8005ac09c10"
+    "fingerprint": "595622b15975c03a062d74627780e6ca9e7d0ebff3f5edd0ebd823d186594ab0"
   },
   {
     "name": "warnings out of order",
     "situation": {
       "repo": "/Users/x/example-app",
-      "branch": "bugfix/squadb/31087-invoice",
+      "branch": "bugfix/squad/31087-invoice",
       "base": "release/3.76.0",
       "head": "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
       "title": "fix(invoice): default citizenship",
@@ -61,7 +61,7 @@
         }
       ]
     },
-    "fingerprint": "9f8e29d058d05a283718887ed0d13fc61bfef696d0ca7546e85f4d583787e8ba"
+    "fingerprint": "02539cab54da81c865e3451f7fe8300268e0fee654add6eefe3095e8af42ac50"
   },
   {
     "name": "non-ascii in every field",
@@ -80,7 +80,7 @@
         }
       ]
     },
-    "fingerprint": "f75364fab96777b0ca22db46d27d1efecf3ec8a816832d6535e52868c9a3f5f4"
+    "fingerprint": "cfb87a64445a9120d1ef128be46b841874dd16573cb4e0ae004a07f2c9f472ea"
   },
   {
     "name": "a message that looks like the encoding",
@@ -118,7 +118,7 @@
         }
       ]
     },
-    "fingerprint": "026bac7f17da7acdd480d3b0010a5d41fdf4bd4ebfe4019bc6dea3321256525b"
+    "fingerprint": "54c868349c6c2ee3a13a4b8f0a9f5d4533d00e3e59c4fc2ae94ce95e3dea886e"
   },
   {
     "name": "multi-digit warning count",
@@ -224,11 +224,11 @@
       "diffstat": " b.swift | 1 +",
       "warnings": [
         {
-          "check": "caf\u0065\u0301",
+          "check": "café",
           "message": "b"
         },
         {
-          "check": "caf\u00e9",
+          "check": "café",
           "message": "a"
         }
       ]
@@ -247,11 +247,11 @@
       "diffstat": " c.swift | 1 +",
       "warnings": [
         {
-          "check": "caf\u00e9",
+          "check": "café",
           "message": "same"
         },
         {
-          "check": "caf\u0065\u0301",
+          "check": "café",
           "message": "same"
         }
       ]

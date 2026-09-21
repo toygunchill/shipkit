@@ -27,15 +27,15 @@ export type Derived<T> = { value: T } | { unresolved: string; candidates: string
 /**
  * A value must hold strictly more than this share of the votes.
  *
- * Half, not a plurality. Cross-team work happens — one issue inside a Squad A sprint
- * carried Squad B — so the commonest answer is not by itself evidence of the right one.
+ * Half, not a plurality. Cross-team work happens — one issue inside a team A sprint
+ * carried team B — so the commonest answer is not by itself evidence of the right one.
  * Measured against the live Jira — those are *team sprint* distributions rather than the
  * per-developer sample this actually votes on, and the spec says so, but they are the
- * widest set of real shapes measured: this threshold accepts Squad A's portfolio child at
- * 55/60, Squad C's at 50/60 and Squad B's at 36 of 59, and refuses Squad D' 22/18/11/7.
+ * widest set of real shapes measured: this threshold accepts team A's portfolio child at
+ * 55/60, team C's at 50/60 and team B's at 36 of 59, and refuses team D' 22/18/11/7.
  *
  * Someone will want to lower it the first time a derivation refuses on their machine.
- * What that trades away: at a plurality, Squad D' four-way split resolves to a value
+ * What that trades away: at a plurality, team D' four-way split resolves to a value
  * held by 38% of the sample, which would be wrong for the other 62% — quietly, in a field
  * nobody re-reads. Below half there is no reading of the data that makes the winner more
  * likely right than wrong. Pass `--team` or `--portfolio` instead; that is what they are for.
@@ -45,10 +45,10 @@ export type Derived<T> = { value: T } | { unresolved: string; candidates: string
  * measured — one real developer's last 60 issues — sits at 68% "Only Digital", so a
  * two-thirds rule would decide that developer's case by 1.6 percentage points, and one
  * issue landing elsewhere would flip it into a refusal. A rule that arbitrary is worse than
- * a looser one. (An earlier draft of the spec argued the opposite from Squad B's 36/20,
+ * a looser one. (An earlier draft of the spec argued the opposite from team B's 36/20,
  * calling it a team with "no majority at all". It is 36 of 59, which is 61% and a majority
  * — and it is a team sprint distribution besides, so it was never evidence about this
- * function's input. Only Squad D lacks a majority.) So half is what this is, and
+ * function's input. Only team D lacks a majority.) So half is what this is, and
  * `tests/jira/derive.test.ts` pins the consequence.
  */
 export const MAJORITY_THRESHOLD = 0.5;
@@ -60,7 +60,7 @@ export const MAJORITY_THRESHOLD = 0.5;
  * fill it in agreed on. Counting blanks would make the outcome depend on how many unfilled
  * issues the sample happened to sweep up — a refusal the developer cannot fix by fixing
  * anything, since the blanks are on issues that are not theirs to correct. Neither reading
- * changes any of the four measured teams (Squad D refuses at 22/58 and at 22/60; Fly
+ * changes any of the four measured teams (team D refuses at 22/58 and at 22/60; Fly
  * High passes at 55/60 either way), so the choice is pinned by a test on synthetic data.
  */
 function votes(sample: IssueFieldSample[], field: keyof IssueFieldSample): string[] {
@@ -117,7 +117,7 @@ export function deriveTeam(sample: IssueFieldSample[]): Derived<string> {
  * This is the field least likely to be answerable. The child tracks the nature of the work
  * rather than the team, and one of the four measured teams has no majority at all — Sky
  * Stones splits 22/18/11/7 across four values. (An earlier draft of the spec said two of
- * four; the second, Squad B, is a majority at 36 of 59. The spec carries the correction.)
+ * four; the second, team B, is a majority at 36 of 59. The spec carries the correction.)
  * Refusing here is an ordinary outcome rather than an edge case, and the refusal names
  * `--portfolio` because that is the only honest way to fill this in.
  */
@@ -139,7 +139,7 @@ export function derivePortfolioChild(sample: IssueFieldSample[]): Derived<string
  *
  * Several sprints are active on one board at once — four were, when this was measured —
  * and each is named for its team, so the team name is the discriminator. It is matched as
- * a whole leading word, not a bare prefix: `Squad A` and `Squad E` are both real
+ * a whole leading word, not a bare prefix: `team A` and `team E` are both real
  * teams, and a bare prefix test would make one team's sprint a candidate for the other.
  *
  * Six teams exist and only four had a sprint, so no match is ordinary rather than

@@ -66,7 +66,7 @@ describe("citeTarget", () => {
 
 describe("assembleBrief and validate agree on what to cite (cross-module)", () => {
   const repo = {
-    branch: "bugfix/squadb/1-ok",
+    branch: "bugfix/squad/1-ok",
     changedFiles: ["a.ts"],
     diffstat: " 1 file changed",
     commits: ["fix: x"],

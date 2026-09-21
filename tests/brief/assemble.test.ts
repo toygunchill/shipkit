@@ -6,7 +6,7 @@ import type { FixRequest } from "../../src/review/fixrequest.js";
 
 const config = loadConfig("tests/fixtures/valid.shipkit.yml");
 const repo = {
-  branch: "bugfix/squadb/31087-invoice-default-citizenship",
+  branch: "bugfix/squad/31087-invoice-default-citizenship",
   changedFiles: ["Sources/Scenes/Payment/Invoice/PaymentAddInvoiceViewModel.swift"],
   diffstat: " 1 file changed, 17 insertions(+), 2 deletions(-)",
   commits: ["fix(invoice): default citizenship from passenger info"],
@@ -137,7 +137,7 @@ describe("assembleBrief advice", () => {
       assembleBrief({ repo, target, config, changed: CONVERTED }).advice?.[0]?.message ?? "";
 
     expect(message).toContain("the ticket");
-    expect(message).not.toMatch(/DCP-\d+/);
+    expect(message).not.toMatch(/ABC-\d+/);
   });
 
   // Advice is placed before the sections it would be advice about. Placed after them it
@@ -181,11 +181,11 @@ describe("a selection made somewhere other than here", () => {
       repo,
       target,
       config,
-      fixRequest: { ...SELECTION, branch: "bugfix/squadb/31087-invoice-first-attempt" },
+      fixRequest: { ...SELECTION, branch: "bugfix/squad/31087-invoice-first-attempt" },
     });
 
     expect(brief.fixRequest?.items).toEqual(SELECTION.items);
-    expect(brief.fixRequest?.note).toContain("bugfix/squadb/31087-invoice-first-attempt");
+    expect(brief.fixRequest?.note).toContain("bugfix/squad/31087-invoice-first-attempt");
     expect(brief.fixRequest?.note).toContain(repo.branch);
   });
 

@@ -46,7 +46,7 @@ function run(args: string[], cwd: string): { status: number; stdout: string; std
 }
 
 const CONFIG = `pr:
-  titlePattern: '^\\[DCP-\\d+\\] (feat|fix|chore|ref|docs)(\\([a-z0-9-]+\\))?: .+'
+  titlePattern: '^\\[ABC-\\d+\\] (feat|fix|chore|ref|docs)(\\([a-z0-9-]+\\))?: .+'
   forbidden: ["TBD", "TODO"]
   sections:
     - name: Summary
@@ -62,7 +62,7 @@ branch:
   pattern: '^(feature|bugfix|livebug)/[a-z0-9]+/[0-9]+-[a-z0-9]+(-[a-z0-9]+)*$'
 jira:
   baseUrl: https://jira.example.com
-  keyPattern: 'DCP-\\d+'
+  keyPattern: 'ABC-\\d+'
   linkPolicy: story
 `;
 
@@ -109,7 +109,7 @@ function scratch(): string {
   writeFileSync(join(repo, "README.md"), "base\n", "utf8");
   git(["add", "."], repo);
   git(["commit", "-q", "-m", "base"], repo);
-  git(["checkout", "-q", "-b", "bugfix/squadb/1-invoice"], repo);
+  git(["checkout", "-q", "-b", "bugfix/squad/1-invoice"], repo);
   symlinkSync(join(conventions, "shipkit.yml"), join(repo, ".shipkit.yml"));
   return repo;
 }

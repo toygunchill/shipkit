@@ -16,7 +16,7 @@ const config = {
   fields: { customfield_10101: { value: "Commercial" } },
 };
 
-const input = { config, subject: "Seyahat özeti", team: "Squad B", sprintId: 1234, portfolioChild: "Portfolio B" };
+const input = { config, subject: "Seyahat özeti", team: "Squad A", sprintId: 1234, portfolioChild: "Payments" };
 
 describe("buildCreatePayload", () => {
   it("writes the summary the team's own tickets use", () => {
@@ -27,13 +27,13 @@ describe("buildCreatePayload", () => {
   it("nests the portfolio child under its parent", () => {
     expect((buildCreatePayload(input) as any).fields.customfield_10101).toEqual({
       value: "Commercial",
-      child: { value: "Portfolio B" },
+      child: { value: "Payments" },
     });
   });
 
   it("sets the team and the epic and the sprint", () => {
     const f = (buildCreatePayload(input) as any).fields;
-    expect(f.customfield_10102).toEqual({ value: "Squad B" });
+    expect(f.customfield_10102).toEqual({ value: "Squad A" });
     expect(f.customfield_10006).toBe("ABC-12154");
     expect(f.customfield_10005).toBe(1234);
   });
@@ -90,7 +90,7 @@ describe("buildCreatePayload", () => {
       const f = (buildCreatePayload({ ...input, config: overriding }) as any).fields;
       expect(f.customfield_10005).toBe(1234);
       expect(f.customfield_10006).toBe("ABC-12154");
-      expect(f.customfield_10102).toEqual({ value: "Squad B" });
+      expect(f.customfield_10102).toEqual({ value: "Squad A" });
     });
   });
 
@@ -122,12 +122,12 @@ describe("a Jira that spells its fields differently", () => {
   it("writes every value into the field that Jira calls it", () => {
     const f = (buildCreatePayload({ ...input, config: elsewhere }) as any).fields;
 
-    expect(f.customfield_20002).toEqual({ value: "Squad B" });
+    expect(f.customfield_20002).toEqual({ value: "Squad A" });
     expect(f.customfield_20003).toBe("WEB-1");
     expect(f.customfield_20004).toBe(1234);
     expect(f.customfield_20001).toEqual({
       value: "Platform",
-      child: { value: "Portfolio B" },
+      child: { value: "Payments" },
     });
   });
 

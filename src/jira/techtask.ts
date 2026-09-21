@@ -161,7 +161,7 @@ export const SAMPLE_SIZE = 60;
  * here too.
  *
  * What this is based on, precisely: the spec measured **one** cross-team stray — an issue
- * inside a Squad A sprint carrying Squad B — which is the whole reason a majority is
+ * inside a team A sprint carrying team B — which is the whole reason a majority is
  * required rather than a plurality. A single stray can only win a majority when it is the
  * only vote, so the floor that measurement actually supports is 3.
  *
@@ -221,7 +221,7 @@ function cascadingChild(field: unknown): string | undefined {
  * **Unmeasured, unlike everything else in this module.** The spec measured how
  * `customfield_10005` is *written* — a bare numeric id — and never how it reads back. Jira
  * serves it either as an object or as a `toString()` of the greenhopper Sprint bean
- * (`…Sprint@1b2c[id=1234,rapidViewId=57,state=ACTIVE,name=Squad B Sprint 45,…]`), and
+ * (`…Sprint@1b2c[id=1234,rapidViewId=57,state=ACTIVE,name=team B Sprint 45,…]`), and
  * which one depends on the deployment. Both are read here.
  *
  * The failure direction is what makes that acceptable: an entry this cannot parse yields no

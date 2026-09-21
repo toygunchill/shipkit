@@ -17,7 +17,7 @@ const situation = {
   repo: "example-app",
   root: "/Users/x/example-app",
   url: "http://127.0.0.1:53983/?token=abc",
-  branch: "bugfix/squadb/1-invoice",
+  branch: "bugfix/squad/1-invoice",
   base: "develop",
   commitMessage: "fix(x): y",
   diffstat: " 1 file changed",

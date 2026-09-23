@@ -23,8 +23,44 @@ import { configSchema } from "./schema.js";
  * checkout, would read files nobody offered, and — worse — could match something a team
  * never meant as a config. These are the places a project actually keeps such a file, and
  * being unable to find one is a reported failure rather than a reason to search harder.
+ *
+ * `docs` is searched one level deep, and that depth is the whole point. This list first
+ * named `docs/adr` outright, because that is where the repository in front of us had put
+ * the file. The next team to move it chose `docs/rules` and discovery stopped finding it
+ * — a hardcoded subdirectory only ever fits the team it was copied from. One level under
+ * `docs` covers what a team actually does with the file without becoming the repository
+ * walk this list exists to avoid: two teams picked two names, and neither was wrong.
  */
-export const SEARCH_DIRECTORIES = [".", "docs", "docs/adr", ".github", "config", ".config"];
+export const SEARCH_DIRECTORIES = [".", "docs", ".github", "config", ".config"];
+
+/** Immediate subdirectories of `docs`, which is how teams file this alongside their docs. */
+function docsSubdirectories(root: string): string[] {
+  const docs = join(root, "docs");
+  if (!existsSync(docs)) return [];
+  let entries: string[];
+  try {
+    entries = readdirSync(docs);
+  } catch {
+    return [];
+  }
+  return entries
+    .map((name) => join("docs", name))
+    .filter((directory) => {
+      try {
+        return statSync(join(root, directory)).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+}
+
+/** Every directory searched in `root`, the fixed list plus what `docs` turns out to hold. */
+export function searchDirectories(root: string): string[] {
+  const fixed = [...SEARCH_DIRECTORIES];
+  const at = fixed.indexOf("docs");
+  fixed.splice(at + 1, 0, ...docsSubdirectories(root));
+  return fixed;
+}
 
 /** Tried first wherever it is found, because it is what earlier versions wrote. */
 export const CONVENTIONAL_NAME = ".shipkit.yml";
@@ -91,8 +127,9 @@ export function discoverConfig(root: string): Discovery {
     return { found: "one", path: conventional };
   }
 
+  const directories = searchDirectories(root);
   const found: string[] = [];
-  for (const directory of SEARCH_DIRECTORIES) {
+  for (const directory of directories) {
     for (const candidate of candidatesIn(root, directory)) {
       if (candidate === conventional) continue;
       if (isConfigFile(candidate)) found.push(candidate);
@@ -101,7 +138,7 @@ export function discoverConfig(root: string): Discovery {
 
   if (found.length === 1) return { found: "one", path: found[0] as string };
   if (found.length > 1) return { found: "several", paths: found };
-  return { found: "none", looked: SEARCH_DIRECTORIES.map((d) => (d === "." ? root : join(root, d))) };
+  return { found: "none", looked: directories.map((d) => (d === "." ? root : join(root, d))) };
 }
 
 /** What to say when there is no config, or more than one. Written to be acted on. */
@@ -119,7 +156,7 @@ export function explainDiscovery(discovery: Discovery, root: string): string {
     "look like here, which sections a body needs, which branch names are allowed — all of " +
     "that lives in a file in this repository, and shipkit only knows how to check against " +
     "it.\n\nRun `shipkit init` to write one, or pass --config if yours is somewhere " +
-    `shipkit did not look (it tried ${SEARCH_DIRECTORIES.join(", ")}).`
+    `shipkit did not look (it tried ${searchDirectories(root).join(", ")}).`
   );
 }
 

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { discoverConfig, isConfigFile, resolveConfigPath } from "../../src/config/discover.js";
+import { discoverConfig, explainDiscovery, isConfigFile, resolveConfigPath } from "../../src/config/discover.js";
 
 const dirs: string[] = [];
 afterAll(() => {
@@ -88,6 +88,35 @@ describe("finding a repository's conventions", () => {
     // Not found is the correct answer: shipkit reports it rather than walking 6,500 files
     // looking for something nobody pointed it at.
     expect(discoverConfig(root).found).toBe("none");
+  });
+
+  // The list used to name `docs/adr` outright, so a team that filed the same file under
+  // `docs/rules` got "no conventions file found" and no clue why. Any subdirectory of
+  // `docs` counts; which word a team chose for it is not shipkit's business.
+  it("finds a config under any subdirectory of docs, not one blessed name", () => {
+    for (const directory of ["docs/adr", "docs/rules", "docs/conventions"]) {
+      const root = repo({ [`${directory}/pull-request-conventions.yml`]: CONFIG });
+      const discovery = discoverConfig(root);
+
+      expect(discovery.found, `${directory} was not searched`).toBe("one");
+      expect(discovery.found === "one" && discovery.path).toContain(directory);
+    }
+  });
+
+  // One level, not a walk. `docs` deepening into a manual or a generated API reference
+  // must not turn discovery into a crawl of the whole tree.
+  it("goes one level under docs and no further", () => {
+    const root = repo({ "docs/rules/nested/conventions.yml": CONFIG });
+
+    expect(discoverConfig(root).found).toBe("none");
+  });
+
+  // The message tells the reader where to look next, so it has to name the directories
+  // actually searched in *this* repository — a fixed list would omit the one they used.
+  it("names the docs subdirectories it really searched when it finds nothing", () => {
+    const root = repo({ "docs/rules/notes.md": "not a config" });
+
+    expect(explainDiscovery(discoverConfig(root), root)).toContain("docs/rules");
   });
 
   it("reads a file that is not YAML as not a config, rather than throwing", () => {

@@ -186,7 +186,7 @@ function readinessRules(
 }
 
 needsConventions(program.command("check"))
-  .description("Validate a pull-request title and body against .shipkit.yml")
+  .description("Validate a pull-request title and body against your conventions")
   .requiredOption("--title <title>", "pull-request title")
   .requiredOption("--body-file <path>", "file holding the pull-request body")
   .option("--repo <path>", "the repository to work in", ".")
@@ -722,7 +722,7 @@ function runInitHere(root: string, options: { config: string; force: boolean; li
 
 program
   .command("init")
-  .description("Write a starter .shipkit.yml, reading what the forge can prove")
+  .description("Write a starter conventions file, reading what the forge can prove")
   .option("--repo <path>", "the repository to work in", ".")
   .option("--config <path>", "path to write, relative to --repo", ".shipkit.yml")
   .option("--force", "overwrite an existing config", false)

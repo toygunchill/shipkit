@@ -34,7 +34,7 @@ describe("derivePortfolioChild", () => {
   it("takes the Squad B shape, which is 55 of 60", () => {
     const sample = [
       ...Array(55).fill({ portfolioChild: "Portfolio A" }),
-      ...Array(5).fill({ portfolioChild: "Example Diğer" }),
+      ...Array(5).fill({ portfolioChild: "Other" }),
     ];
     expect(derivePortfolioChild(sample)).toEqual({ value: "Portfolio A" });
   });

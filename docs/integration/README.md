@@ -78,9 +78,19 @@ Then, in the repository you are opening the pull request for:
 
 ```bash
 cd /path/to/your/checkout
-shipkit init            # writes .shipkit.yml from what your forge can prove
+shipkit init            # writes your conventions file from what your forge can prove
 shipkit brief --base develop
 ```
+
+`init` is not a one-time ceremony you can skip: **without a conventions file
+shipkit does nothing**, because it holds no rules of its own. Every command that
+reads your conventions stops and, at a terminal, offers to write one.
+
+shipkit finds that file **by shape, not by name** — any YAML that parses as a
+shipkit config — looking in `.`, `docs`, `docs/adr`, `.github`, `config` and
+`.config`. Call it `pull-request-conventions.yml` if that is what your team calls
+it; nothing has to be named after the tool that reads it. If two files both read
+as a config, shipkit refuses and names them rather than picking one.
 
 Every command takes `--repo <path>` if you would rather not stand in the
 checkout, and `--config <path>` if the rules live somewhere else — a shared

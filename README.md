@@ -28,11 +28,11 @@ rather than repairs — a silent repair hides that the rules were ignored.
 ## Commands
 
 ```
-shipkit check      Validate a title and body against .shipkit.yml. No side effects.
+shipkit check      Validate a title and body against your conventions. No side effects.
 shipkit brief      Emit the JSON brief an agent fills in.
 shipkit review     Show the change and the findings on a local page, and take one answer.
 shipkit submit     Validate, warn, then commit, push and open the pull request.
-shipkit init       Write a starter .shipkit.yml, reading what the forge can prove.
+shipkit init       Write a starter conventions file, reading what the forge can prove.
 shipkit rules      Propose a readiness checklist from the code, for a repo that has none.
 shipkit tech-task  Open the technical item for work the ticket did not ask for.
 shipkit mcp        Serve brief, preview and apply as MCP tools over stdio.
@@ -139,7 +139,6 @@ loaded from — a symbolic link works.
 ### 1. Install it
 
 ```bash
-gh auth login                      # once, if you have not
 brew tap toygunchill/tools
 brew trust toygunchill/tools       # Homebrew refuses a third-party tap until you say so
 brew install shipkit
@@ -175,8 +174,8 @@ shipkit init
 `init` sets up both halves and writes nothing you have to wire together yourself.
 
 It reads what your forge can actually prove — the merged pull requests, the branch
-ruleset, the merge gate — and writes a starter `.shipkit.yml` with a label on every value
-saying where it came from: `read` is a fact, `observed` is a pattern in what people did
+ruleset, the merge gate — and writes a starter conventions file with a label on every
+value saying where it came from: `read` is a fact, `observed` is a pattern in what people did
 (not the same as what they intended), `proposed` is shipkit's guess and yours to overrule.
 Read it before you trust it. It never opts you into anything: `pr.approval` defaults to
 `echo`.
@@ -282,7 +281,9 @@ Pre-flight reports. The human decides.
 
 ## Configuration
 
-`.shipkit.yml` at the repository root. `docs/examples/example.shipkit.yml` is a
+One YAML file, named whatever your team calls it and living in any of the
+directories listed under [Name it whatever you call it](#name-it-whatever-you-call-it)
+— or anywhere at all, with `--config`. `docs/examples/example.shipkit.yml` is a
 worked one — invented rather than measured, showing the shape and every key
 that exists. Note that it sets `pr.approval: human` to make the key
 discoverable; a reader copying it wholesale inherits that, and `init` defaults

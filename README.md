@@ -160,6 +160,26 @@ right-click → Open, once per machine. You only need it if your config sets
 `pr.approval: human`, or if you want reviews answerable from the menu bar as
 well as the browser.
 
+#### Upgrading the menu-bar app: quit it first
+
+```bash
+pkill -f ShipkitMenuBar
+brew upgrade shipkit-menubar
+open $(brew --prefix shipkit-menubar)/shipkit.app
+```
+
+`brew upgrade` replaces the files; it does not stop what is already running, and
+nothing restarts the app afterwards. Skip the first line and the old build stays
+up — two icons in the menu bar, and only one of them is the version you just
+installed.
+
+That is worse than cosmetic. Every running instance binds the same socket path,
+but only one of them can be the listener. The icon you click may belong to a
+build that is no longer receiving anything, so a `submit` waiting under
+`pr.approval: human` sits there unanswered while a panel is open in front of
+you. If the menu bar ever shows more than one mark, `pkill -f ShipkitMenuBar`
+and open the app again — that is the whole fix.
+
 shipkit runs **inside the repository you are opening the pull request for**, not
 in its own. That repository already has the remote and the `gh` login; shipkit
 needs neither of its own.

@@ -16,7 +16,7 @@ class ShipkitMenubar < Formula
   homepage "https://github.com/toygunchill/shipkit"
   url "https://github.com/toygunchill/shipkit.git",
       tag:      "v0.1.5",
-      revision: "04ddcbc08ca8b76d847f9b80d2eff3cf5b0fa437"
+      revision: "40be4328ea88a56fc58047cfbebc45ad3cb2b450"
   license "MIT"
   head "https://github.com/toygunchill/shipkit.git", branch: "main"
 

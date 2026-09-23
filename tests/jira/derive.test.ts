@@ -23,9 +23,9 @@ describe("deriveTeam", () => {
 describe("derivePortfolioChild", () => {
   it("refuses the Squad D shape, which has no majority", () => {
     const sample = [
-      ...Array(22).fill({ portfolioChild: "Portfolio A" }),
-      ...Array(18).fill({ portfolioChild: "Portfolio C" }),
-      ...Array(11).fill({ portfolioChild: "Portfolio D" }),
+      ...Array(22).fill({ portfolioChild: "Portfolio Only Digital" }),
+      ...Array(18).fill({ portfolioChild: "Portfolio Kişiselleştirme" }),
+      ...Array(11).fill({ portfolioChild: "Portfolio Loyalty" }),
       ...Array(7).fill({ portfolioChild: "Digital MCP Tool" }),
     ];
     expect(derivePortfolioChild(sample)).toHaveProperty("unresolved");
@@ -33,10 +33,10 @@ describe("derivePortfolioChild", () => {
 
   it("takes the Squad B shape, which is 55 of 60", () => {
     const sample = [
-      ...Array(55).fill({ portfolioChild: "Portfolio A" }),
+      ...Array(55).fill({ portfolioChild: "Portfolio Only Digital" }),
       ...Array(5).fill({ portfolioChild: "Other" }),
     ];
-    expect(derivePortfolioChild(sample)).toEqual({ value: "Portfolio A" });
+    expect(derivePortfolioChild(sample)).toEqual({ value: "Portfolio Only Digital" });
   });
 });
 
@@ -103,7 +103,7 @@ describe("what a refusal hands back", () => {
     expect((team as { unresolved: string }).unresolved).toContain("--team");
 
     const portfolio = derivePortfolioChild([
-      { portfolioChild: "Portfolio D" },
+      { portfolioChild: "Portfolio Loyalty" },
       { portfolioChild: "Digital MCP Tool" },
     ]);
     expect((portfolio as { unresolved: string }).unresolved).toContain("--portfolio");
@@ -139,7 +139,7 @@ describe("the Squad A portfolio split, 36 of 59", () => {
     // appears nowhere.
     const sample = [
       ...Array(36).fill({ portfolioChild: "Payments" }),
-      ...Array(20).fill({ portfolioChild: "Portfolio A" }),
+      ...Array(20).fill({ portfolioChild: "Portfolio Only Digital" }),
       ...Array(2).fill({ portfolioChild: "Portfolio MCP Tool" }),
       ...Array(1).fill({ portfolioChild: "Portfolio Ancillary" }),
     ];

@@ -1204,10 +1204,10 @@ private actor RunSpy {
 /// host, and the inbox — which named no host — followed it to a GitHub the
 /// person was not asking about. It read as "my pull requests vanished".
 @Test func namesTheHostSoGhsDefaultCannotMoveTheAnswer() {
-    let args = inboxArguments(login: "someone", host: "git.example.com")
+    let args = inboxArguments(login: "someone", host: "example.ghe.com")
 
     #expect(args.contains("--hostname"))
-    #expect(args.contains("git.example.com"))
+    #expect(args.contains("example.ghe.com"))
     // Before `-f`, because `gh` reads flags for itself and `-f` belongs to the
     // graphql subcommand's payload.
     let hostAt = try! #require(args.firstIndex(of: "--hostname"))
@@ -1216,7 +1216,7 @@ private actor RunSpy {
 }
 
 @Test func asksTheUserEndpointOnTheSameHost() {
-    #expect(userArguments(host: "git.example.com") == ["api", "user", "--hostname", "git.example.com"])
+    #expect(userArguments(host: "example.ghe.com") == ["api", "user", "--hostname", "example.ghe.com"])
 }
 
 /// One host needs no decision, and naming it would be ceremony. `nil` is how
@@ -1230,8 +1230,8 @@ private actor RunSpy {
 
 @Test func readsEveryHostGhSaysItCanReach() {
     let output = """
-    git.example.com
-      ✓ Logged in to git.example.com account ACME12345 (keyring)
+    example.ghe.com
+      ✓ Logged in to example.ghe.com account ACME12345 (keyring)
       - Active account: true
       - Token scopes: 'gist', 'read:org', 'repo'
 
@@ -1240,7 +1240,7 @@ private actor RunSpy {
       - Active account: true
     """
 
-    #expect(parseHosts(output) == ["git.example.com", "github.com"])
+    #expect(parseHosts(output) == ["example.ghe.com", "github.com"])
 }
 
 /// Everything `gh` prints about an account is indented under its host, and a

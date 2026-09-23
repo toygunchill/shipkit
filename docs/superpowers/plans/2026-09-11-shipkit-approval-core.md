@@ -75,7 +75,7 @@ import { canonical, fingerprint, type Situation } from "../../src/approval/finge
 
 const BASE: Situation = {
   repo: "/Users/x/example-app",
-  branch: "bugfix/squadb/31087-invoice",
+  branch: "bugfix/squad/31087-invoice",
   base: "release/3.76.0",
   head: "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
   warnings: [
@@ -248,7 +248,7 @@ The four situations, chosen so the Swift side exercises the parts most likely to
     "name": "no warnings",
     "situation": {
       "repo": "/Users/x/example-app",
-      "branch": "bugfix/squadb/31087-invoice",
+      "branch": "bugfix/squad/31087-invoice",
       "base": "develop",
       "head": "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
       "warnings": []
@@ -259,7 +259,7 @@ The four situations, chosen so the Swift side exercises the parts most likely to
     "name": "two warnings",
     "situation": {
       "repo": "/Users/x/example-app",
-      "branch": "bugfix/squadb/31087-invoice",
+      "branch": "bugfix/squad/31087-invoice",
       "base": "release/3.76.0",
       "head": "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
       "warnings": [
@@ -348,7 +348,7 @@ const REQUEST: ApprovalRequest = {
   protocol: PROTOCOL_VERSION,
   fingerprint: FP,
   repo: "/Users/x/example-app",
-  branch: "bugfix/squadb/31087-invoice",
+  branch: "bugfix/squad/31087-invoice",
   base: "release/3.76.0",
   head: "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
   title: "fix(invoice): default citizenship from passenger info",
@@ -930,7 +930,7 @@ const REQUEST: ApprovalRequest = {
   protocol: PROTOCOL_VERSION,
   fingerprint: FP,
   repo: "/Users/x/example-app",
-  branch: "bugfix/squadb/31087-invoice",
+  branch: "bugfix/squad/31087-invoice",
   base: "release/3.76.0",
   head: "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
   title: "fix(invoice): default citizenship",

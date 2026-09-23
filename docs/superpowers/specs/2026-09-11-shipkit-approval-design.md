@@ -94,7 +94,7 @@ Request:
   "protocol": 1,
   "fingerprint": "8f2c…",
   "repo": "/Users/x/example-app",
-  "branch": "bugfix/squadb/31087-invoice",
+  "branch": "bugfix/squad/31087-invoice",
   "base": "release/3.76.0",
   "head": "a44dcf5d9f8a0c59fb282d667cfab5e1e809d6bd",
   "title": "fix(invoice): default citizenship from passenger info",
@@ -248,7 +248,7 @@ The judgement has to be possible in a few seconds without opening a terminal.
 
 ```
 shipkit wants to push  ·  example-app
-bugfix/squadb/31087-invoice → release/3.76.0
+bugfix/squad/31087-invoice → release/3.76.0
 
 ⚠ Pushing will dismiss 4 approvals on #881
 ⚠ Branch carries commits citing ABC-27975, not ABC-31087

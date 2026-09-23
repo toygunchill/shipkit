@@ -1616,7 +1616,7 @@ The mark appears in the menu bar with no pending request. Then, from the reposit
 node --input-type=module -e '
 const { requestApproval } = await import("./dist/approval/client.js");
 const { fingerprint } = await import("./dist/approval/fingerprint.js");
-const situation = { repo:"/Users/x/example-app", branch:"bugfix/squadb/31087-invoice",
+const situation = { repo:"/Users/x/example-app", branch:"bugfix/squad/31087-invoice",
   base:"release/3.76.0", head:"a".repeat(40), title:"fix(invoice): default citizenship",
   commitMessage:"fix(invoice): default citizenship",
   warnings:[

@@ -522,7 +522,7 @@ describe("branch-pattern", () => {
   it("accepts a branch matching the configured pattern", () => {
     const result = validate({
       title: TITLE, body: goodBody, config,
-      branch: "bugfix/squadb/31087-invoice-default-citizenship",
+      branch: "bugfix/squad/31087-invoice-default-citizenship",
     });
     expect(result.findings.map((f) => f.rule)).not.toContain("branch-pattern");
   });
@@ -530,7 +530,7 @@ describe("branch-pattern", () => {
   it("reports a branch that does not match", () => {
     const result = validate({
       title: TITLE, body: goodBody, config,
-      branch: "bugfix/squadb/31087-invoice-default-citizenship-3.75",
+      branch: "bugfix/squad/31087-invoice-default-citizenship-3.75",
     });
     expect(result.findings.map((f) => f.rule)).toContain("branch-pattern");
   });
@@ -663,7 +663,7 @@ import { assembleBrief } from "../../src/brief/assemble.js";
 
 const config = loadConfig("tests/fixtures/valid.shipkit.yml");
 const repo = {
-  branch: "bugfix/squadb/31087-invoice-default-citizenship",
+  branch: "bugfix/squad/31087-invoice-default-citizenship",
   changedFiles: ["Sources/Scenes/Payment/Invoice/PaymentAddInvoiceViewModel.swift"],
   diffstat: " 1 file changed, 17 insertions(+), 2 deletions(-)",
   commits: ["fix(invoice): default citizenship from passenger info"],
@@ -902,7 +902,7 @@ describe("shipkit check with branch and issue", () => {
       "check", "--title", "[ABC-1] fix(x): y",
       "--body-file", "tests/fixtures/complete-body.md",
       "--config", CONFIG,
-      "--branch", "bugfix/squadb/1-ok",
+      "--branch", "bugfix/squad/1-ok",
     ]);
     expect(result.status).toBe(0);
   });

@@ -231,7 +231,7 @@ import { preflight } from "../../src/preflight/checks.js";
 
 const config = loadConfig("tests/fixtures/valid.shipkit.yml");
 const base = {
-  branch: "bugfix/squadb/31087-invoice",
+  branch: "bugfix/squad/31087-invoice",
   base: "develop",
   commits: ["fix(invoice): default citizenship"],
   ticketKey: "ABC-31087",

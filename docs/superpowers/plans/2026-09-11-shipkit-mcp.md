@@ -1733,7 +1733,7 @@ function scratch(): { repo: string; remote: string } {
   git(["commit", "-m", "init"], repo);
   git(["push", "--set-upstream", "origin", "develop"], repo);
 
-  git(["checkout", "-b", "bugfix/squadb/1-invoice"], repo);
+  git(["checkout", "-b", "bugfix/squad/1-invoice"], repo);
   writeFileSync(join(repo, "app.ts"), "export const a = 2;\n", "utf8");
 
   return { repo, remote };
@@ -1803,10 +1803,10 @@ describe("runSubmit end to end", () => {
     // The push reached the remote, not just the local ref.
     const remoteBranches = execFileSync(
       "git",
-      ["ls-remote", "--heads", "origin", "bugfix/squadb/1-invoice"],
+      ["ls-remote", "--heads", "origin", "bugfix/squad/1-invoice"],
       { cwd: repo, encoding: "utf8" },
     );
-    expect(remoteBranches).toContain("bugfix/squadb/1-invoice");
+    expect(remoteBranches).toContain("bugfix/squad/1-invoice");
 
     // And the body that reached the forge is the one the config describes.
     expect((opened.input as { body: string }).body).toContain("## What to Test");

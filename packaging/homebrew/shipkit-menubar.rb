@@ -15,7 +15,7 @@ class ShipkitMenubar < Formula
   desc "Menu-bar approval and review surface for shipkit"
   homepage "https://github.com/toygunchill/shipkit"
   url "https://github.com/toygunchill/shipkit.git",
-      tag:      "v0.1.4",
+      tag:      "v0.1.5",
       revision: "04ddcbc08ca8b76d847f9b80d2eff3cf5b0fa437"
   license "MIT"
   head "https://github.com/toygunchill/shipkit.git", branch: "main"

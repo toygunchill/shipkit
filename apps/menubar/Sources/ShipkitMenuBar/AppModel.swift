@@ -67,6 +67,84 @@ final class AppModel: ObservableObject {
     /// each row awaits its own bytes and nothing else depends on its state.
     let avatars = AvatarStore.live()
     private var listener: Listener?
+
+    /// Whether an agent is attached, and what to say when one is not.
+    ///
+    /// The Review button either hands work to something real or explains that
+    /// there is nothing to hand it to. It never does neither silently: a button
+    /// that appears to work and does not is worse than one that refuses.
+    @Published private(set) var agentAttached: Bool = false
+    @Published var reviewRequestNotice: ReviewRequestNotice?
+
+    struct ReviewRequestNotice: Identifiable, Equatable {
+        let id = UUID()
+        let title: String
+        let detail: String
+        /// The command to run when no agent is attached. `nil` once one is.
+        let command: String?
+    }
+
+    /// Asks for a review of this pull request.
+    ///
+    /// The request is written whether or not an agent is attached, because the
+    /// person's intent is the same either way and a terminal started a moment
+    /// later will find it. What changes is only what they are told.
+    func requestReview(of pullRequest: InboxPullRequest) {
+        let slug = pullRequest.repository
+        let number = inboxPullRequestNumber(pullRequest.url) ?? 0
+        guard number > 0 else {
+            reviewRequestNotice = ReviewRequestNotice(
+                title: "Could not tell which pull request that is",
+                detail: "Its URL does not end in a number: \(pullRequest.url)",
+                command: nil
+            )
+            return
+        }
+
+        let requested = RequestedReview(
+            repository: slug,
+            number: number,
+            title: pullRequest.title,
+            url: pullRequest.url
+        )
+        do {
+            try RequestedReviewStore.write(requested)
+        } catch {
+            reviewRequestNotice = ReviewRequestNotice(
+                title: "Could not leave the request",
+                detail: error.localizedDescription,
+                command: nil
+            )
+            return
+        }
+
+        if agentAttached {
+            reviewRequestNotice = ReviewRequestNotice(
+                title: "Asked for a review of #\(number)",
+                // Said plainly. MCP is request/response, so the menu bar cannot
+                // interrupt an agent mid-thought; the work starts when the agent
+                // next does something. Claiming otherwise would be the one thing
+                // this button must not do.
+                detail: "Your agent will pick it up on its next turn.",
+                command: nil
+            )
+        } else {
+            reviewRequestNotice = ReviewRequestNotice(
+                title: "No agent is attached",
+                detail: "Nothing is running that can review this. Start one, then run:",
+                command: RequestedReviewStore.command(repository: slug, number: number)
+            )
+        }
+    }
+
+    /// Opens Terminal on the command, so the fallback is one press rather than a
+    /// copy-and-paste.
+    func openTerminal(running command: String) {
+        let script = "tell application \"Terminal\"\nactivate\ndo script \"\(command)\"\nend tell"
+        guard let apple = NSAppleScript(source: script) else { return }
+        var error: NSDictionary?
+        apple.executeAndReturnError(&error)
+    }
     private var reArmTask: Task<Void, Never>?
     private var inboxTask: Task<Void, Never>?
     private var inboxTimer: Task<Void, Never>?
@@ -137,6 +215,18 @@ final class AppModel: ObservableObject {
                 try await listener.start()
             } catch {
                 await MainActor.run { self?.listenerError = "\(error)" }
+            }
+        }
+        // Presence is polled rather than published from the listener, because the
+        // thing that changes it is a socket closing — there is no notification to
+        // subscribe to, and a poll this cheap (reading one actor's dictionary) is
+        // simpler than inventing one. A second's lag is invisible: the question is
+        // only asked when a menu is already open.
+        Task { [weak self] in
+            while !Task.isCancelled {
+                let attached = await listener.presence.isAttached
+                await MainActor.run { self?.agentAttached = attached }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
         }
         // NOT refreshTokenStatus() here: it reads the keychain synchronously,

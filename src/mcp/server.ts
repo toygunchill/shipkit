@@ -189,5 +189,16 @@ export function createServer(deps: ToolDeps): McpServer {
 }
 
 export async function serveStdio(): Promise<void> {
+  // Announce this agent to the menu bar, if there is one. The connection lives as long as
+  // this process, which lives as long as the agent hosting it, so it says "an agent is
+  // here" for exactly the right interval. A missing or stopped application resolves to a
+  // no-op: the companion is optional and serving must not depend on it.
+  const { attachAgent } = await import("../approval/attach.js");
+  const attachment = await attachAgent(process.env.SHIPKIT_AGENT ?? "agent");
+  const detach = (): void => attachment.detach();
+  process.once("exit", detach);
+  process.once("SIGINT", detach);
+  process.once("SIGTERM", detach);
+
   await createServer(realToolDeps()).connect(new StdioServerTransport());
 }

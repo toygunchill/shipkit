@@ -47,14 +47,18 @@ struct InboxPane: View {
                 if bucket == .myPullRequests {
                     AuthoredList(
                         pullRequests: model.inbox?.mine ?? [],
-                        avatars: model.avatars
-                    ) { route = .inbox }
+                        avatars: model.avatars,
+                        back: { route = .inbox },
+                        model: model
+                    )
                 } else {
                     InboxList(
                         bucket: bucket,
                         pullRequests: model.inbox?.list(bucket) ?? [],
-                        avatars: model.avatars
-                    ) { route = .inbox }
+                        avatars: model.avatars,
+                        back: { route = .inbox },
+                        model: model
+                    )
                 }
             case .token:
                 SettingsPane(model: model) { route = .inbox }
@@ -181,6 +185,26 @@ struct InboxPane: View {
         }
         .padding(18)
         .frame(width: 380)
+        // Shown rather than the button silently doing nothing. Tracking whether
+        // an agent is attached exists so this can tell the truth about what just
+        // happened, including when the answer is "nothing could".
+        .alert(item: $model.reviewRequestNotice) { notice in
+            if let command = notice.command {
+                return Alert(
+                    title: Text(notice.title),
+                    message: Text("\(notice.detail)\n\n\(command)"),
+                    primaryButton: .default(Text("Open Terminal")) {
+                        model.openTerminal(running: command)
+                    },
+                    secondaryButton: .cancel(Text("Not now"))
+                )
+            }
+            return Alert(
+                title: Text(notice.title),
+                message: Text(notice.detail),
+                dismissButton: .default(Text("OK"))
+            )
+        }
     }
 }
 
@@ -233,6 +257,7 @@ private struct InboxList: View {
     let pullRequests: [InboxPullRequest]
     let avatars: AvatarStore
     let back: () -> Void
+    @ObservedObject var model: AppModel
 
     var body: some View {
         let preview = inboxListPreview(pullRequests)
@@ -253,7 +278,11 @@ private struct InboxList: View {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(preview.shown) { pullRequest in
                     if pullRequest.id != preview.shown.first?.id { Divider() }
-                    PullRequestRow(pullRequest: pullRequest, avatars: avatars)
+                    PullRequestRow(
+                        pullRequest: pullRequest,
+                        avatars: avatars,
+                        onReview: { model.requestReview(of: pullRequest) }
+                    )
                 }
             }
 
@@ -276,6 +305,7 @@ private struct AuthoredList: View {
     let pullRequests: [AuthoredPullRequest]
     let avatars: AvatarStore
     let back: () -> Void
+    @ObservedObject var model: AppModel
 
     var body: some View {
         let preview = inboxListPreview(pullRequests)
@@ -306,7 +336,8 @@ private struct AuthoredList: View {
                         pullRequest: entry.pullRequest,
                         news: entry.news,
                         showsAuthor: false,
-                        avatars: avatars
+                        avatars: avatars,
+                        onReview: { model.requestReview(of: entry.pullRequest) }
                     )
                     .opacity(entry.news.hasNews ? 1 : 0.55)
                 }
@@ -333,6 +364,9 @@ private struct PullRequestRow: View {
     /// `AuthoredList` for why they are not, there.
     var showsAuthor: Bool = true
     let avatars: AvatarStore
+    /// Asks for a review of this pull request. Absent where there is nothing to
+    /// ask — the row then behaves exactly as it did before this existed.
+    var onReview: (() -> Void)? = nil
 
     var body: some View {
         Button {
@@ -378,6 +412,17 @@ private struct PullRequestRow: View {
                 // an unestablished number is shown as absent.
                 if let mark = pullRequest.standing.mark {
                     StandingChip(mark: mark, prominent: showsAuthor == false)
+                }
+                if let onReview {
+                    // Its own button, not the row's: the row opens the pull
+                    // request in a browser, and asking for a review is a
+                    // different thing that must not be reachable by aiming at
+                    // the title and missing.
+                    Button(action: onReview) {
+                        Image(systemName: "text.magnifyingglass")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Ask your agent to review this")
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

@@ -8,7 +8,6 @@ const VIEW = JSON.stringify({
   author: { login: "someone" },
   baseRefName: "develop",
   headRefOid: "b".repeat(40),
-  viewerDidAuthor: false,
 });
 
 const DIFF = `diff --git a/src/a.ts b/src/a.ts
@@ -66,14 +65,17 @@ describe("gathering what a review needs", () => {
     expect(calls[0]?.join(" ")).toContain("--repo acme/widget");
   });
 
+  // gh pr view has no "is this mine" field, so ownership is the author compared against
+  // whoever gh is authenticated as.
   it("knows whether the pull request is the caller's own", () => {
-    const mine = (viewerDidAuthor: boolean) => (args: string[]) =>
-      args[1] === "view"
-        ? JSON.stringify({ ...JSON.parse(VIEW), viewerDidAuthor })
-        : DIFF;
+    expect(gather("a", "b", 1, gh().run, undefined, "someone").pull.mine).toBe(true);
+    expect(gather("a", "b", 1, gh().run, undefined, "someone-else").pull.mine).toBe(false);
+  });
 
-    expect(gather("a", "b", 1, mine(true)).pull.mine).toBe(true);
-    expect(gather("a", "b", 1, mine(false)).pull.mine).toBe(false);
+  // Not knowing must produce the more cautious wording rather than claiming the pull
+  // request is yours.
+  it("does not claim a pull request is yours when it cannot tell", () => {
+    expect(gather("a", "b", 1, gh().run).pull.mine).toBe(false);
   });
 
   // gh printing something that is not JSON means the read failed in a way the caller has to

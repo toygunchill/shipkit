@@ -1094,6 +1094,101 @@ program
     }
   });
 
+/**
+ * Reviewing a pull request that is already open.
+ *
+ * Kept apart from `review`, which is about a local change before it is submitted. These
+ * take different input, answer a different question, and only one of them can write
+ * something other people see — folding them together would hide that difference behind a
+ * flag.
+ *
+ * Two halves, as `brief` and `submit` are: shipkit states what it knows and what it will
+ * accept, the agent answers, shipkit takes the answer or says why it will not.
+ */
+const prReview = program
+  .command("pr-review")
+  .description("Review a pull request that is already open, against the rules the repository carries");
+
+needsConventions(prReview.command("brief"))
+  .description("Emit the brief an agent fills in to review a pull request")
+  .requiredOption("--pr <number>", "the pull request to review")
+  .requiredOption("--repo-slug <slug>", "owner/name, or host/owner/name for an enterprise forge")
+  .option("--repo <path>", "the repository whose rules to judge against", ".")
+  .option("--config <path>", "the conventions file; found automatically when omitted")
+  .option("--rules <path...>", "readiness ruleset(s) to apply, replacing the config's")
+  .action(async (options: { pr: string; repoSlug: string; repo: string; config?: string; rules?: string[] }) => {
+    const number = Number(options.pr);
+    if (!Number.isInteger(number) || number < 1) {
+      console.error(`Invalid --pr "${options.pr}": expected a pull request number`);
+      process.exitCode = 2;
+      return;
+    }
+
+    const root = resolve(options.repo);
+    const configFile = configPath({ repo: root, config: options.config });
+    const rules = readinessRules(configFile, loadConfig(configFile), options.rules) ?? [];
+    const { briefFor } = await import("./prreview/run.js");
+
+    console.log(JSON.stringify(briefFor(options.repoSlug, number, rules, execRunner("gh", root)), null, 2));
+  });
+
+needsConventions(prReview.command("post"))
+  .description("Check the agent's remarks and publish them as one review")
+  .requiredOption("--pr <number>", "the pull request to review")
+  .requiredOption("--repo-slug <slug>", "owner/name, or host/owner/name for an enterprise forge")
+  .requiredOption("--remarks <path>", "the agent's remarks")
+  .option("--repo <path>", "the repository whose rules to judge against", ".")
+  .option("--config <path>", "the conventions file; found automatically when omitted")
+  .option("--rules <path...>", "readiness ruleset(s) to apply, replacing the config's")
+  .option("--dry-run", "print exactly what would be published, and publish nothing")
+  .action(
+    async (options: {
+      pr: string;
+      repoSlug: string;
+      remarks: string;
+      repo: string;
+      config?: string;
+      rules?: string[];
+      dryRun?: boolean;
+    }) => {
+      const number = Number(options.pr);
+      if (!Number.isInteger(number) || number < 1) {
+        console.error(`Invalid --pr "${options.pr}": expected a pull request number`);
+        process.exitCode = 2;
+        return;
+      }
+
+      const root = resolve(options.repo);
+      const configFile = configPath({ repo: root, config: options.config });
+      const rules = readinessRules(configFile, loadConfig(configFile), options.rules) ?? [];
+      const gh = execRunner("gh", root);
+      const { prepare, publish, publishNotice, readRemarks } = await import("./prreview/run.js");
+
+      const prepared = prepare(options.repoSlug, number, readRemarks(options.remarks), rules, gh);
+
+      // Refusals are printed, never swallowed. An agent that keeps citing rules that do not
+      // exist is something the person reviewing should find out about.
+      for (const { remark, reason } of prepared.validation.rejected) {
+        console.error(`refused (${remark.ruleId || "no rule"}): ${reason}`);
+      }
+
+      if (prepared.validation.accepted.length === 0) {
+        console.error("Nothing to publish: no remark survived checking.");
+        process.exitCode = 1;
+        return;
+      }
+
+      console.error(publishNotice(prepared));
+      const payload = publish(prepared, gh, options.dryRun === true);
+
+      if (options.dryRun === true) {
+        console.log(JSON.stringify(payload, null, 2));
+      } else {
+        console.error(`Published ${payload.comments.length} comment(s).`);
+      }
+    },
+  );
+
 program
   .command("mcp")
   .description("Serve the shipkit tools to an agent over stdio")

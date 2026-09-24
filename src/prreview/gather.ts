@@ -36,8 +36,6 @@ type ViewJson = {
   author: { login: string } | null;
   baseRefName: string;
   headRefOid: string;
-  isCrossRepository?: boolean;
-  viewerDidAuthor?: boolean;
 };
 
 function hostArgs(host: string | undefined): string[] {
@@ -65,8 +63,13 @@ export function gather(
   number: number,
   gh: GhRunner,
   host?: string,
+  viewer?: string,
 ): Gathered {
-  const fields = "number,title,body,author,baseRefName,headRefOid,viewerDidAuthor";
+  // `gh pr view --json` has no "is this mine" field — only `author`. Whose it is therefore
+  // takes a second read, and it is worth the call: the publish notice says whose pull
+  // request is about to be commented on, and getting that wrong is exactly the mistake the
+  // notice exists to catch.
+  const fields = "number,title,body,author,baseRefName,headRefOid";
   const raw = gh([
     "pr",
     "view",
@@ -96,7 +99,7 @@ export function gather(
       baseRef: view.baseRefName,
       headSha: view.headRefOid,
       host,
-      mine: view.viewerDidAuthor === true,
+      mine: viewer !== undefined && view.author?.login === viewer,
     },
     diff,
     anchors: commentableAnchors(diff),
@@ -131,6 +134,22 @@ export function readRuleFile(
   } catch {
     // Not every repository has every file, and a missing ruleset is a reported condition
     // rather than a crash — the caller decides whether it can proceed without one.
+    return undefined;
+  }
+}
+
+/**
+ * Who `gh` is authenticated as on this host, or undefined if it cannot say.
+ *
+ * Only used to decide whether a pull request is the caller's own, which changes what the
+ * publish notice says and nothing else. A failure here must therefore not stop a review:
+ * not knowing produces the more cautious wording, which is the right way to be wrong.
+ */
+export function currentLogin(gh: GhRunner, host?: string): string | undefined {
+  try {
+    const login = gh(["api", ...hostArgs(host), "user", "--jq", ".login"]).trim();
+    return login.length > 0 ? login : undefined;
+  } catch {
     return undefined;
   }
 }

@@ -87,6 +87,23 @@ For each hunk header `@@ -a,b +c,d @@`:
 The anchor set is keyed by `path`, and carries the head commit id, which the review payload
 needs.
 
+### Where the rules are read from
+
+From the reviewer's own checkout, via the config discovery that every other command uses,
+and not from the pull request's base.
+
+Reading them from the base was the first design, on the reasoning that a change should be
+judged against the rules it will merge into. In practice it buys very little and costs a
+lot: the contents API returns base64 that has to be decoded and written somewhere before
+the existing loader can read it, and the answer differs from the local copy only when the
+ruleset itself changed inside the pull request's lifetime — which is rare, and visible in
+the diff when it happens.
+
+What the reviewer already has is the repository, and `--rules` is already the way to point
+at a different ruleset. So the simple thing is also the one that composes with what exists.
+If judging against the base turns out to matter, `readRuleFile` in `gather.ts` is the seam
+it would go through.
+
 ## The flow
 
 ```

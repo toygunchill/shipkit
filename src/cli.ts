@@ -1141,6 +1141,9 @@ needsConventions(prReview.command("post"))
   .option("--config <path>", "the conventions file; found automatically when omitted")
   .option("--rules <path...>", "readiness ruleset(s) to apply, replacing the config's")
   .option("--dry-run", "print exactly what would be published, and publish nothing")
+  .option("--yes", "publish without opening the editor")
+  .option("--port <n>", "port to serve the editor on; the default asks the kernel for a free one")
+  .option("--no-open", "print the editor's URL instead of opening a browser")
   .action(
     async (options: {
       pr: string;
@@ -1150,6 +1153,9 @@ needsConventions(prReview.command("post"))
       config?: string;
       rules?: string[];
       dryRun?: boolean;
+      yes?: boolean;
+      port?: string;
+      open: boolean;
     }) => {
       const number = Number(options.pr);
       if (!Number.isInteger(number) || number < 1) {
@@ -1164,7 +1170,7 @@ needsConventions(prReview.command("post"))
       const gh = execRunner("gh", root);
       const { prepare, publish, publishNotice, readRemarks } = await import("./prreview/run.js");
 
-      const prepared = prepare(options.repoSlug, number, readRemarks(options.remarks), rules, gh);
+      let prepared = prepare(options.repoSlug, number, readRemarks(options.remarks), rules, gh);
 
       // Refusals are printed, never swallowed. An agent that keeps citing rules that do not
       // exist is something the person reviewing should find out about.
@@ -1176,6 +1182,39 @@ needsConventions(prReview.command("post"))
         console.error("Nothing to publish: no remark survived checking.");
         process.exitCode = 1;
         return;
+      }
+
+      // The editor is the human gate, and it is the default. Publishing goes out the moment
+      // it is answered and a notification cannot be withdrawn, so skipping the gate has to
+      // be asked for in as many words — `--yes`, and nothing else.
+      //
+      // `--dry-run` deliberately does not skip it. Seeing the page, ticking through it, and
+      // getting the payload printed instead of posted is the combination a person wants
+      // before trusting this with a colleague's pull request, and an earlier version made
+      // it unreachable by folding the two flags together.
+      if (options.yes !== true) {
+        const { runEditor } = await import("./prreview/editor.js");
+        const { gather } = await import("./prreview/gather.js");
+        const { parseSlug } = await import("./prreview/run.js");
+        const { owner, repo, host } = parseSlug(options.repoSlug);
+        const gathered = gather(owner, repo, number, gh, host);
+
+        const outcome = await runEditor({
+          prepared,
+          title: gathered.pull.title,
+          diff: gathered.diff,
+          port: options.port === undefined ? 0 : Number(options.port),
+          open: options.open === false ? undefined : (url: string) => void execFile("open", [url]),
+          out: (line: string) => console.error(line),
+        });
+
+        if (outcome.answered === "nothing") {
+          console.error("Nothing published.");
+          return;
+        }
+        // What the person left, not what the agent wrote: bodies they rewrote, notes they
+        // added, and only the remarks they ticked.
+        prepared = { ...prepared, validation: { ...prepared.validation, accepted: outcome.remarks } };
       }
 
       console.error(publishNotice(prepared));

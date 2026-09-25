@@ -166,6 +166,8 @@ struct InboxPane: View {
             Button("Add/Edit Jira Token") { route = .token }
                 .buttonStyle(.link)
 
+            ReviewNoticeBar(model: model)
+
             // Kept on the main screen deliberately. It used to live on the
             // only screen this panel had; now that the token is behind a
             // navigation, a socket that failed to start would be invisible
@@ -185,25 +187,50 @@ struct InboxPane: View {
         }
         .padding(18)
         .frame(width: 380)
-        // Shown rather than the button silently doing nothing. Tracking whether
-        // an agent is attached exists so this can tell the truth about what just
-        // happened, including when the answer is "nothing could".
-        .alert(item: $model.reviewRequestNotice) { notice in
-            if let command = notice.command {
-                return Alert(
-                    title: Text(notice.title),
-                    message: Text("\(notice.detail)\n\n\(command)"),
-                    primaryButton: .default(Text("Open Terminal")) {
-                        model.openTerminal(running: command)
-                    },
-                    secondaryButton: .cancel(Text("Not now"))
-                )
+    }
+}
+
+/// What happened when the Review button was pressed, wherever it was pressed.
+///
+/// A view rather than an alert, and shown on every screen that carries the
+/// button rather than only the first. A SwiftUI alert never presents from a
+/// `MenuBarExtra(.window)` popover — the window is not key, so there is nothing
+/// for it to attach to — and the first version used one: the button wrote the
+/// request and told the person nothing, which is the exact failure the notice
+/// exists to prevent. The second version put it on the main pane only, which
+/// was no better, because the button is pressed from a list.
+private struct ReviewNoticeBar: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        if let notice = model.reviewRequestNotice {
+            Divider()
+            HStack(alignment: .top, spacing: 6) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(notice.title).font(.caption).bold()
+                    Text(notice.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let command = notice.command {
+                        Text(command)
+                            .font(.system(.caption2, design: .monospaced))
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Open Terminal") { model.openTerminal(running: command) }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                    }
+                }
+                Spacer(minLength: 4)
+                Button {
+                    model.reviewRequestNotice = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .help("Dismiss")
             }
-            return Alert(
-                title: Text(notice.title),
-                message: Text(notice.detail),
-                dismissButton: .default(Text("OK"))
-            )
         }
     }
 }
@@ -275,7 +302,11 @@ private struct InboxList: View {
 
             Text(bucket.title).font(.headline)
 
+            ReviewNoticeBar(model: model)
+
             VStack(alignment: .leading, spacing: 0) {
+                // Where the button is, so pressing it produces something visible
+                // without navigating anywhere.
                 ForEach(preview.shown) { pullRequest in
                     if pullRequest.id != preview.shown.first?.id { Divider() }
                     PullRequestRow(
@@ -323,7 +354,11 @@ private struct AuthoredList: View {
 
             Text(InboxBucket.myPullRequests.title).font(.headline)
 
+            ReviewNoticeBar(model: model)
+
             VStack(alignment: .leading, spacing: 0) {
+                // Where the button is, so pressing it produces something visible
+                // without navigating anywhere.
                 ForEach(preview.shown) { entry in
                     if entry.id != preview.shown.first?.id { Divider() }
                     // `showsAuthor: false`. Every pull request in this list is

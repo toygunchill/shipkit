@@ -46,12 +46,13 @@ async function connect(seen: SubmitOptions[], calls: string[] = []) {
 }
 
 describe("the MCP server", () => {
-  it("offers exactly the three tools", async () => {
+  it("offers exactly the four tools", async () => {
     const client = await connect([]);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       "shipkit_apply",
       "shipkit_brief",
+      "shipkit_pending_review",
       "shipkit_preview",
     ]);
   });
@@ -77,13 +78,26 @@ describe("the MCP server", () => {
     expect(brief?.description ?? "").toContain("Ask");
   });
 
-  it("requires repo and base on every tool", async () => {
+  // Every tool that acts on a repository, which is all of them but one. A
+  // relative repo resolving against the long-lived server's own cwd is the
+  // failure this guards; `shipkit_pending_review` names no repository at all —
+  // it reads a request the menu bar already wrote, which carries its own — so
+  // there is nothing for it to resolve wrongly.
+  it("requires repo and base on every tool that works on a repository", async () => {
     const client = await connect([]);
     const { tools } = await client.listTools();
-    for (const tool of tools) {
+    for (const tool of tools.filter((t) => t.name !== "shipkit_pending_review")) {
       expect(tool.inputSchema.required).toContain("repo");
       expect(tool.inputSchema.required).toContain("base");
     }
+  });
+
+  it("asks nothing of the caller to report a waiting review", async () => {
+    const client = await connect([]);
+    const { tools } = await client.listTools();
+    const pending = tools.find((t) => t.name === "shipkit_pending_review");
+
+    expect(pending?.inputSchema.required ?? []).toEqual([]);
   });
 
   // A relative repo (e.g. ".") resolves against the server process's own cwd, not the

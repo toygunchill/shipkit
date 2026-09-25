@@ -1111,17 +1111,38 @@ const prReview = program
 
 needsConventions(prReview.command("brief"))
   .description("Emit the brief an agent fills in to review a pull request")
-  .requiredOption("--pr <number>", "the pull request to review")
-  .requiredOption("--repo-slug <slug>", "owner/name, or host/owner/name for an enterprise forge")
+  .option("--pr <number>", "the pull request to review; taken from the menu bar's request when omitted")
+  .option("--repo-slug <slug>", "owner/name, or host/owner/name for an enterprise forge")
   .option("--repo <path>", "the repository whose rules to judge against", ".")
   .option("--config <path>", "the conventions file; found automatically when omitted")
   .option("--rules <path...>", "readiness ruleset(s) to apply, replacing the config's")
-  .action(async (options: { pr: string; repoSlug: string; repo: string; config?: string; rules?: string[] }) => {
-    const number = Number(options.pr);
-    if (!Number.isInteger(number) || number < 1) {
-      console.error(`Invalid --pr "${options.pr}": expected a pull request number`);
+  .action(async (options: { pr?: string; repoSlug?: string; repo: string; config?: string; rules?: string[] }) => {
+    // With neither option, take the request the menu bar left. That is what its
+    // Review button produces, and it is the same file the terminal fallback it
+    // prints reads — so the two routes cannot answer differently.
+    const { readRequested, clearRequested } = await import("./prreview/requested.js");
+    const waiting = options.pr === undefined && options.repoSlug === undefined ? readRequested() : undefined;
+
+    const slug = options.repoSlug ?? waiting?.repository;
+    const number = Number(options.pr ?? waiting?.number);
+
+    if (slug === undefined) {
+      console.error(
+        "Nothing to review: no --pr/--repo-slug given and no request waiting from the menu bar.",
+      );
       process.exitCode = 2;
       return;
+    }
+    if (!Number.isInteger(number) || number < 1) {
+      console.error(`Invalid --pr "${options.pr ?? ""}": expected a pull request number`);
+      process.exitCode = 2;
+      return;
+    }
+    if (waiting !== undefined) {
+      console.error(`Reviewing ${waiting.repository}#${waiting.number} — ${waiting.title}`);
+      // Taken, so the same press is not answered twice and a request from
+      // yesterday is not acted on today.
+      clearRequested();
     }
 
     const root = resolve(options.repo);
@@ -1129,7 +1150,7 @@ needsConventions(prReview.command("brief"))
     const rules = readinessRules(configFile, loadConfig(configFile), options.rules) ?? [];
     const { briefFor } = await import("./prreview/run.js");
 
-    console.log(JSON.stringify(briefFor(options.repoSlug, number, rules, execRunner("gh", root)), null, 2));
+    console.log(JSON.stringify(briefFor(slug, number, rules, execRunner("gh", root)), null, 2));
   });
 
 needsConventions(prReview.command("post"))

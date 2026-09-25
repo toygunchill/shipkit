@@ -138,3 +138,25 @@ struct InboxPullRequestNumberTests {
         #expect(inboxPullRequestNumber("https://github.com/acme/widget/pull/-1") == nil)
     }
 }
+
+@Suite("Naming the repository a pull request lives in")
+struct InboxRepositorySlugTests {
+    @Test func githubNeedsNoHost() {
+        #expect(inboxRepositorySlug("https://github.com/acme/widget/pull/1") == "acme/widget")
+    }
+
+    // The bug this exists for: the inbox carries `owner/name` only, and on an
+    // enterprise forge that sends gh to whichever host it saw last.
+    @Test func anEnterpriseForgeKeepsItsHost() {
+        #expect(
+            inboxRepositorySlug("https://git.example.com/ACME/widget/pull/977")
+                == "git.example.com/ACME/widget"
+        )
+    }
+
+    @Test func itRefusesAUrlWithNoRepositoryInIt() {
+        #expect(inboxRepositorySlug("https://github.com/acme") == nil)
+        #expect(inboxRepositorySlug("not a url") == nil)
+        #expect(inboxRepositorySlug("") == nil)
+    }
+}

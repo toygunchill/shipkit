@@ -90,7 +90,10 @@ final class AppModel: ObservableObject {
     /// person's intent is the same either way and a terminal started a moment
     /// later will find it. What changes is only what they are told.
     func requestReview(of pullRequest: InboxPullRequest) {
-        let slug = pullRequest.repository
+        // From the URL, not from `pullRequest.repository`: the inbox carries
+        // `owner/name` with no host, and on an enterprise forge that would send
+        // `gh` to whichever host it saw last.
+        let slug = inboxRepositorySlug(pullRequest.url) ?? pullRequest.repository
         let number = inboxPullRequestNumber(pullRequest.url) ?? 0
         guard number > 0 else {
             reviewRequestNotice = ReviewRequestNotice(

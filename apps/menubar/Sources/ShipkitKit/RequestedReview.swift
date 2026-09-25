@@ -103,3 +103,20 @@ public func inboxPullRequestNumber(_ url: String) -> Int? {
     guard last.allSatisfy(\.isNumber) else { return nil }
     return number
 }
+
+/// The `--repo-slug` for a pull request URL: `owner/name`, or `host/owner/name`
+/// when it does not live on github.com.
+///
+/// Built from the URL rather than from the inbox's `repository` field, which
+/// carries only `owner/name`. On an enterprise forge that slug is not enough:
+/// `gh` would resolve it against whichever host it saw last, and a review read
+/// from — or posted to — the wrong forge is not a recoverable mistake.
+public func inboxRepositorySlug(_ url: String) -> String? {
+    guard let parsed = URL(string: url), let host = parsed.host else { return nil }
+    let parts = parsed.pathComponents.filter { $0 != "/" }
+    guard parts.count >= 2 else { return nil }
+    let owner = parts[0]
+    let name = parts[1]
+    guard !owner.isEmpty, !name.isEmpty else { return nil }
+    return host == "github.com" ? "\(owner)/\(name)" : "\(host)/\(owner)/\(name)"
+}

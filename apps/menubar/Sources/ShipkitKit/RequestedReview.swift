@@ -75,14 +75,6 @@ public enum RequestedReviewStore {
         try? FileManager.default.removeItem(at: url)
     }
 
-    /// What to run when no agent is attached.
-    ///
-    /// The command is built here rather than in the view so it can be tested,
-    /// and so the two paths — hand it to an agent, or tell the person how to
-    /// start one — cannot drift into asking for different things.
-    public static func command(repository: String, number: Int) -> String {
-        "shipkit pr-review brief --pr \(number) --repo-slug \(repository)"
-    }
 }
 
 /// The pull request number in a forge URL, or `nil` when there is not one.

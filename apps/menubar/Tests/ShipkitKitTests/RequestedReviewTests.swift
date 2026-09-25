@@ -87,23 +87,6 @@ struct RequestedReviewTests {
         #expect(RequestedReviewStore.read(from: at) == nil)
     }
 
-    // Built here rather than in the view, so the two paths — hand it to an agent,
-    // or tell the person how to start one — cannot drift into asking for
-    // different things.
-    @Test func theFallbackCommandNamesThePullRequestAndTheRepository() {
-        let command = RequestedReviewStore.command(repository: "acme/widget", number: 943)
-
-        #expect(command.contains("--pr 943"))
-        #expect(command.contains("--repo-slug acme/widget"))
-        #expect(command.hasPrefix("shipkit pr-review"))
-    }
-
-    @Test func anEnterpriseForgeKeepsItsHostInTheSlug() {
-        let command = RequestedReviewStore.command(repository: "git.example.com/acme/widget", number: 1)
-
-        #expect(command.contains("git.example.com/acme/widget"))
-    }
-
     @Test func theDefaultPathSitsBesideTheApplicationsOtherState() {
         let url = RequestedReviewStore.defaultURL(home: URL(fileURLWithPath: "/Users/someone"))
 

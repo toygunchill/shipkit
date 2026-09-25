@@ -212,12 +212,8 @@ private struct ReviewNoticeBar: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    if let command = notice.command {
-                        Text(command)
-                            .font(.system(.caption2, design: .monospaced))
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Button("Open Terminal") { model.openTerminal(running: command) }
+                    if notice.opensTerminal {
+                        Button("Open Terminal") { model.openTerminal() }
                             .buttonStyle(.link)
                             .font(.caption)
                     }

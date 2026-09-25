@@ -80,8 +80,11 @@ final class AppModel: ObservableObject {
         let id = UUID()
         let title: String
         let detail: String
-        /// The command to run when no agent is attached. `nil` once one is.
-        let command: String?
+        /// Whether to offer a terminal. Opened empty: shipkit is agent-agnostic
+        /// and cannot know whether the person's agent is started by `claude`,
+        /// `codex` or something else, so guessing a command would be worse than
+        /// offering the window and letting them type what they always type.
+        let opensTerminal: Bool
     }
 
     /// Asks for a review of this pull request.
@@ -99,7 +102,7 @@ final class AppModel: ObservableObject {
             reviewRequestNotice = ReviewRequestNotice(
                 title: "Could not tell which pull request that is",
                 detail: "Its URL does not end in a number: \(pullRequest.url)",
-                command: nil
+                opensTerminal: false
             )
             return
         }
@@ -116,7 +119,7 @@ final class AppModel: ObservableObject {
             reviewRequestNotice = ReviewRequestNotice(
                 title: "Could not leave the request",
                 detail: error.localizedDescription,
-                command: nil
+                opensTerminal: false
             )
             return
         }
@@ -124,26 +127,36 @@ final class AppModel: ObservableObject {
         if agentAttached {
             reviewRequestNotice = ReviewRequestNotice(
                 title: "Asked for a review of #\(number)",
-                // Said plainly. MCP is request/response, so the menu bar cannot
-                // interrupt an agent mid-thought; the work starts when the agent
-                // next does something. Claiming otherwise would be the one thing
-                // this button must not do.
-                detail: "Your agent will pick it up on its next turn.",
-                command: nil
+                // Said plainly, and it names the thing the person has to do.
+                // MCP is request/response: the menu bar cannot interrupt an
+                // agent mid-thought, so the request waits until the agent is
+                // asked for it. Saying only "it will be picked up" would leave
+                // a person waiting for something that never starts on its own.
+                detail: "Ask your agent to pick up the review — it cannot be told on its own.",
+                opensTerminal: false
             )
         } else {
             reviewRequestNotice = ReviewRequestNotice(
-                title: "No agent is attached",
-                detail: "Nothing is running that can review this. Start one, then run:",
-                command: RequestedReviewStore.command(repository: slug, number: number)
+                title: "No agent is running",
+                // What a person in this state actually needs is an agent, not a
+                // command. An earlier version offered `pr-review brief`, which
+                // prints the JSON an agent consumes — useless to read, and
+                // exactly the wrong thing to hand someone who has no agent.
+                detail: "Start your coding agent in a terminal — it attaches by itself — then ask it "
+                    + "to pick up the review. The request is saved until you do.",
+                opensTerminal: true
             )
         }
     }
 
-    /// Opens Terminal on the command, so the fallback is one press rather than a
-    /// copy-and-paste.
-    func openTerminal(running command: String) {
-        let script = "tell application \"Terminal\"\nactivate\ndo script \"\(command)\"\nend tell"
+    /// Opens a terminal window, with nothing typed into it.
+    ///
+    /// Empty on purpose. shipkit is agent-agnostic, so which command starts the
+    /// person's agent is not something this application knows — and running the
+    /// wrong one, or printing JSON at somebody who wanted an agent, is worse
+    /// than handing them the window they were going to open anyway.
+    func openTerminal() {
+        let script = "tell application \"Terminal\"\nactivate\ndo script \"\"\nend tell"
         guard let apple = NSAppleScript(source: script) else { return }
         var error: NSDictionary?
         apple.executeAndReturnError(&error)

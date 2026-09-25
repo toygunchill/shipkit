@@ -160,7 +160,8 @@ export function createServer(deps: ToolDeps): McpServer {
         "reviewed. Returns the pull request if one is waiting, and nothing if not. Changes " +
         "nothing except that the request is taken, so it is not answered twice. Call this " +
         "when the person says they asked for a review, or mentions the menu bar; the request " +
-        "cannot be pushed to you, so asking is the only way to find it.",
+        "cannot be pushed to you, so asking is the only way to find it. The reply says which " +
+        "checkout to point --repo at; ask the person where it is rather than guessing.",
       inputSchema: {},
     },
     async () => {
@@ -177,7 +178,17 @@ export function createServer(deps: ToolDeps): McpServer {
             text: JSON.stringify(
               {
                 ...waiting,
-                next: `shipkit pr-review brief --pr ${waiting.number} --repo-slug ${waiting.repository}`,
+                next: `shipkit pr-review brief --pr ${waiting.number} --repo-slug ${waiting.repository} --repo <your checkout of ${waiting.repository}>`,
+                // Spelled out because getting it wrong fails silently and badly.
+                // The rules are read from a local checkout, and `--repo` defaults
+                // to the working directory — so an agent standing somewhere else
+                // judges this pull request against whatever conventions happen to
+                // be there, and writes comments citing another project's rules.
+                repoMustPointAt:
+                  "your local checkout of " +
+                  waiting.repository +
+                  ". The rules are read from there, not from the pull request, and pointing " +
+                  "--repo at the wrong checkout produces remarks citing the wrong project's rules.",
               },
               null,
               2,

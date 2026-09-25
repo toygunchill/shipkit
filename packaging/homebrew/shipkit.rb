@@ -19,7 +19,7 @@ class Shipkit < Formula
   # `tag:` is what a person reads.
   url "https://github.com/toygunchill/shipkit.git",
       tag:      "v0.1.9",
-      revision: "eef4bb88e37251e3fc47004f3d7fe4405282f57d"
+      revision: "168e3f8aa04a5a9116e1306ca0bf94ab2865650e"
   license "MIT"
   head "https://github.com/toygunchill/shipkit.git", branch: "main"
 

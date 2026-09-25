@@ -1,9 +1,13 @@
 // Small, dependency-light helpers factored out of src/cli.ts so they can be unit-tested
 // directly. src/cli.ts itself runs `program.parse()` at import time and must not be
 // imported from tests.
-import { isAbsolute, join } from "node:path";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, isAbsolute, join } from "node:path";
 import { ConfigError } from "./config/load.js";
 import { discoverConfig, explainDiscovery } from "./config/discover.js";
+import { ruleFilesAtBase } from "./prreview/baserules.js";
+import { execRunner } from "./vcs/exec.js";
 import { fetchIssue, type Fetcher } from "./jira/client.js";
 import type { IssueFacts } from "./jira/types.js";
 import type { SubmitResult } from "./submit/run.js";
@@ -118,7 +122,14 @@ export function cliRemedy(result: SubmitResult, yesGiven: boolean): string | und
  * one product, and a config resolved differently by each is a difference nobody would
  * think to test for.
  */
-export function configPath(args: { repo: string; config?: string | undefined }): string {
+export function configPath(args: {
+  repo: string;
+  config?: string | undefined;
+  /** The branch this change targets, used only if the working tree carries no config. */
+  base?: string | undefined;
+  /** Told which branch the rules were borrowed from, so the caller can say so. */
+  onBorrow?: ((from: string) => void) | undefined;
+}): string {
   // "" is absent too — `??` alone would read it as an explicit path and fail open.
   if (args.config) return isAbsolute(args.config) ? args.config : join(args.repo, args.config);
 
@@ -132,8 +143,59 @@ export function configPath(args: { repo: string; config?: string | undefined }):
   // between them by filename order is exactly the dependency this removes.
   if (found.found === "several") throw new ConfigError(explainDiscovery(found, args.repo));
 
-  // Nothing found. The conventional name is returned rather than a refusal, so the failure
+  // Nothing in the working tree. Before giving up, the branch this change targets: a
+  // developer whose branch was cut before the rules landed has a checkout without them,
+  // which says nothing about whether the repository has any. The working tree is tried
+  // first and deliberately — a branch that is *changing* the rules must be judged by its
+  // own version, not by the one it is replacing.
+  if (args.base !== undefined && args.base.length > 0) {
+    const borrowed = borrowRulesFromBase(args.repo, args.base, args.onBorrow);
+    if (borrowed !== undefined) return borrowed;
+  }
+
+  // Still nothing. The conventional name is returned rather than a refusal, so the failure
   // comes from `loadConfig` — which reports the path it could not read and names
   // `shipkit init`. A repository that has no config gets one message about it, not two.
   return join(args.repo, ".shipkit.yml");
+}
+
+/**
+ * Writes the target branch's rule files somewhere they can be loaded as if they were here.
+ *
+ * A directory rather than text, because `readiness:` resolves against the directory of the
+ * config that names it, and every consumer downstream takes a path. Materialising costs one
+ * temporary write and leaves the rest of the product untouched.
+ *
+ * Silent on failure: this is a fallback, and a repository that genuinely has no conventions
+ * must hear that from `loadConfig`, once.
+ */
+function borrowRulesFromBase(
+  repo: string,
+  base: string,
+  onBorrow?: ((from: string) => void) | undefined,
+): string | undefined {
+  try {
+    const git = execRunner("git", repo);
+    const run = (args: string[]): string | undefined => {
+      try {
+        return git(args);
+      } catch {
+        return undefined;
+      }
+    };
+
+    const borrowed = ruleFilesAtBase(base, run);
+    if (borrowed === undefined) return undefined;
+
+    const directory = mkdtempSync(join(tmpdir(), "shipkit-base-rules-"));
+    for (const file of borrowed.files) {
+      const at = join(directory, file.name);
+      mkdirSync(dirname(at), { recursive: true });
+      writeFileSync(at, file.contents, "utf8");
+    }
+    onBorrow?.(base);
+    return join(directory, borrowed.configName);
+  } catch {
+    return undefined;
+  }
 }

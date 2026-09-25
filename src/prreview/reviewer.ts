@@ -24,12 +24,18 @@ export type ReviewerSurface = {
   instructions: string;
 };
 
-/** Where a repository's own reviewer is kept, by the tool it was written for. */
-const SURFACES: { match: RegExp; flavour: string }[] = [
-  { match: /^\.claude\/agents\/[^/]*review[^/]*\.md$/i, flavour: "Claude Code subagent" },
-  { match: /^\.claude\/commands\/review[^/]*\.md$/i, flavour: "Claude Code command" },
-  { match: /^\.github\/prompts\/[^/]*review[^/]*\.prompt\.md$/i, flavour: "Copilot prompt" },
-  { match: /^\.codex\/prompts\/review[^/]*\.md$/i, flavour: "Codex prompt" },
+/**
+ * Where a repository's own reviewer is kept, by the tool it was written for.
+ *
+ * Directory and filename separately, so both lookups — a git ref and a working tree — ask
+ * the same question of two different sources without either having to take the other's
+ * shape apart.
+ */
+const SURFACES: { directory: string; file: RegExp; flavour: string }[] = [
+  { directory: ".claude/agents", file: /review.*\.md$/i, flavour: "Claude Code subagent" },
+  { directory: ".claude/commands", file: /^review.*\.md$/i, flavour: "Claude Code command" },
+  { directory: ".github/prompts", file: /review.*\.prompt\.md$/i, flavour: "Copilot prompt" },
+  { directory: ".codex/prompts", file: /^review.*\.md$/i, flavour: "Codex prompt" },
 ];
 
 /**
@@ -46,8 +52,12 @@ export function reviewersAt(ref: string, git: GitRunner): ReviewerSurface[] {
   const paths = listed.split("\n").filter((line) => line.length > 0);
   const found: ReviewerSurface[] = [];
 
-  for (const { match, flavour } of SURFACES) {
-    for (const path of paths.filter((candidate) => match.test(candidate)).sort()) {
+  for (const { directory, file, flavour } of SURFACES) {
+    const here = paths
+      .filter((candidate) => candidate.startsWith(`${directory}/`))
+      .filter((candidate) => file.test(candidate.slice(directory.length + 1)))
+      .sort();
+    for (const path of here) {
       const instructions = git(["show", `${ref}:${path}`]);
       // A file listed but unreadable is not a reviewer. Reporting none is better than
       // telling the agent to follow instructions nobody could produce.
@@ -79,4 +89,27 @@ export function askForReviewer(repository: string): string {
     "`shipkit reviewer --write` drafts them from the rules the repository already carries, " +
     "for you to read and change before committing. Nothing is written without that flag."
   );
+}
+
+/**
+ * The reviewer in a working tree, for the pre-pull-request path.
+ *
+ * Tried before the base ref, for the same reason the conventions are: a branch that is
+ * *changing* how reviews work here must be judged by its own version. Falling back to the
+ * base covers the ordinary case, a branch cut before the reviewer existed.
+ */
+export function reviewerInTree(
+  read: (path: string) => string | undefined,
+  list: (directory: string) => string[],
+): ReviewerSurface | undefined {
+  for (const { directory, file, flavour } of SURFACES) {
+    for (const name of list(directory).filter((entry) => file.test(entry)).sort()) {
+      const path = `${directory}/${name}`;
+      const instructions = read(path);
+      if (instructions !== undefined && instructions.trim().length > 0) {
+        return { path, flavour, instructions };
+      }
+    }
+  }
+  return undefined;
 }

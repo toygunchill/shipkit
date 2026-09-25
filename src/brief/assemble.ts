@@ -65,6 +65,14 @@ export type AssembleInput = {
    * Read by the caller, like everything else that needs a filesystem.
    */
   fixRequest?: FixRequest;
+  /**
+   * The repository's own reviewer, when it defines one.
+   *
+   * Carried before the pull request exists as well as after. The same repository and the
+   * same rules: how deep a review goes should not depend on whether anybody else can see
+   * the change yet — and before it exists is when acting on a finding is cheapest.
+   */
+  reviewer?: { path: string; flavour: string; instructions: string };
 };
 
 export function assembleBrief({
@@ -75,6 +83,7 @@ export function assembleBrief({
   changed,
   readiness,
   fixRequest,
+  reviewer,
 }: AssembleInput): Brief {
   const conversion = changed === undefined ? undefined : detectConversion(changed);
   const advice: Advice[] =
@@ -100,6 +109,18 @@ export function assembleBrief({
           },
         }
       : {}),
+      ...(reviewer !== undefined
+        ? {
+            reviewer: {
+              instruction:
+                "This repository defines its own reviewer. Follow it when judging whether " +
+                "this change is ready, and do not substitute a general code-review habit " +
+                "or a review skill of your own: the repository decided how its changes are " +
+                "reviewed, and that decision is more specific than anything improvised.",
+              ...reviewer,
+            },
+          }
+        : {}),
     change: {
       branch: repo.branch,
       files: repo.changedFiles,

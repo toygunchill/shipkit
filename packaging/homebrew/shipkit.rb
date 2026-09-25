@@ -18,7 +18,7 @@ class Shipkit < Formula
   # `revision:` pins the commit so the tag cannot be moved under an install, and
   # `tag:` is what a person reads.
   url "https://github.com/toygunchill/shipkit.git",
-      tag:      "v0.1.15",
+      tag:      "v0.1.16",
       revision: "27321c9e2b4cded1391992111cf5ab8def3344c6"
   license "MIT"
   head "https://github.com/toygunchill/shipkit.git", branch: "main"

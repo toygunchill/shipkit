@@ -105,7 +105,7 @@ program.name("shipkit").version(VERSION).exitOverride();
  */
 function needsConventions(command: Command): Command {
   return command.hook("preAction", async (_this, actionCommand) => {
-    const options = actionCommand.opts<{ repo?: string; config?: string }>();
+    const options = actionCommand.opts<{ repo?: string; config?: string; base?: string }>();
     // `--config` names a file explicitly, so there is nothing to discover and nothing to
     // offer: if it is wrong, the loader says so in words about that path.
     if (options.config) return;
@@ -116,6 +116,19 @@ function needsConventions(command: Command): Command {
     } catch {
       // A bad --repo is the action's to report, in its own words.
       return;
+    }
+
+    // The same fallback the action itself will use. Without this the hook refuses first,
+    // on a branch that merely predates the rules, and the action never gets to find them
+    // on the branch it targets — the offer to run `init` would be an offer to solve a
+    // problem the repository does not have.
+    if (options.base !== undefined && options.base.length > 0) {
+      try {
+        if (configPath({ repo: root, base: options.base }) !== join(root, ".shipkit.yml")) return;
+      } catch {
+        // Ambiguity is the action's to report, once.
+        return;
+      }
     }
 
     const outcome = await offerSetup(root, {
@@ -288,7 +301,12 @@ needsConventions(program.command("brief"))
 
     try {
       const root = repoOf(options);
-      const configFile = configPath({ repo: root, config: options.config });
+      const configFile = configPath({
+        repo: root,
+        config: options.config,
+        base: options.base,
+        onBorrow: (from: string) => console.error(`No conventions on this branch; using ${from}, which this change targets.`),
+      });
       const config = loadConfig(configFile);
 
       let base = options.base;
@@ -323,6 +341,7 @@ needsConventions(program.command("brief"))
       // and stops the command — see src/review/fixrequest.ts for why silence is the one
       // failure this must not have.
       const fixRequest = readFixRequest(readRepoRoot(root));
+      const reviewer = await ownReviewer(root, base);
       const brief = assembleBrief({
         repo,
         target: { branch: base, reason },
@@ -331,6 +350,7 @@ needsConventions(program.command("brief"))
         changed,
         ...(readiness === undefined ? {} : { readiness }),
         ...(fixRequest === undefined ? {} : { fixRequest }),
+        ...(reviewer === undefined ? {} : { reviewer }),
       });
       console.log(JSON.stringify(brief, null, 2));
       process.exitCode = 0;
@@ -389,7 +409,12 @@ needsConventions(program.command("submit"))
   .action(async (options: { input: string; base: string; repo: string; config?: string; rules?: string[]; yes: boolean }) => {
     try {
       const repo = repoOf(options);
-      const config = configPath({ repo, config: options.config });
+      const config = configPath({
+        repo,
+        config: options.config,
+        base: options.base,
+        onBorrow: (from: string) => console.error(`No conventions on this branch; using ${from}, which this change targets.`),
+      });
       const response = loadResponse(options.input);
       const result = await runSubmit(
         {
@@ -564,7 +589,12 @@ needsConventions(program.command("review"))
       // base and the repository does not record it, so the default is the repository's own
       // default branch and anything else has to be said out loud.
       const root = repoOf(options);
-      const config = configPath({ repo: root, config: options.config });
+      const config = configPath({
+        repo: root,
+        config: options.config,
+        base: options.base,
+        onBorrow: (from: string) => console.error(`No conventions on this branch; using ${from}, which this change targets.`),
+      });
       const base = options.base ?? baseCandidates(root)[0];
       if (base === undefined) {
         console.error("Could not work out a base branch. Pass one with --base.");
@@ -1178,6 +1208,55 @@ async function prReviewRules(
   console.error(`Rules from ${from}: ${outcome.configPath} (${outcome.rules.length} checklist rules)`);
   if (usedRef !== undefined) usedRef.ref = from;
   return outcome.rules;
+}
+
+/**
+ * This repository's own reviewer, for the path that runs before a pull request exists.
+ *
+ * The working tree first, then the branch this change targets — the same order the
+ * conventions use, and for the same reason: a branch that is changing how reviews work here
+ * must be judged by its own version, while a branch merely cut before the reviewer landed
+ * should still get one.
+ *
+ * Absent is quiet. The brief simply carries no reviewer and the agent works from `rules`;
+ * `pr-review` is where the ask to define one belongs, because that is where a review is
+ * being published rather than prepared.
+ */
+async function ownReviewer(
+  root: string,
+  base: string,
+): Promise<{ path: string; flavour: string; instructions: string } | undefined> {
+  const { reviewerInTree, reviewersAt } = await import("./prreview/reviewer.js");
+  const { baseRef } = await import("./prreview/baserules.js");
+
+  const inTree = reviewerInTree(
+    (path) => {
+      try {
+        return readFileSync(join(root, path), "utf8");
+      } catch {
+        return undefined;
+      }
+    },
+    (directory) => {
+      try {
+        return readdirSync(join(root, directory));
+      } catch {
+        return [];
+      }
+    },
+  );
+  if (inTree !== undefined) return inTree;
+
+  const git = execRunner("git", root);
+  const run = (args: string[]): string | undefined => {
+    try {
+      return git(args);
+    } catch {
+      return undefined;
+    }
+  };
+  const ref = baseRef(base, run);
+  return ref === undefined ? undefined : reviewersAt(ref, run)[0];
 }
 
 /**

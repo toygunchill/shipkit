@@ -52,6 +52,19 @@ export type Brief = {
    * according to someone who read it.
    */
   fixRequest?: BriefFixRequest;
+  /**
+   * The repository's own reviewer, when it defines one.
+   *
+   * Second, after a person's own selection and before the change: it decides how everything
+   * below it is read. Absent means the repository has not written down how changes here are
+   * reviewed, and the agent is left with `rules` alone.
+   */
+  reviewer?: {
+    instruction: string;
+    path: string;
+    flavour: string;
+    instructions: string;
+  };
   change: { branch: string; files: string[]; diffstat: string; commits: string[] };
   /**
    * What shipkit noticed and will not insist on. Absent when there was nothing to say.

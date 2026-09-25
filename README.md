@@ -93,6 +93,21 @@ The scope is derived too: rules are limited to the languages the repository is
 actually written in, and the shared-layer rule names the shared directory it
 found. A change touching only a README is asked nothing.
 
+### Rules from the branch you are targeting
+
+Your own checkout first, and the branch your change targets if it has none. A branch cut
+before the rules landed has a working tree without them, which says nothing about whether
+the repository has any — and the working tree is tried first on purpose, because a branch
+that is *changing* the rules must be judged by its own version rather than the one it
+replaces. When rules are borrowed, shipkit says which branch they came from.
+
+### The same reviewer, before and after
+
+If your repository defines its own reviewer, `brief` carries it too, not just `pr-review`.
+The same repository and the same rules: how deep a review goes should not depend on whether
+anybody else can see the change yet — and before the pull request exists is when acting on
+a finding is cheapest.
+
 ## shipkit holds no rules of its own
 
 This is the thing to understand before anything else. shipkit does not know what a good

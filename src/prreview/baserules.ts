@@ -139,3 +139,47 @@ export function explainBaseRules(outcome: BaseRules, base: string): string {
     "carries none — not that yours does."
   );
 }
+
+/**
+ * The rule files at `base`, as text, for a caller that needs them on disk.
+ *
+ * `brief`, `submit` and the rest load conventions by path, and `readiness:` resolves
+ * against the directory of the config that named it. Handing them text would mean changing
+ * every one of those; handing them a directory that looks like the repository's own costs
+ * one temporary write and leaves the rest of the product alone.
+ */
+export function ruleFilesAtBase(
+  base: string,
+  git: GitRunner,
+  remote = "origin",
+): { configName: string; files: { name: string; contents: string }[] } | undefined {
+  const ref = baseRef(base, git, remote);
+  if (ref === undefined) return undefined;
+
+  const found: { path: string; raw: string }[] = [];
+  for (const path of candidatesAt(ref, git)) {
+    const raw = git(["show", `${ref}:${path}`]);
+    if (raw !== undefined && isConfigText(raw)) found.push({ path, raw });
+  }
+  // Exactly one, for the same reason the working-tree search insists on it: two answers to
+  // "what are this repository's conventions" is not something to settle by path order.
+  if (found.length !== 1) return undefined;
+
+  const only = found[0] as { path: string; raw: string };
+  const configName = only.path.includes("/") ? (only.path.split("/").pop() as string) : only.path;
+  const files = [{ name: configName, contents: only.raw }];
+
+  const config = configSchema.parse(parse(only.raw));
+  const readiness = config.readiness;
+  if (readiness !== undefined) {
+    const directory = only.path.includes("/") ? posix.dirname(only.path) : ".";
+    for (const entry of typeof readiness === "string" ? [readiness] : readiness) {
+      const at = posix.normalize(directory === "." ? entry : `${directory}/${entry}`).replace(/^\.\//, "");
+      const raw = git(["show", `${ref}:${at}`]);
+      // Written under the name the config asks for, so `readiness:` resolves unchanged.
+      if (raw !== undefined) files.push({ name: entry.replace(/^\.\//, ""), contents: raw });
+    }
+  }
+
+  return { configName, files };
+}

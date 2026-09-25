@@ -1094,6 +1094,161 @@ program
     }
   });
 
+/**
+ * Reviewing a pull request that is already open.
+ *
+ * Kept apart from `review`, which is about a local change before it is submitted. These
+ * take different input, answer a different question, and only one of them can write
+ * something other people see — folding them together would hide that difference behind a
+ * flag.
+ *
+ * Two halves, as `brief` and `submit` are: shipkit states what it knows and what it will
+ * accept, the agent answers, shipkit takes the answer or says why it will not.
+ */
+const prReview = program
+  .command("pr-review")
+  .description("Review a pull request that is already open, against the rules the repository carries");
+
+needsConventions(prReview.command("brief"))
+  .description("Emit the brief an agent fills in to review a pull request")
+  .option("--pr <number>", "the pull request to review; taken from the menu bar's request when omitted")
+  .option("--repo-slug <slug>", "owner/name, or host/owner/name for an enterprise forge")
+  .option("--repo <path>", "the repository whose rules to judge against", ".")
+  .option("--config <path>", "the conventions file; found automatically when omitted")
+  .option("--rules <path...>", "readiness ruleset(s) to apply, replacing the config's")
+  .action(async (options: { pr?: string; repoSlug?: string; repo: string; config?: string; rules?: string[] }) => {
+    // With neither option, take the request the menu bar left. That is what its
+    // Review button produces, and it is the same file the terminal fallback it
+    // prints reads — so the two routes cannot answer differently.
+    const { readRequested, clearRequested } = await import("./prreview/requested.js");
+    const waiting = options.pr === undefined && options.repoSlug === undefined ? readRequested() : undefined;
+
+    const slug = options.repoSlug ?? waiting?.repository;
+    const number = Number(options.pr ?? waiting?.number);
+
+    if (slug === undefined) {
+      console.error(
+        "Nothing to review: no --pr/--repo-slug given and no request waiting from the menu bar.",
+      );
+      process.exitCode = 2;
+      return;
+    }
+    if (!Number.isInteger(number) || number < 1) {
+      console.error(`Invalid --pr "${options.pr ?? ""}": expected a pull request number`);
+      process.exitCode = 2;
+      return;
+    }
+    if (waiting !== undefined) {
+      console.error(`Reviewing ${waiting.repository}#${waiting.number} — ${waiting.title}`);
+      // Taken, so the same press is not answered twice and a request from
+      // yesterday is not acted on today.
+      clearRequested();
+    }
+
+    const root = resolve(options.repo);
+    const configFile = configPath({ repo: root, config: options.config });
+    const rules = readinessRules(configFile, loadConfig(configFile), options.rules) ?? [];
+    const { briefFor } = await import("./prreview/run.js");
+
+    console.log(JSON.stringify(briefFor(slug, number, rules, execRunner("gh", root)), null, 2));
+  });
+
+needsConventions(prReview.command("post"))
+  .description("Check the agent's remarks and publish them as one review")
+  .requiredOption("--pr <number>", "the pull request to review")
+  .requiredOption("--repo-slug <slug>", "owner/name, or host/owner/name for an enterprise forge")
+  .requiredOption("--remarks <path>", "the agent's remarks")
+  .option("--repo <path>", "the repository whose rules to judge against", ".")
+  .option("--config <path>", "the conventions file; found automatically when omitted")
+  .option("--rules <path...>", "readiness ruleset(s) to apply, replacing the config's")
+  .option("--dry-run", "print exactly what would be published, and publish nothing")
+  .option("--yes", "publish without opening the editor")
+  .option("--port <n>", "port to serve the editor on; the default asks the kernel for a free one")
+  .option("--no-open", "print the editor's URL instead of opening a browser")
+  .action(
+    async (options: {
+      pr: string;
+      repoSlug: string;
+      remarks: string;
+      repo: string;
+      config?: string;
+      rules?: string[];
+      dryRun?: boolean;
+      yes?: boolean;
+      port?: string;
+      open: boolean;
+    }) => {
+      const number = Number(options.pr);
+      if (!Number.isInteger(number) || number < 1) {
+        console.error(`Invalid --pr "${options.pr}": expected a pull request number`);
+        process.exitCode = 2;
+        return;
+      }
+
+      const root = resolve(options.repo);
+      const configFile = configPath({ repo: root, config: options.config });
+      const rules = readinessRules(configFile, loadConfig(configFile), options.rules) ?? [];
+      const gh = execRunner("gh", root);
+      const { prepare, publish, publishNotice, readRemarks } = await import("./prreview/run.js");
+
+      let prepared = prepare(options.repoSlug, number, readRemarks(options.remarks), rules, gh);
+
+      // Refusals are printed, never swallowed. An agent that keeps citing rules that do not
+      // exist is something the person reviewing should find out about.
+      for (const { remark, reason } of prepared.validation.rejected) {
+        console.error(`refused (${remark.ruleId || "no rule"}): ${reason}`);
+      }
+
+      if (prepared.validation.accepted.length === 0) {
+        console.error("Nothing to publish: no remark survived checking.");
+        process.exitCode = 1;
+        return;
+      }
+
+      // The editor is the human gate, and it is the default. Publishing goes out the moment
+      // it is answered and a notification cannot be withdrawn, so skipping the gate has to
+      // be asked for in as many words — `--yes`, and nothing else.
+      //
+      // `--dry-run` deliberately does not skip it. Seeing the page, ticking through it, and
+      // getting the payload printed instead of posted is the combination a person wants
+      // before trusting this with a colleague's pull request, and an earlier version made
+      // it unreachable by folding the two flags together.
+      if (options.yes !== true) {
+        const { runEditor } = await import("./prreview/editor.js");
+        const { gather } = await import("./prreview/gather.js");
+        const { parseSlug } = await import("./prreview/run.js");
+        const { owner, repo, host } = parseSlug(options.repoSlug);
+        const gathered = gather(owner, repo, number, gh, host);
+
+        const outcome = await runEditor({
+          prepared,
+          title: gathered.pull.title,
+          diff: gathered.diff,
+          port: options.port === undefined ? 0 : Number(options.port),
+          open: options.open === false ? undefined : (url: string) => void execFile("open", [url]),
+          out: (line: string) => console.error(line),
+        });
+
+        if (outcome.answered === "nothing") {
+          console.error("Nothing published.");
+          return;
+        }
+        // What the person left, not what the agent wrote: bodies they rewrote, notes they
+        // added, and only the remarks they ticked.
+        prepared = { ...prepared, validation: { ...prepared.validation, accepted: outcome.remarks } };
+      }
+
+      console.error(publishNotice(prepared));
+      const payload = publish(prepared, gh, options.dryRun === true);
+
+      if (options.dryRun === true) {
+        console.log(JSON.stringify(payload, null, 2));
+      } else {
+        console.error(`Published ${payload.comments.length} comment(s).`);
+      }
+    },
+  );
+
 program
   .command("mcp")
   .description("Serve the shipkit tools to an agent over stdio")

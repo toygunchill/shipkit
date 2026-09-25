@@ -89,12 +89,21 @@ function parseSelection(body: string): FixRequestItem[] | undefined {
   return selection;
 }
 
-export type HandlerDeps = {
+export type HandlerDeps<T = FixRequestItem> = {
   token: string;
   /** The rendered page, served once per GET. */
   page: string;
   /** Called with the selection, at most once. */
-  submit: (items: FixRequestItem[]) => void;
+  submit: (items: T[]) => void;
+  /**
+   * Reads the posted body into a selection, or `undefined` if it is not one.
+   *
+   * Injected so the same server can carry a different kind of answer — the pull-request
+   * editor sends kept remarks, not fix-request items — without either page having to know
+   * about the other's shape. Defaults to the fix-request reader, so the original caller is
+   * unchanged.
+   */
+  parse?: ((body: string) => T[] | undefined) | undefined;
   /**
    * Opens a file in the editor. Omitted when there is no editor to open — the page's button
    * then reports that it could not, which is the honest answer.
@@ -122,7 +131,7 @@ function text(status: number, body: string): ReviewHttpResponse {
  * paths exist. The loopback gate comes before the token, so a remote peer is refused without
  * being given the chance to guess one.
  */
-export function createHandler(deps: HandlerDeps): ReviewHandler {
+export function createHandler<T = FixRequestItem>(deps: HandlerDeps<T>): ReviewHandler {
   let submitted = false;
 
   return (request) => {
@@ -158,7 +167,8 @@ export function createHandler(deps: HandlerDeps): ReviewHandler {
         // already written the file and printed where it went, and it may well have exited.
         return text(409, "This review has already been answered.");
       }
-      const selection = parseSelection(request.body);
+      const read = deps.parse ?? (parseSelection as unknown as (body: string) => T[] | undefined);
+        const selection = read(request.body);
       if (selection === undefined) return text(400, "Not a selection.");
       try {
         // Before the 200, and before the door closes on a second attempt. `submit` is what

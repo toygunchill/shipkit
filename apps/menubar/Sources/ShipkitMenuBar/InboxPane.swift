@@ -47,14 +47,18 @@ struct InboxPane: View {
                 if bucket == .myPullRequests {
                     AuthoredList(
                         pullRequests: model.inbox?.mine ?? [],
-                        avatars: model.avatars
-                    ) { route = .inbox }
+                        avatars: model.avatars,
+                        back: { route = .inbox },
+                        model: model
+                    )
                 } else {
                     InboxList(
                         bucket: bucket,
                         pullRequests: model.inbox?.list(bucket) ?? [],
-                        avatars: model.avatars
-                    ) { route = .inbox }
+                        avatars: model.avatars,
+                        back: { route = .inbox },
+                        model: model
+                    )
                 }
             case .token:
                 SettingsPane(model: model) { route = .inbox }
@@ -162,6 +166,8 @@ struct InboxPane: View {
             Button("Add/Edit Jira Token") { route = .token }
                 .buttonStyle(.link)
 
+            ReviewNoticeBar(model: model)
+
             // Kept on the main screen deliberately. It used to live on the
             // only screen this panel had; now that the token is behind a
             // navigation, a socket that failed to start would be invisible
@@ -181,6 +187,47 @@ struct InboxPane: View {
         }
         .padding(18)
         .frame(width: 380)
+    }
+}
+
+/// What happened when the Review button was pressed, wherever it was pressed.
+///
+/// A view rather than an alert, and shown on every screen that carries the
+/// button rather than only the first. A SwiftUI alert never presents from a
+/// `MenuBarExtra(.window)` popover — the window is not key, so there is nothing
+/// for it to attach to — and the first version used one: the button wrote the
+/// request and told the person nothing, which is the exact failure the notice
+/// exists to prevent. The second version put it on the main pane only, which
+/// was no better, because the button is pressed from a list.
+private struct ReviewNoticeBar: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        if let notice = model.reviewRequestNotice {
+            Divider()
+            HStack(alignment: .top, spacing: 6) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(notice.title).font(.caption).bold()
+                    Text(notice.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if notice.opensTerminal {
+                        Button("Open Terminal") { model.openTerminal() }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                    }
+                }
+                Spacer(minLength: 4)
+                Button {
+                    model.reviewRequestNotice = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .help("Dismiss")
+            }
+        }
     }
 }
 
@@ -233,6 +280,7 @@ private struct InboxList: View {
     let pullRequests: [InboxPullRequest]
     let avatars: AvatarStore
     let back: () -> Void
+    @ObservedObject var model: AppModel
 
     var body: some View {
         let preview = inboxListPreview(pullRequests)
@@ -250,10 +298,18 @@ private struct InboxList: View {
 
             Text(bucket.title).font(.headline)
 
+            ReviewNoticeBar(model: model)
+
             VStack(alignment: .leading, spacing: 0) {
+                // Where the button is, so pressing it produces something visible
+                // without navigating anywhere.
                 ForEach(preview.shown) { pullRequest in
                     if pullRequest.id != preview.shown.first?.id { Divider() }
-                    PullRequestRow(pullRequest: pullRequest, avatars: avatars)
+                    PullRequestRow(
+                        pullRequest: pullRequest,
+                        avatars: avatars,
+                        onReview: { model.requestReview(of: pullRequest) }
+                    )
                 }
             }
 
@@ -276,6 +332,7 @@ private struct AuthoredList: View {
     let pullRequests: [AuthoredPullRequest]
     let avatars: AvatarStore
     let back: () -> Void
+    @ObservedObject var model: AppModel
 
     var body: some View {
         let preview = inboxListPreview(pullRequests)
@@ -293,7 +350,11 @@ private struct AuthoredList: View {
 
             Text(InboxBucket.myPullRequests.title).font(.headline)
 
+            ReviewNoticeBar(model: model)
+
             VStack(alignment: .leading, spacing: 0) {
+                // Where the button is, so pressing it produces something visible
+                // without navigating anywhere.
                 ForEach(preview.shown) { entry in
                     if entry.id != preview.shown.first?.id { Divider() }
                     // `showsAuthor: false`. Every pull request in this list is
@@ -306,7 +367,8 @@ private struct AuthoredList: View {
                         pullRequest: entry.pullRequest,
                         news: entry.news,
                         showsAuthor: false,
-                        avatars: avatars
+                        avatars: avatars,
+                        onReview: { model.requestReview(of: entry.pullRequest) }
                     )
                     .opacity(entry.news.hasNews ? 1 : 0.55)
                 }
@@ -333,6 +395,9 @@ private struct PullRequestRow: View {
     /// `AuthoredList` for why they are not, there.
     var showsAuthor: Bool = true
     let avatars: AvatarStore
+    /// Asks for a review of this pull request. Absent where there is nothing to
+    /// ask — the row then behaves exactly as it did before this existed.
+    var onReview: (() -> Void)? = nil
 
     var body: some View {
         Button {
@@ -378,6 +443,17 @@ private struct PullRequestRow: View {
                 // an unestablished number is shown as absent.
                 if let mark = pullRequest.standing.mark {
                     StandingChip(mark: mark, prominent: showsAuthor == false)
+                }
+                if let onReview {
+                    // Its own button, not the row's: the row opens the pull
+                    // request in a browser, and asking for a review is a
+                    // different thing that must not be reachable by aiming at
+                    // the title and missing.
+                    Button(action: onReview) {
+                        Image(systemName: "text.magnifyingglass")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Ask your agent to review this")
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

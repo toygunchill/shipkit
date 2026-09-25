@@ -153,6 +153,42 @@ export function createServer(deps: ToolDeps): McpServer {
   );
 
   server.registerTool(
+    "shipkit_pending_review",
+    {
+      description:
+        "Check whether the person asked, from the shipkit menu bar, for a pull request to be " +
+        "reviewed. Returns the pull request if one is waiting, and nothing if not. Changes " +
+        "nothing except that the request is taken, so it is not answered twice. Call this " +
+        "when the person says they asked for a review, or mentions the menu bar; the request " +
+        "cannot be pushed to you, so asking is the only way to find it.",
+      inputSchema: {},
+    },
+    async () => {
+      const { readRequested, clearRequested } = await import("../prreview/requested.js");
+      const waiting = readRequested();
+      if (waiting === undefined) {
+        return { content: [{ type: "text" as const, text: "No review was asked for." }] };
+      }
+      clearRequested();
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(
+              {
+                ...waiting,
+                next: `shipkit pr-review brief --pr ${waiting.number} --repo-slug ${waiting.repository}`,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    },
+  );
+
+  server.registerTool(
     "shipkit_preview",
     {
       description:
@@ -189,5 +225,16 @@ export function createServer(deps: ToolDeps): McpServer {
 }
 
 export async function serveStdio(): Promise<void> {
+  // Announce this agent to the menu bar, if there is one. The connection lives as long as
+  // this process, which lives as long as the agent hosting it, so it says "an agent is
+  // here" for exactly the right interval. A missing or stopped application resolves to a
+  // no-op: the companion is optional and serving must not depend on it.
+  const { attachAgent } = await import("../approval/attach.js");
+  const attachment = await attachAgent(process.env.SHIPKIT_AGENT ?? "agent");
+  const detach = (): void => attachment.detach();
+  process.once("exit", detach);
+  process.once("SIGINT", detach);
+  process.once("SIGTERM", detach);
+
   await createServer(realToolDeps()).connect(new StdioServerTransport());
 }

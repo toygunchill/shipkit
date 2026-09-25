@@ -35,6 +35,7 @@ shipkit submit     Validate, warn, then commit, push and open the pull request.
 shipkit init       Write a starter conventions file, reading what the forge can prove.
 shipkit rules      Propose a readiness checklist from the code, for a repo that has none.
 shipkit tech-task  Open the technical item for work the ticket did not ask for.
+shipkit pr-review  Review a pull request that is already open, and post the remarks.
 shipkit mcp        Serve brief, preview and apply as MCP tools over stdio.
 ```
 
@@ -257,6 +258,49 @@ Not a CI gate and not a rule. It is opt-in per repository and per person: a
 teammate who does not run it is not blocked by it, and nothing here enforces
 anything on anyone who has not chosen it. If you want a gate, `shipkit check`
 is the one command with no side effects — that is the one to run in CI.
+
+## Reviewing a pull request that is already open
+
+Everything above happens before a pull request exists. `pr-review` is the other end: read
+an open pull request — yours or somebody else's — judge it against the rules the
+repository already carries, and post what survives.
+
+```bash
+shipkit pr-review brief --pr 943 --repo-slug acme/widget > brief.json
+# the agent reads brief.json and writes remarks.json
+shipkit pr-review post  --pr 943 --repo-slug acme/widget --remarks remarks.json
+```
+
+The agent writes the review, as it writes everything else here. shipkit supplies what it
+cannot know — the diff, the rules, and the exact positions a comment is allowed to land
+on — and refuses an answer that does not hold up.
+
+**Every remark must cite a rule.** An agent asked to review a diff will always find
+something to say, and a review of fifteen remarks where four matter teaches its reader to
+skim. A remark citing an id the repository does not have is refused and reported, which is
+also the only defence against an agent inventing a plausible-looking one rather than
+staying silent. The output improves when your team writes more rules down — not when
+somebody tunes a prompt.
+
+**Anchors are computed before the agent is asked anything.** GitHub refuses a comment on a
+line outside the diff, with a 422, after the review is assembled and sent — the worst
+moment to fail. So the commentable positions are derived from the diff up front, handed to
+the agent as the ones it may use, and checked again before anything is posted. An anchor
+outside the set is refused rather than moved to a nearby line: a comment pointing at the
+wrong line is worse than one that was never written. A remark belonging to no single line
+becomes a comment on the pull request, and the editor says so rather than pinning it
+somewhere arbitrary.
+
+`post` opens an editor before anything is published. The remarks are drawn on the lines
+they are about, nothing is ticked when it opens, and each one can be rewritten or given
+your own words — which are appended under the remark rather than blended into it, so a
+reader can tell which sentence a human wrote. `--dry-run` goes through the same editor and
+prints the payload instead of posting it. `--yes` skips the editor entirely.
+
+Everything ticked goes out as **one review**, because N comments would be N notifications
+to someone whose afternoon this is interrupting. Publishing is immediate, so the button
+names the pull request, whose it is, and how many comments — a control saying "Send" would
+be the wrong size for what it does.
 
 ## The way back
 

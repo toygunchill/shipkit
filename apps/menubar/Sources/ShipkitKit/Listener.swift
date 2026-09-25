@@ -231,6 +231,10 @@ public actor Listener {
     /// Takes an approval off the panel because the run that asked for it has
     /// gone. Resumes whatever `present` is suspended on with `.pending`.
     private let withdrawApproval: @Sendable (String) -> Void
+    /// Agents currently holding a connection open. See `AgentPresence`: this is
+    /// how the menu bar answers "is there anything to hand work to" with a fact
+    /// rather than a guess.
+    public let presence = AgentPresence()
     private var descriptor: Int32 = -1
     private var source: DispatchSourceRead?
 
@@ -433,6 +437,11 @@ public actor Listener {
             return
         }
 
+        if kindOf(line) == "attach" {
+            await serveAttach(client: client, line: line, on: listener)
+            return
+        }
+
         if kindPresent(line) {
             guard let data = await listener.tokenResponseData(line: line) else { return }
             await sendAll(client, data)
@@ -457,6 +466,50 @@ public actor Listener {
         )
         if let data = try? encodeResponse(response) {
             await sendAll(client, data)
+        }
+    }
+
+    /// Registers an agent for as long as it keeps the connection open.
+    ///
+    /// The connection is the registration. Nothing is polled and no heartbeat is
+    /// exchanged: the process on the other end is `shipkit mcp`, which lives
+    /// exactly as long as the agent hosting it, and a vanished peer arrives here
+    /// as end-of-file from `recv`. Holding this one `recv` open is the whole
+    /// mechanism.
+    ///
+    /// The `defer` matters more than it looks. Detaching has to happen however
+    /// this returns -- a closed connection, a killed agent, a cancelled task --
+    /// because an entry left behind would tell the menu bar an agent is there and
+    /// make its button do nothing.
+    private static func serveAttach(client: Int32, line: Data, on listener: Listener) async {
+        let name = (try? JSONSerialization.jsonObject(with: line) as? [String: Any])
+            .flatMap { $0?["name"] as? String } ?? ""
+        await listener.presence.attach(id: client, name: name)
+        defer { Task { await listener.presence.detach(id: client) } }
+
+        // Acknowledged so the agent side knows it was heard rather than guessing
+        // from a connection that merely stayed open.
+        await sendAll(client, Data("{\"ok\":true}\n".utf8))
+
+        // Blocks until the peer goes away. Nothing sent after the attach line is
+        // read: this connection carries presence, not messages. The byte lives
+        // inside the closure because a pointer is not `Sendable` and this one has
+        // no reason to outlive the call.
+        while true {
+            let read: Int = await runBlockingStatic {
+                var byte: UInt8 = 0
+                return withUnsafeMutablePointer(to: &byte) { recv(client, $0, 1, 0) }
+            }
+            if read <= 0 { return }
+        }
+    }
+
+    /// `runBlocking`, reachable from the static serve helpers.
+    private static func runBlockingStatic<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: work())
+            }
         }
     }
 

@@ -67,6 +67,100 @@ final class AppModel: ObservableObject {
     /// each row awaits its own bytes and nothing else depends on its state.
     let avatars = AvatarStore.live()
     private var listener: Listener?
+
+    /// Whether an agent is attached, and what to say when one is not.
+    ///
+    /// The Review button either hands work to something real or explains that
+    /// there is nothing to hand it to. It never does neither silently: a button
+    /// that appears to work and does not is worse than one that refuses.
+    @Published private(set) var agentAttached: Bool = false
+    @Published var reviewRequestNotice: ReviewRequestNotice?
+
+    struct ReviewRequestNotice: Identifiable, Equatable {
+        let id = UUID()
+        let title: String
+        let detail: String
+        /// Whether to offer a terminal. Opened empty: shipkit is agent-agnostic
+        /// and cannot know whether the person's agent is started by `claude`,
+        /// `codex` or something else, so guessing a command would be worse than
+        /// offering the window and letting them type what they always type.
+        let opensTerminal: Bool
+    }
+
+    /// Asks for a review of this pull request.
+    ///
+    /// The request is written whether or not an agent is attached, because the
+    /// person's intent is the same either way and a terminal started a moment
+    /// later will find it. What changes is only what they are told.
+    func requestReview(of pullRequest: InboxPullRequest) {
+        // From the URL, not from `pullRequest.repository`: the inbox carries
+        // `owner/name` with no host, and on an enterprise forge that would send
+        // `gh` to whichever host it saw last.
+        let slug = inboxRepositorySlug(pullRequest.url) ?? pullRequest.repository
+        let number = inboxPullRequestNumber(pullRequest.url) ?? 0
+        guard number > 0 else {
+            reviewRequestNotice = ReviewRequestNotice(
+                title: "Could not tell which pull request that is",
+                detail: "Its URL does not end in a number: \(pullRequest.url)",
+                opensTerminal: false
+            )
+            return
+        }
+
+        let requested = RequestedReview(
+            repository: slug,
+            number: number,
+            title: pullRequest.title,
+            url: pullRequest.url
+        )
+        do {
+            try RequestedReviewStore.write(requested)
+        } catch {
+            reviewRequestNotice = ReviewRequestNotice(
+                title: "Could not leave the request",
+                detail: error.localizedDescription,
+                opensTerminal: false
+            )
+            return
+        }
+
+        if agentAttached {
+            reviewRequestNotice = ReviewRequestNotice(
+                title: "Asked for a review of #\(number)",
+                // Said plainly, and it names the thing the person has to do.
+                // MCP is request/response: the menu bar cannot interrupt an
+                // agent mid-thought, so the request waits until the agent is
+                // asked for it. Saying only "it will be picked up" would leave
+                // a person waiting for something that never starts on its own.
+                detail: "Ask your agent to pick up the review — it cannot be told on its own.",
+                opensTerminal: false
+            )
+        } else {
+            reviewRequestNotice = ReviewRequestNotice(
+                title: "No agent is running",
+                // What a person in this state actually needs is an agent, not a
+                // command. An earlier version offered `pr-review brief`, which
+                // prints the JSON an agent consumes — useless to read, and
+                // exactly the wrong thing to hand someone who has no agent.
+                detail: "Start your coding agent in a terminal — it attaches by itself — then ask it "
+                    + "to pick up the review. The request is saved until you do.",
+                opensTerminal: true
+            )
+        }
+    }
+
+    /// Opens a terminal window, with nothing typed into it.
+    ///
+    /// Empty on purpose. shipkit is agent-agnostic, so which command starts the
+    /// person's agent is not something this application knows — and running the
+    /// wrong one, or printing JSON at somebody who wanted an agent, is worse
+    /// than handing them the window they were going to open anyway.
+    func openTerminal() {
+        let script = "tell application \"Terminal\"\nactivate\ndo script \"\"\nend tell"
+        guard let apple = NSAppleScript(source: script) else { return }
+        var error: NSDictionary?
+        apple.executeAndReturnError(&error)
+    }
     private var reArmTask: Task<Void, Never>?
     private var inboxTask: Task<Void, Never>?
     private var inboxTimer: Task<Void, Never>?
@@ -137,6 +231,18 @@ final class AppModel: ObservableObject {
                 try await listener.start()
             } catch {
                 await MainActor.run { self?.listenerError = "\(error)" }
+            }
+        }
+        // Presence is polled rather than published from the listener, because the
+        // thing that changes it is a socket closing — there is no notification to
+        // subscribe to, and a poll this cheap (reading one actor's dictionary) is
+        // simpler than inventing one. A second's lag is invisible: the question is
+        // only asked when a menu is already open.
+        Task { [weak self] in
+            while !Task.isCancelled {
+                let attached = await listener.presence.isAttached
+                await MainActor.run { self?.agentAttached = attached }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
         }
         // NOT refreshTokenStatus() here: it reads the keychain synchronously,

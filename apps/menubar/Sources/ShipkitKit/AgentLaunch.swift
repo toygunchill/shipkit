@@ -26,11 +26,18 @@ public enum AgentLaunch {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    /// Escapes a string for an AppleScript string literal.
-    public static func appleScriptQuoted(_ value: String) -> String {
-        value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
+    /// The script Terminal is asked to open.
+    ///
+    /// A file, not an Apple Event. `tell application "Terminal" … do script` was tried
+    /// first and timed out with -1712: Terminal came to the front and the command never
+    /// ran, which is the worst shape a failure can take here because it looks like the
+    /// button half-worked. A `.command` file is what `open` hands to Terminal directly,
+    /// with no Apple Events, no automation permission to be missing, and nothing to time
+    /// out.
+    public static func scriptContents(_ line: String) -> String {
+        // `exec` so the shell does not linger as a parent of the agent, and the window
+        // closes when the agent does rather than dropping to a stray prompt.
+        "#!/bin/sh\nexec \(line)\n"
     }
 
     /// The shell line Terminal is asked to run, or `nil` when nothing is configured.
@@ -52,13 +59,15 @@ public enum AgentLaunch {
         (path as NSString).expandingTildeInPath
     }
 
-    /// The AppleScript that opens Terminal on that line.
-    public static func terminalScript(running line: String) -> String {
-        """
-        tell application "Terminal"
-        activate
-        do script "\(appleScriptQuoted(line))"
-        end tell
-        """
+    /// Writes the script somewhere Terminal can open it, and returns where.
+    ///
+    /// Left behind rather than deleted: the shell reads a script as it runs it, so removing
+    /// the file under a long-lived agent session is a way to break it. The temporary
+    /// directory is what cleans these up.
+    public static func writeScript(_ line: String, into directory: URL) throws -> URL {
+        let at = directory.appendingPathComponent("shipkit-review-\(UUID().uuidString).command")
+        try scriptContents(line).write(to: at, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: at.path)
+        return at
     }
 }

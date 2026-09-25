@@ -66,13 +66,34 @@ struct AgentLaunchTests {
         #expect(line?.contains("&& claude --agent reviewer '") == true)
     }
 
-    // The line goes inside an AppleScript string literal, where a quote or a
-    // backslash would end it early and run something else entirely.
-    @Test func theScriptEscapesWhatWouldEndItsOwnStringLiteral() {
-        let script = AgentLaunch.terminalScript(running: #"echo "hi" \ there"#)
+    // A file, not an Apple Event: `do script` timed out with -1712 and brought
+    // Terminal to the front without running anything, which looks like the
+    // button half-worked. Nothing here needs escaping for a second language.
+    @Test func theScriptIsAShellFileThatRunsTheLineVerbatim() {
+        let line = "cd '/a b' && claude 'do \"this\"'"
 
-        #expect(script.contains(#"\"hi\""#))
-        #expect(script.contains(#"\\"#))
-        #expect(script.contains("do script"))
+        let script = AgentLaunch.scriptContents(line)
+
+        #expect(script.hasPrefix("#!/bin/sh\n"))
+        #expect(script.contains(line))
+    }
+
+    // `exec` so the shell does not sit as a parent of the agent, and the window
+    // ends with the agent rather than dropping to a stray prompt.
+    @Test func itExecsRatherThanLeavingAShellBehind() {
+        #expect(AgentLaunch.scriptContents("claude").contains("exec claude"))
+    }
+
+    @Test func theScriptIsWrittenExecutableAndOnlyForItsOwner() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shipkit-launch-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let at = try AgentLaunch.writeScript("echo hi", into: directory)
+
+        let mode = try FileManager.default.attributesOfItem(atPath: at.path)[.posixPermissions] as? NSNumber
+        #expect(mode?.int16Value == 0o700)
+        #expect(at.pathExtension == "command")
     }
 }

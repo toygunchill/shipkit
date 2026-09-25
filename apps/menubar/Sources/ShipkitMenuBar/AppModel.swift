@@ -187,11 +187,34 @@ final class AppModel: ObservableObject {
         runInTerminal("")
     }
 
-    /// Opens Terminal on a line, or empty when there is none.
+    /// Opens Terminal on a line, or bare when there is none.
+    ///
+    /// Through `open`, not Apple Events. `do script` was tried and timed out with -1712:
+    /// Terminal came to the front and the command never ran — the worst shape of failure
+    /// here, because it looks like the button half-worked. `open` hands a `.command` file
+    /// to Terminal directly, with no automation permission to be missing.
     private func runInTerminal(_ line: String) {
-        guard let apple = NSAppleScript(source: AgentLaunch.terminalScript(running: line)) else { return }
-        var error: NSDictionary?
-        apple.executeAndReturnError(&error)
+        if line.isEmpty {
+            launch(["-a", "Terminal"])
+            return
+        }
+        do {
+            let script = try AgentLaunch.writeScript(line, into: FileManager.default.temporaryDirectory)
+            launch(["-a", "Terminal", script.path])
+        } catch {
+            reviewRequestNotice = ReviewRequestNotice(
+                title: "Could not start the agent",
+                detail: error.localizedDescription,
+                opensTerminal: true
+            )
+        }
+    }
+
+    private func launch(_ arguments: [String]) {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = arguments
+        try? task.run()
     }
     private var reArmTask: Task<Void, Never>?
     private var inboxTask: Task<Void, Never>?

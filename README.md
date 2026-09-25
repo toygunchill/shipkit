@@ -36,6 +36,7 @@ shipkit init       Write a starter conventions file, reading what the forge can 
 shipkit rules      Propose a readiness checklist from the code, for a repo that has none.
 shipkit tech-task  Open the technical item for work the ticket did not ask for.
 shipkit pr-review  Review a pull request that is already open, and post the remarks.
+shipkit reviewer   Draft a reviewer for this repository, from the rules it carries.
 shipkit mcp        Serve brief, preview and apply as MCP tools over stdio.
 ```
 
@@ -295,6 +296,30 @@ outside the set is refused rather than moved to a nearby line: a comment pointin
 wrong line is worse than one that was never written. A remark belonging to no single line
 becomes a comment on the pull request, and the editor says so rather than pinning it
 somewhere arbitrary.
+
+**It uses your repository's own reviewer.** A team that has written down how changes here
+are reviewed has already done the specific part, and shipkit carries that text into the
+brief rather than letting the agent fall back on whatever review habit it arrived with —
+which varies by agent, by day, and by how the question was phrased. It looks for a Claude
+Code subagent under `.claude/agents/`, a command under `.claude/commands/`, a Copilot prompt
+under `.github/prompts/`, or a Codex prompt under `.codex/prompts/`, reading whichever
+exists from the same ref as the rules. The instructions are inlined, not named: the agent
+may be standing in a checkout that does not carry the file, and a path it has to go and
+find is one it can fail to find without saying so.
+
+If your repository defines none, shipkit says so and asks for one — and offers to write it:
+
+```bash
+shipkit reviewer            # print the drafts, touch nothing
+shipkit reviewer --write    # put them in the repository
+```
+
+The rules *are* the reviewer, so there is nothing to invent: what comes out lists the rules
+the repository already carries, requires a rule id on every finding, and is read-only. One
+file per agent your team might use, all saying the same thing — a repository whose Claude
+reviewer and Copilot reviewer disagree has two rulesets pretending to be one, and nobody
+finds out until two people get different answers about the same line. An existing reviewer
+is never overwritten without `--force`: it is a document a team argued about.
 
 `post` opens an editor before anything is published. The remarks are drawn on the lines
 they are about, nothing is ticked when it opens, and each one can be rewritten or given

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { ReadinessRule } from "../readiness/types.js";
 import type { GhRunner } from "../vcs/github.js";
-import { reviewBrief, type ReviewBrief } from "./brief.js";
+import { reviewBrief, type BriefReviewer, type ReviewBrief } from "./brief.js";
 import { currentLogin, gather } from "./gather.js";
 import { postReview, type PostTarget, type ReviewPayload } from "./post.js";
 import { validateRemarks, type Remark, type Validation } from "./validate.js";
@@ -31,9 +31,10 @@ export function briefFor(
   number: number,
   rules: readonly ReadinessRule[],
   gh: GhRunner,
+  reviewer?: BriefReviewer,
 ): ReviewBrief {
   const { owner, repo, host } = parseSlug(slug);
-  return reviewBrief(gather(owner, repo, number, gh, host, currentLogin(gh, host)), rules);
+  return reviewBrief(gather(owner, repo, number, gh, host, currentLogin(gh, host)), rules, reviewer);
 }
 
 /** The pull request's target branch, which is where its rules are read from. */

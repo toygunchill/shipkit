@@ -1,6 +1,6 @@
 {
   "name": "shipkit",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "license": "MIT",
   "author": "Toygun Çil",
   "description": "Holds AI coding agents to a team's pull-request conventions",

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFile, execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { Command, CommanderError } from "commander";
 import { observedChangedFiles } from "./advice/observe.js";
 import { offerReview, requestApproval } from "./approval/client.js";
@@ -1125,6 +1125,8 @@ async function prReviewRules(
   number: number,
   gh: GhRunner,
   explicit?: string[] | undefined,
+  /** Filled with the ref the rules came from, so the reviewer is read from the same one. */
+  usedRef?: { ref?: string },
 ): Promise<ReadinessRule[] | undefined> {
   if (explicit !== undefined && explicit.length > 0) {
     return loadReadinessFiles(explicit.map((entry) => ({ path: resolve(entry), named: `--rules ${entry}` })));
@@ -1174,8 +1176,104 @@ async function prReviewRules(
   }
 
   console.error(`Rules from ${from}: ${outcome.configPath} (${outcome.rules.length} checklist rules)`);
+  if (usedRef !== undefined) usedRef.ref = from;
   return outcome.rules;
 }
+
+/**
+ * The reviewer the repository defines for itself, if it defines one.
+ *
+ * Read from the same ref as the rules, and inlined into the brief rather than named: the
+ * agent may be standing in a checkout that does not carry the file, and a path it has to go
+ * and find is one it can fail to find without saying so.
+ *
+ * Absent is not an error. It changes what the brief tells the agent to do, and it prints an
+ * ask — with the offer to draft one — because the remedy is mechanical and the rules it
+ * would be built from are already there.
+ */
+async function repositoryReviewer(
+  root: string,
+  slug: string,
+  branch: string,
+  gh: GhRunner,
+): Promise<{ path: string; flavour: string; instructions: string } | undefined> {
+  void gh;
+  const { baseRef } = await import("./prreview/baserules.js");
+  const { reviewersAt, askForReviewer } = await import("./prreview/reviewer.js");
+
+  const git = execRunner("git", root);
+  const run = (args: string[]): string | undefined => {
+    try {
+      return git(args);
+    } catch {
+      return undefined;
+    }
+  };
+
+  // The same ref the rules came from. A reviewer read from one branch and rules from
+  // another would be a review arguing from two different versions of the same repository.
+  const ref = baseRef(branch, run);
+  const found = ref === undefined ? [] : reviewersAt(ref, run);
+
+  if (found.length === 0) {
+    console.error(askForReviewer(slug));
+    return undefined;
+  }
+
+  const first = found[0] as { path: string; flavour: string; instructions: string };
+  console.error(`Reviewer: ${first.path} (${first.flavour})`);
+  return first;
+}
+
+needsConventions(program.command("reviewer"))
+  .description("Draft a reviewer for this repository, from the rules it already carries")
+  .option("--repo <path>", "the repository to draft for", ".")
+  .option("--config <path>", "the conventions file; found automatically when omitted")
+  .option("--rules <path...>", "readiness ruleset(s) to draft from, replacing the config's")
+  .option("--write", "write the files; without this they are printed and nothing is touched")
+  .option("--force", "overwrite a reviewer that already exists")
+  .action(async (options: { repo: string; config?: string; rules?: string[]; write?: boolean; force?: boolean }) => {
+    const root = repoOf(options);
+    const configFile = configPath({ repo: root, config: options.config });
+    const rules = readinessRules(configFile, loadConfig(configFile), options.rules) ?? [];
+    const { renderReviewer } = await import("./reviewer/render.js");
+
+    // Named after the repository's directory: its remote may not exist yet, and a draft
+    // should not depend on one.
+    const repository = root.split("/").filter((part) => part.length > 0).pop() ?? "repo";
+    const rulesDirectory = relative(root, dirname(realpathSync(configFile))) || ".";
+    const files = renderReviewer(repository, rulesDirectory, rules);
+
+    if (rules.length === 0) {
+      console.error(
+        "This repository has no readiness rules, so a reviewer drafted now would have " +
+          "nothing to review against. `shipkit rules` proposes some from the code first.",
+      );
+    }
+
+    if (options.write !== true) {
+      for (const file of files) {
+        console.log(`# ${file.path} — ${file.purpose}\n`);
+        console.log(file.contents);
+      }
+      console.error("Nothing written. Pass --write to put these in the repository.");
+      return;
+    }
+
+    for (const file of files) {
+      const at = join(root, file.path);
+      // Never over an existing one without being told. A team's reviewer is a document they
+      // argued about, and silently replacing it is the one thing this must not do.
+      if (existsSync(at) && options.force !== true) {
+        console.error(`${file.path} already exists; left alone. Pass --force to replace it.`);
+        continue;
+      }
+      mkdirSync(dirname(at), { recursive: true });
+      writeFileSync(at, file.contents, "utf8");
+      console.error(`Wrote ${file.path}`);
+    }
+    console.error("Read them before committing: they are a draft from your rules, not a decision.");
+  });
 
 const prReview = program
   .command("pr-review")
@@ -1223,10 +1321,12 @@ prReview
     const root = resolve(options.repo);
     const gh = execRunner("gh", root);
     const { briefFor } = await import("./prreview/run.js");
-    const rules = await prReviewRules(root, slug, number, gh, options.rules);
+    const used: { ref?: string } = {};
+    const rules = await prReviewRules(root, slug, number, gh, options.rules, used);
     if (rules === undefined) return;
 
-    console.log(JSON.stringify(briefFor(slug, number, rules, gh), null, 2));
+    const reviewer = await repositoryReviewer(root, slug, used.ref ?? "HEAD", gh);
+    console.log(JSON.stringify(briefFor(slug, number, rules, gh, reviewer), null, 2));
   });
 
 prReview

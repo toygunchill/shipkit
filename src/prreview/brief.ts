@@ -31,6 +31,12 @@ export type BriefAnchor = {
   left: number[];
 };
 
+export type BriefReviewer = {
+  path: string;
+  flavour: string;
+  instructions: string;
+};
+
 export type ReviewBrief = {
   version: 1;
   pull: {
@@ -43,6 +49,15 @@ export type ReviewBrief = {
     mine: boolean;
   };
   rules: BriefRule[];
+  /**
+   * The repository's own reviewer, carried whole rather than named.
+   *
+   * Inlined because the agent may be standing in a checkout that does not have the file —
+   * the reviewer's branch is their own business — and because a path the agent has to go
+   * and find is a path it can fail to find silently. Absent when the repository defines
+   * none, and then `contract` says what to do instead.
+   */
+  reviewer?: BriefReviewer;
   diff: string;
   anchors: BriefAnchor[];
   contract: string[];
@@ -78,6 +93,17 @@ function briefRules(rules: readonly ReadinessRule[]): BriefRule[] {
   return rules.map((rule) => ({ id: rule.id, ask: rule.ask, ...(rule.why !== undefined ? { why: rule.why } : {}) }));
 }
 
+const FOLLOW_THE_REPOSITORYS_REVIEWER =
+  "This repository defines its own reviewer, carried in `reviewer.instructions`. Follow it. " +
+  "Do not substitute a general code-review habit or a review skill of your own: the point of " +
+  "this brief is that the repository decided how its changes are reviewed, and that decision " +
+  "is more specific than anything improvised.";
+
+const NO_REVIEWER =
+  "This repository defines no reviewer of its own. Review strictly against `rules` and " +
+  "nothing else, and say once, at the end, that the repository would be better served by " +
+  "defining one — `shipkit reviewer --write` drafts it from these same rules.";
+
 const CONTRACT = [
   "Write one remark per thing worth saying, as JSON matching the shape below. Write nothing else.",
   "Every remark must cite `ruleId`, and it must be an id from `rules`. If no rule covers what you noticed, do not write the remark — a review that ranges beyond the written rules is an opinion, and this one is not asked for opinions.",
@@ -89,7 +115,11 @@ const CONTRACT = [
   "Finding nothing is a valid review. Return an empty list rather than filling it.",
 ];
 
-export function reviewBrief(gathered: Gathered, rules: readonly ReadinessRule[]): ReviewBrief {
+export function reviewBrief(
+  gathered: Gathered,
+  rules: readonly ReadinessRule[],
+  reviewer?: BriefReviewer,
+): ReviewBrief {
   return {
     version: 1,
     pull: {
@@ -102,8 +132,10 @@ export function reviewBrief(gathered: Gathered, rules: readonly ReadinessRule[])
       mine: gathered.pull.mine,
     },
     rules: briefRules(rules),
+    ...(reviewer !== undefined ? { reviewer } : {}),
     diff: gathered.diff,
     anchors: anchorList(gathered.anchors),
-    contract: CONTRACT,
+    // The reviewer line comes first: it decides how everything below is read.
+    contract: [reviewer !== undefined ? FOLLOW_THE_REPOSITORYS_REVIEWER : NO_REVIEWER, ...CONTRACT],
   };
 }

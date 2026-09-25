@@ -241,7 +241,9 @@ export async function serveStdio(): Promise<void> {
   // here" for exactly the right interval. A missing or stopped application resolves to a
   // no-op: the companion is optional and serving must not depend on it.
   const { attachAgent } = await import("../approval/attach.js");
-  const attachment = await attachAgent(process.env.SHIPKIT_AGENT ?? "agent");
+  // Not awaited: it returns at once and keeps trying in the background, so an
+  // application that is not running yet never delays the agent's own startup.
+  const attachment = attachAgent(process.env.SHIPKIT_AGENT ?? "agent");
   const detach = (): void => attachment.detach();
   process.once("exit", detach);
   process.once("SIGINT", detach);

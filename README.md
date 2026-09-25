@@ -230,6 +230,11 @@ tool list and nothing is copied into any repository:
 claude mcp add shipkit -- shipkit mcp
 ```
 
+Name the installed command, as above, rather than a path into a checkout. Pointing an agent
+at `node /path/to/shipkit/dist/cli.js mcp` works and then quietly stops being true: the
+agent runs whatever was last built there, so a `brew upgrade` changes nothing for it and a
+forgotten `npm run build` leaves it on old code with no sign that anything is stale.
+
 For agents without MCP, an instruction file does the same job:
 `AGENTS.md` for Codex and most others, `CLAUDE.md` or a skill for Claude Code,
 `.github/copilot-instructions.md` for Copilot. Snippets for each are in
@@ -301,6 +306,35 @@ Everything ticked goes out as **one review**, because N comments would be N noti
 to someone whose afternoon this is interrupting. Publishing is immediate, so the button
 names the pull request, whose it is, and how many comments — a control saying "Send" would
 be the wrong size for what it does.
+
+### Starting one from the menu bar
+
+The inbox draws a magnifying glass beside every pull request. Pressing it asks for that one
+to be reviewed. The row itself still opens the pull request in a browser: asking for a
+review is a different thing and must not be reachable by aiming at the title and missing.
+
+What happens next depends on something worth understanding, because it decides what the
+button can honestly promise.
+
+**The menu bar cannot review anything.** It holds no agent, and MCP is request/response — a
+server cannot hand work to an agent that did not ask for it. That is the protocol, not an
+omission. What the application *can* know is whether an agent exists: `shipkit mcp` runs as
+a child of the agent for exactly as long as the agent does, so it holds one connection open,
+and that connection is the answer. No heartbeat, nothing to expire.
+
+So the button does one of two things, and says which:
+
+- **An agent is running.** The request is saved, and you ask your agent to pick it up — it
+  will not hear about it on its own. It finds the request through `shipkit_pending_review`.
+- **No agent is running.** It says so and offers a terminal, opened empty. Which command
+  starts your agent is not something shipkit can know, and the request waits until you do.
+
+The request replaces any earlier one rather than queueing. A queue means a press answered
+minutes later on a pull request you have stopped thinking about — and what is being asked
+for ends in comments published under your name.
+
+Without a menu-bar application at all, `shipkit pr-review brief --pr <n> --repo-slug <slug>`
+is the whole of it; nothing above is required.
 
 ## The way back
 

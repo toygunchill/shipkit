@@ -417,11 +417,22 @@ private struct PullRequestRow: View {
                     AvatarBadge(author: pullRequest.author, avatars: avatars)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(pullRequest.title)
-                        .font(.callout)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        // Beside the title, not at the end of the row: it changes how the
+                        // title is read, and a mark discovered after the fact has already
+                        // failed at the one thing it is for.
+                        if pullRequest.protection != nil {
+                            Image(systemName: "shield.lefthalf.filled")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                        Text(pullRequest.title)
+                            .font(.callout)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .help(pullRequest.protection ?? "")
                     HStack(spacing: 6) {
                         if showsAuthor, let login = pullRequest.author?.login {
                             Text(login)

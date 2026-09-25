@@ -142,9 +142,16 @@ public struct InboxPullRequest: Sendable, Equatable, Identifiable {
     /// `owner/name`, as GitHub's `nameWithOwner`.
     public let repository: String
     public let updatedAt: Date
+    /// The branches, when the search returned them. Absent rather than guessed:
+    /// a row marked as protected on a guess is worse than one not marked.
+    public let baseRefName: String?
+    public let headRefName: String?
     /// `nil` for a deleted account. See `InboxAuthor`.
     public let author: InboxAuthor?
     public let standing: ReviewStanding
+
+    /// Why this one wants a second look, or `nil` when it is ordinary. See `Protection`.
+    public var protection: String? { Protection.reason(base: baseRefName) }
 
     /// The two new fields default to absent so that constructing a pull
     /// request without them stays legal — the panel's own rule is that an
@@ -154,6 +161,8 @@ public struct InboxPullRequest: Sendable, Equatable, Identifiable {
         url: String,
         repository: String,
         updatedAt: Date,
+        baseRefName: String? = nil,
+        headRefName: String? = nil,
         author: InboxAuthor? = nil,
         standing: ReviewStanding = .unknown
     ) {
@@ -161,6 +170,8 @@ public struct InboxPullRequest: Sendable, Equatable, Identifiable {
         self.url = url
         self.repository = repository
         self.updatedAt = updatedAt
+        self.baseRefName = baseRefName
+        self.headRefName = headRefName
         self.author = author
         self.standing = standing
     }
@@ -390,6 +401,8 @@ public func inboxQuery(login: String) -> String {
           ... on PullRequest {
             title
             url
+            baseRefName
+            headRefName
             updatedAt
             author { login avatarUrl }
             reviewDecision
@@ -409,6 +422,8 @@ public func inboxQuery(login: String) -> String {
           ... on PullRequest {
             title
             url
+            baseRefName
+            headRefName
             updatedAt
             headRefOid
             author { login avatarUrl }
@@ -436,6 +451,8 @@ public func inboxQuery(login: String) -> String {
           ... on PullRequest {
             title
             url
+            baseRefName
+            headRefName
             updatedAt
             createdAt
             author { login avatarUrl }
@@ -747,6 +764,8 @@ private struct SearchConnection: Decodable {
 private struct SearchNode: Decodable {
     let title: String?
     let url: String?
+    let baseRefName: String?
+    let headRefName: String?
     let updatedAt: String?
     let createdAt: String?
     let headRefOid: String?
@@ -990,6 +1009,8 @@ private func pullRequest(from node: SearchNode) -> Result<InboxPullRequest, Inbo
         url: url,
         repository: repository,
         updatedAt: updatedAt,
+        baseRefName: node.baseRefName,
+        headRefName: node.headRefName,
         author: author(from: node),
         standing: standing(from: node)
     ))

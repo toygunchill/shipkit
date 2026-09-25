@@ -35,9 +35,12 @@ public enum AgentLaunch {
     /// with no Apple Events, no automation permission to be missing, and nothing to time
     /// out.
     public static func scriptContents(_ line: String) -> String {
-        // `exec` so the shell does not linger as a parent of the agent, and the window
-        // closes when the agent does rather than dropping to a stray prompt.
-        "#!/bin/sh\nexec \(line)\n"
+        // Run the line, do not `exec` it. An earlier version did, to keep a shell from
+        // sitting as the agent's parent — and `exec` replaces the shell with the *first*
+        // command, so `exec cd … && claude …` ran `cd`, exited, and never reached the
+        // agent. Terminal showed "[Process completed]" instantly and the button looked
+        // broken for a reason that was purely this line.
+        "#!/bin/sh\n\(line)\n"
     }
 
     /// The shell line Terminal is asked to run, or `nil` when nothing is configured.

@@ -78,10 +78,17 @@ struct AgentLaunchTests {
         #expect(script.contains(line))
     }
 
-    // `exec` so the shell does not sit as a parent of the agent, and the window
-    // ends with the agent rather than dropping to a stray prompt.
-    @Test func itExecsRatherThanLeavingAShellBehind() {
-        #expect(AgentLaunch.scriptContents("claude").contains("exec claude"))
+    // The line is a compound command — `cd … && agent …` — and `exec` replaces the
+    // shell with the *first* of those, so the agent is never reached. That shipped
+    // once: Terminal opened, printed "[Process completed]", and the button looked
+    // broken.
+    @Test func itDoesNotExecACompoundCommand() {
+        let line = AgentLaunch.shellLine(command: "claude", directory: "/w") ?? ""
+
+        let script = AgentLaunch.scriptContents(line)
+
+        #expect(script.contains("exec ") == false)
+        #expect(script.contains("cd '/w' && claude "))
     }
 
     @Test func theScriptIsWrittenExecutableAndOnlyForItsOwner() throws {

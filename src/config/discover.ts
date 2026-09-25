@@ -96,8 +96,20 @@ export function isConfigFile(path: string): boolean {
   } catch {
     return false;
   }
-  // A file larger than any hand-written config is not one, and parsing a huge generated
-  // YAML to find out costs more than the answer is worth.
+  return isConfigText(raw);
+}
+
+/**
+ * The same question asked of text rather than a path.
+ *
+ * Split out because a pull-request review reads its rules from a git ref rather than from
+ * the working tree — the reviewer's branch is their own business and usually has nothing to
+ * do with the change being reviewed. Both callers must agree on what a config is, so there
+ * is one answer and two ways in.
+ */
+export function isConfigText(raw: string): boolean {
+  // Text longer than any hand-written config is not one, and parsing a huge generated YAML
+  // to find out costs more than the answer is worth.
   if (raw.length > 256 * 1024) return false;
   let parsed: unknown;
   try {

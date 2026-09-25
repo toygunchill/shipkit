@@ -13,7 +13,8 @@ const ruleSchema = z.object({
   severity: z.enum(["block", "warn", "advise"]),
 });
 
-const rulesSchema = z.object({
+/** Exported so a review can validate a checklist read from a git ref, not only from disk. */
+export const rulesSchema = z.object({
   // Pinned rather than defaulted: the file is written by the team, and a `version: 2` they
   // author for a shipkit that understands it must not be half-read by one that does not.
   version: z.literal(1),

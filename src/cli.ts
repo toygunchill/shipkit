@@ -68,7 +68,7 @@ import {
   VcsError,
 } from "./vcs/git.js";
 import { execRunner } from "./vcs/exec.js";
-import { baseCandidates, findPullRequest, type GhRunner } from "./vcs/github.js";
+import { baseCandidates, defaultBranch, findPullRequest, type GhRunner } from "./vcs/github.js";
 import { commitAll, createPullRequest, pushBranch } from "./vcs/mutate.js";
 
 const program = new Command();
@@ -1105,18 +1105,93 @@ program
  * Two halves, as `brief` and `submit` are: shipkit states what it knows and what it will
  * accept, the agent answers, shipkit takes the answer or says why it will not.
  */
+/**
+ * The rules a pull request is judged against: those on the branch it targets.
+ *
+ * Not the reviewer's working tree. A reviewer's checkout sits on whatever branch their own
+ * work is on, which has nothing to do with the change in front of them and may well predate
+ * the rules — the first real use hit exactly that, with the rules on `develop` and the
+ * reviewer on a bugfix branch cut before they landed.
+ *
+ * `--rules` still wins, because naming a file explicitly is a person saying they mean that
+ * one. Everything else comes from the base ref, read with `git` out of the checkout
+ * `--repo` names, without touching its working tree.
+ *
+ * Returns `undefined` when it has already reported why it cannot proceed.
+ */
+async function prReviewRules(
+  root: string,
+  slug: string,
+  number: number,
+  gh: GhRunner,
+  explicit?: string[] | undefined,
+): Promise<ReadinessRule[] | undefined> {
+  if (explicit !== undefined && explicit.length > 0) {
+    return loadReadinessFiles(explicit.map((entry) => ({ path: resolve(entry), named: `--rules ${entry}` })));
+  }
+
+  const { baseOf } = await import("./prreview/run.js");
+  const { rulesAtBase, explainBaseRules } = await import("./prreview/baserules.js");
+
+  const git = execRunner("git", root);
+  const run = (args: string[]): string | undefined => {
+    try {
+      return git(args);
+    } catch {
+      return undefined;
+    }
+  };
+
+  const base = baseOf(slug, number, gh);
+  let from = base;
+  let outcome = rulesAtBase(base, run);
+
+  // A pull request stacked on another branch targets that branch, and a feature branch
+  // carries no rules of its own. What governs the change is the trunk it eventually lands
+  // on, so fall back to the default branch — and say which was used, because judging
+  // against the wrong ruleset silently is the thing to avoid.
+  if (outcome.found === "none") {
+    let fallback: string | undefined;
+    try {
+      fallback = defaultBranch(root, gh);
+    } catch {
+      fallback = undefined;
+    }
+    if (fallback !== undefined && fallback !== base) {
+      const second = rulesAtBase(fallback, run);
+      if (second.found === "one") {
+        console.error(`${base} carries no rules; using ${fallback}, which this branch will land on.`);
+        from = fallback;
+        outcome = second;
+      }
+    }
+  }
+
+  if (outcome.found !== "one") {
+    console.error(explainBaseRules(outcome, base));
+    process.exitCode = 2;
+    return undefined;
+  }
+
+  console.error(`Rules from ${from}: ${outcome.configPath} (${outcome.rules.length} checklist rules)`);
+  return outcome.rules;
+}
+
 const prReview = program
   .command("pr-review")
   .description("Review a pull request that is already open, against the rules the repository carries");
 
-needsConventions(prReview.command("brief"))
+prReview
+  .command("brief")
   .description("Emit the brief an agent fills in to review a pull request")
   .option("--pr <number>", "the pull request to review; taken from the menu bar's request when omitted")
   .option("--repo-slug <slug>", "owner/name, or host/owner/name for an enterprise forge")
-  .option("--repo <path>", "the repository whose rules to judge against", ".")
-  .option("--config <path>", "the conventions file; found automatically when omitted")
-  .option("--rules <path...>", "readiness ruleset(s) to apply, replacing the config's")
-  .action(async (options: { pr?: string; repoSlug?: string; repo: string; config?: string; rules?: string[] }) => {
+  // A checkout of that repository. Only git is read from it, and only from the base
+  // ref — the working tree is never touched, so whatever branch it sits on does not
+  // matter.
+  .option("--repo <path>", "a checkout of the repository, for reading its rules from git", ".")
+  .option("--rules <path...>", "readiness ruleset(s) to apply, replacing the base branch's")
+  .action(async (options: { pr?: string; repoSlug?: string; repo: string; rules?: string[] }) => {
     // With neither option, take the request the menu bar left. That is what its
     // Review button produces, and it is the same file the terminal fallback it
     // prints reads — so the two routes cannot answer differently.
@@ -1146,21 +1221,22 @@ needsConventions(prReview.command("brief"))
     }
 
     const root = resolve(options.repo);
-    const configFile = configPath({ repo: root, config: options.config });
-    const rules = readinessRules(configFile, loadConfig(configFile), options.rules) ?? [];
+    const gh = execRunner("gh", root);
     const { briefFor } = await import("./prreview/run.js");
+    const rules = await prReviewRules(root, slug, number, gh, options.rules);
+    if (rules === undefined) return;
 
-    console.log(JSON.stringify(briefFor(slug, number, rules, execRunner("gh", root)), null, 2));
+    console.log(JSON.stringify(briefFor(slug, number, rules, gh), null, 2));
   });
 
-needsConventions(prReview.command("post"))
+prReview
+  .command("post")
   .description("Check the agent's remarks and publish them as one review")
   .requiredOption("--pr <number>", "the pull request to review")
   .requiredOption("--repo-slug <slug>", "owner/name, or host/owner/name for an enterprise forge")
   .requiredOption("--remarks <path>", "the agent's remarks")
-  .option("--repo <path>", "the repository whose rules to judge against", ".")
-  .option("--config <path>", "the conventions file; found automatically when omitted")
-  .option("--rules <path...>", "readiness ruleset(s) to apply, replacing the config's")
+  .option("--repo <path>", "a checkout of the repository, for reading its rules from git", ".")
+  .option("--rules <path...>", "readiness ruleset(s) to apply, replacing the base branch's")
   .option("--dry-run", "print exactly what would be published, and publish nothing")
   .option("--yes", "publish without opening the editor")
   .option("--port <n>", "port to serve the editor on; the default asks the kernel for a free one")
@@ -1171,7 +1247,6 @@ needsConventions(prReview.command("post"))
       repoSlug: string;
       remarks: string;
       repo: string;
-      config?: string;
       rules?: string[];
       dryRun?: boolean;
       yes?: boolean;
@@ -1186,9 +1261,9 @@ needsConventions(prReview.command("post"))
       }
 
       const root = resolve(options.repo);
-      const configFile = configPath({ repo: root, config: options.config });
-      const rules = readinessRules(configFile, loadConfig(configFile), options.rules) ?? [];
       const gh = execRunner("gh", root);
+      const rules = await prReviewRules(root, options.repoSlug, number, gh, options.rules);
+      if (rules === undefined) return;
       const { prepare, publish, publishNotice, readRemarks } = await import("./prreview/run.js");
 
       let prepared = prepare(options.repoSlug, number, readRemarks(options.remarks), rules, gh);

@@ -36,6 +36,12 @@ export function briefFor(
   return reviewBrief(gather(owner, repo, number, gh, host, currentLogin(gh, host)), rules);
 }
 
+/** The pull request's target branch, which is where its rules are read from. */
+export function baseOf(slug: string, number: number, gh: GhRunner): string {
+  const { owner, repo, host } = parseSlug(slug);
+  return gather(owner, repo, number, gh, host).pull.baseRef;
+}
+
 export function readRemarks(path: string): Remark[] {
   let raw: string;
   try {

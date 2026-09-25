@@ -88,6 +88,28 @@ struct AttachTests {
         #expect(await subject.presence.isAttached == false)
     }
 
+    // The bug this exists for, and the reason the other tests here missed it:
+    // they settle in 300ms, while every accepted socket carries a five-second
+    // receive timeout. An agent showed as present for four seconds and was gone
+    // by six, so the menu bar reported "no agent is running" whatever was
+    // running. Staying silent is the whole job of this connection.
+    //
+    // Deliberately slower than the rest of the suite. A regression here makes
+    // the entire feature useless while every faster test still passes.
+    @Test func anAgentStaysAttachedPastTheReceiveTimeout() async throws {
+        let path = scratchSocket()
+        let subject = listener(at: path)
+        try await subject.start()
+        defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
+
+        let fd = openAttachment(to: path, name: "claude")
+        defer { close(fd) }
+
+        try? await Task.sleep(nanoseconds: 7_000_000_000)
+
+        #expect(await subject.presence.isAttached, "the connection was closed under the agent")
+    }
+
     @Test func twoAgentsAttachIndependently() async throws {
         let path = scratchSocket()
         let subject = listener(at: path)

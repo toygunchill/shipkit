@@ -487,6 +487,19 @@ public actor Listener {
         await listener.presence.attach(id: client, name: name)
         defer { Task { await listener.presence.detach(id: client) } }
 
+        // Clear the receive timeout. Every accepted socket gets one so that a
+        // client which connects and then says nothing cannot tie a thread up
+        // indefinitely while its one line is waited for. That reasoning stops
+        // applying the moment the line arrives and says this connection is a
+        // presence registration: staying silent is the entire job, and the
+        // timeout was closing it after five seconds.
+        //
+        // Measured, not reasoned about: an attached agent showed as present for
+        // four seconds and was gone by six, so the menu bar said "no agent is
+        // running" no matter what was running.
+        var forever = timeval(tv_sec: 0, tv_usec: 0)
+        _ = setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &forever, socklen_t(MemoryLayout<timeval>.size))
+
         // Acknowledged so the agent side knows it was heard rather than guessing
         // from a connection that merely stayed open.
         await sendAll(client, Data("{\"ok\":true}\n".utf8))

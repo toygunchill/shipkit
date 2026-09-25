@@ -18,6 +18,23 @@ struct SettingsPane: View {
                 Spacer()
             }
 
+            Text("Reviewing").font(.headline)
+            Text("How to start your agent, and where. With both set, the Review button in "
+                 + "the inbox starts one on the pull request; without them it saves the "
+                 + "request and tells you to start one yourself. shipkit cannot guess these: "
+                 + "which command runs your agent is your choice, and the directory decides "
+                 + "which repository's rules the review is judged against.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            TextField("Command, e.g. claude", text: $model.agentCommand)
+                .textFieldStyle(.roundedBorder)
+            TextField("Checkout directory, e.g. ~/code/app", text: $model.agentDirectory)
+                .textFieldStyle(.roundedBorder)
+
+            Divider()
+
             Text("Jira token").font(.headline)
             Text("shipkit reads this from the login keychain. Without it, the "
                  + "issue-level check cannot run and every pull request is warned about.")

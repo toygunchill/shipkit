@@ -1,0 +1,78 @@
+import Foundation
+import Testing
+@testable import ShipkitKit
+
+@Suite("Starting an agent on a review")
+struct AgentLaunchTests {
+    @Test func itChangesDirectoryBeforeRunningTheAgent() {
+        let line = AgentLaunch.shellLine(command: "claude", directory: "/work/app")
+
+        #expect(line?.hasPrefix("cd '/work/app' && claude ") == true)
+    }
+
+    // The rules are read from the checkout. An agent started somewhere else
+    // reviews the pull request against whatever conventions happen to be there,
+    // so a missing directory must stop the line rather than let it run on.
+    @Test func itStopsWhenTheDirectoryIsGoneRatherThanRunningAnywhere() {
+        let line = AgentLaunch.shellLine(command: "claude", directory: "/work/app")
+
+        #expect(line?.contains(" && ") == true)
+        #expect(line?.contains("; ") == false)
+    }
+
+    // This project is developed in a directory with a space in its name. A
+    // command that breaks on one is a button that works on the author's machine
+    // and nowhere else.
+    @Test func itSurvivesASpaceInThePath() {
+        let line = AgentLaunch.shellLine(command: "claude", directory: "/Users/me/Github Pegasus/app")
+
+        #expect(line?.contains("'/Users/me/Github Pegasus/app'") == true)
+    }
+
+    @Test func itSurvivesAnApostropheInThePath() {
+        let line = AgentLaunch.shellLine(command: "claude", directory: "/Users/me/Ali's work")
+
+        // Closed, escaped, reopened — the shell's only way to put one inside a
+        // single-quoted string.
+        #expect(line?.contains(#"'/Users/me/Ali'\''s work'"#) == true)
+    }
+
+    // `~` is what a person types into a settings field, and `cd` does not expand
+    // it once the string is quoted.
+    @Test func itExpandsATildeTheUserTyped() {
+        let line = AgentLaunch.shellLine(command: "claude", directory: "~/app")
+
+        #expect(line?.contains("~") == false)
+        #expect(line?.contains(NSHomeDirectory()) == true)
+    }
+
+    @Test func thePromptIsQuotedSoItArrivesAsOneArgument() {
+        let line = AgentLaunch.shellLine(command: "claude", directory: "/w")
+
+        #expect(line?.hasSuffix("'\(AgentLaunch.prompt)'") == true)
+    }
+
+    // With nothing configured the button must fall back to explaining itself,
+    // not run `cd  &&  ''`.
+    @Test func nothingConfiguredProducesNoLine() {
+        #expect(AgentLaunch.shellLine(command: "", directory: "/w") == nil)
+        #expect(AgentLaunch.shellLine(command: "claude", directory: "") == nil)
+        #expect(AgentLaunch.shellLine(command: "   ", directory: "  ") == nil)
+    }
+
+    @Test func aCommandWithItsOwnArgumentsIsLeftAlone() {
+        let line = AgentLaunch.shellLine(command: "claude --agent reviewer", directory: "/w")
+
+        #expect(line?.contains("&& claude --agent reviewer '") == true)
+    }
+
+    // The line goes inside an AppleScript string literal, where a quote or a
+    // backslash would end it early and run something else entirely.
+    @Test func theScriptEscapesWhatWouldEndItsOwnStringLiteral() {
+        let script = AgentLaunch.terminalScript(running: #"echo "hi" \ there"#)
+
+        #expect(script.contains(#"\"hi\""#))
+        #expect(script.contains(#"\\"#))
+        #expect(script.contains("do script"))
+    }
+}

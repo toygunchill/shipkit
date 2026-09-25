@@ -74,6 +74,19 @@ final class AppModel: ObservableObject {
     /// there is nothing to hand it to. It never does neither silently: a button
     /// that appears to work and does not is worse than one that refuses.
     @Published private(set) var agentAttached: Bool = false
+
+    /// How to start an agent, and where. Empty until a person says.
+    ///
+    /// Two settings rather than a guess. Which command starts an agent is the
+    /// person's choice — shipkit runs against Claude Code, Copilot, Codex and
+    /// others — and the directory decides which repository's rules a review is
+    /// judged against, which is not something a pull request URL can tell us.
+    @Published var agentCommand: String = UserDefaults.standard.string(forKey: "agentCommand") ?? "" {
+        didSet { UserDefaults.standard.set(agentCommand, forKey: "agentCommand") }
+    }
+    @Published var agentDirectory: String = UserDefaults.standard.string(forKey: "agentDirectory") ?? "" {
+        didSet { UserDefaults.standard.set(agentDirectory, forKey: "agentDirectory") }
+    }
     @Published var reviewRequestNotice: ReviewRequestNotice?
 
     struct ReviewRequestNotice: Identifiable, Equatable {
@@ -124,6 +137,20 @@ final class AppModel: ObservableObject {
             return
         }
 
+        // Start one. This is the only way the button can actually begin the work:
+        // an agent already running cannot be interrupted — MCP does not let a
+        // server hand its client a task — but a new one starts with the request
+        // already waiting for it.
+        if let line = AgentLaunch.shellLine(command: agentCommand, directory: agentDirectory) {
+            runInTerminal(line)
+            reviewRequestNotice = ReviewRequestNotice(
+                title: "Started an agent on #\(number)",
+                detail: "A terminal is opening in \(agentDirectory).",
+                opensTerminal: false
+            )
+            return
+        }
+
         if agentAttached {
             reviewRequestNotice = ReviewRequestNotice(
                 title: "Asked for a review of #\(number)",
@@ -142,8 +169,9 @@ final class AppModel: ObservableObject {
                 // command. An earlier version offered `pr-review brief`, which
                 // prints the JSON an agent consumes — useless to read, and
                 // exactly the wrong thing to hand someone who has no agent.
-                detail: "Start your coding agent in a terminal — it attaches by itself — then ask it "
-                    + "to pick up the review. The request is saved until you do.",
+                detail: "Set how to start your agent in Settings and this button will start one "
+                    + "for you. Until then: start it in a terminal and ask it to pick up the "
+                    + "review. The request is saved either way.",
                 opensTerminal: true
             )
         }
@@ -156,8 +184,12 @@ final class AppModel: ObservableObject {
     /// wrong one, or printing JSON at somebody who wanted an agent, is worse
     /// than handing them the window they were going to open anyway.
     func openTerminal() {
-        let script = "tell application \"Terminal\"\nactivate\ndo script \"\"\nend tell"
-        guard let apple = NSAppleScript(source: script) else { return }
+        runInTerminal("")
+    }
+
+    /// Opens Terminal on a line, or empty when there is none.
+    private func runInTerminal(_ line: String) {
+        guard let apple = NSAppleScript(source: AgentLaunch.terminalScript(running: line)) else { return }
         var error: NSDictionary?
         apple.executeAndReturnError(&error)
     }

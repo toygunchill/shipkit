@@ -151,7 +151,7 @@ public struct InboxPullRequest: Sendable, Equatable, Identifiable {
     public let standing: ReviewStanding
 
     /// Why this one wants a second look, or `nil` when it is ordinary. See `Protection`.
-    public var protection: String? { Protection.reason(base: baseRefName) }
+    public var protection: String? { Protection.reason(head: headRefName, base: baseRefName) }
 
     /// The two new fields default to absent so that constructing a pull
     /// request without them stays legal — the panel's own rule is that an

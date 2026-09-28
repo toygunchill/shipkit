@@ -2,57 +2,58 @@ import Foundation
 import Testing
 @testable import ShipkitKit
 
-/// The pairs below are real rows from the list this was built for, which is how the
-/// direction got settled: the first version marked the *head*, and nothing in ordinary work
-/// merges out of a protected branch.
-@Suite("Marking the pull requests with more behind them")
+/// Every pair below is a real row from the list this was built for. The direction took two
+/// wrong turns to settle, so both wrong answers are kept as cases: marking by base looked
+/// right because `feature/… → protected/…` is the most common shape in the list, and it is
+/// exactly the shape that must *not* be marked.
+@Suite("Marking the pull requests that merge a shared branch")
 struct ProtectionTests {
-    @Test func anOrdinaryFeatureBranchIsNotMarked() {
-        #expect(Protection.reason(base: "develop") == nil)
-    }
+    // `protected/flyhigh/20104-brand-identity → develop`
+    @Test func mergingAProtectedBranchIsMarked() {
+        let reason = Protection.reason(head: "protected/flyhigh/20104-brand-identity", base: "develop")
 
-    // `feature/skystones/20104-brand-develop → protected/flyhigh/20104-brand-identity`
-    @Test func mergingIntoAProtectedBranchIsMarked() {
-        let reason = Protection.reason(base: "protected/flyhigh/20104-brand-identity")
-
-        #expect(reason?.contains("protected branch") == true)
         #expect(reason?.contains("protected/flyhigh/20104-brand-identity") == true)
+        #expect(reason?.contains("develop") == true)
     }
 
-    // `release/3.77.0 → main`. A different reason from the one above, and it reads
-    // differently to whoever is reviewing: here a mistake reaches users.
-    @Test func mergingIntoTheTrunkIsMarkedForItsOwnReason() {
-        #expect(Protection.reason(base: "main")?.contains("ships") == true)
-        #expect(Protection.reason(base: "master")?.contains("ships") == true)
+    // `release/3.77.0 → main`
+    @Test func mergingAReleaseBranchIsMarked() {
+        #expect(Protection.reason(head: "release/3.77.0", base: "main") != nil)
     }
 
-    @Test func aReleaseOrHotfixBaseCounts() {
-        #expect(Protection.reason(base: "release/3.77.0") != nil)
-        #expect(Protection.reason(base: "hotfix/3.76.1") != nil)
+    @Test func mergingAHotfixBranchIsMarked() {
+        #expect(Protection.reason(head: "hotfix/3.76.1", base: "main") != nil)
     }
 
-    // The direction the first version had, kept as a test so it cannot come back: a change
-    // *out of* a protected branch is not what makes a row consequential.
-    @Test func comingFromAProtectedBranchIsNotWhatMatters() {
-        #expect(Protection.reason(base: "develop") == nil)
+    // The wrong answer the second version gave. These are people adding work *to* a shared
+    // branch, which is routine — marking them marked half the list.
+    @Test func addingWorkToAProtectedBranchIsNotMarked() {
+        #expect(Protection.reason(head: "feature/skystones/20104-brand-develop",
+                                  base: "protected/flyhigh/20104-brand-identity") == nil)
+        #expect(Protection.reason(head: "feature/pegachu/20104-baggage",
+                                  base: "protected/flyhigh/20104-brand-identity") == nil)
     }
 
-    // `develop` is where ordinary work lands. Marking it would mark nearly every row, and a
-    // mark on everything is a mark on nothing.
-    @Test func developIsNotGuarded() {
-        #expect(Protection.reason(base: "develop") == nil)
+    @Test func anOrdinaryFeatureBranchIsNotMarked() {
+        #expect(Protection.reason(head: "livebug/skystones/32516-inapp-extra-crash", base: "develop") == nil)
+        #expect(Protection.reason(head: "bugfix/moneypoly/34663-campaign-radio-brand", base: "develop") == nil)
     }
 
-    // A prefix, not a substring: matching loosely would mark rows that are not guarded.
+    // A prefix, not a substring: matching loosely would mark rows that are not shared.
     @Test func awordInTheMiddleDoesNotCount() {
-        #expect(Protection.reason(base: "pre-release/3.77.0") == nil)
-        #expect(Protection.reason(base: "feature/x/1-protected-route") == nil)
+        #expect(Protection.reason(head: "feature/x/1-protected-route", base: "develop") == nil)
+        #expect(Protection.reason(head: "pre-release/3.77.0", base: "main") == nil)
     }
 
-    // The list can carry a row whose refs did not come back. Marking on a guess is worse
-    // than not marking.
+    // The base is for the sentence, not the decision.
+    @Test func itStillSaysSomethingWithNoBase() {
+        #expect(Protection.reason(head: "protected/x/1-y")?.contains("shared branch") == true)
+    }
+
+    // A row whose refs did not come back is not marked: a shield on a guess is worse than
+    // no shield.
     @Test func unknownRefsAreNotMarked() {
-        #expect(Protection.reason(base: nil) == nil)
-        #expect(Protection.reason(base: "   ") == nil)
+        #expect(Protection.reason(head: nil, base: "develop") == nil)
+        #expect(Protection.reason(head: "   ", base: "develop") == nil)
     }
 }

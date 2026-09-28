@@ -1,37 +1,36 @@
 import Foundation
 
-/// Which pull requests in the list want a second look before they are approved.
+/// Which pull requests in the list are merging a shared branch somewhere.
 ///
-/// A reviewer works down a flat list, and a routine feature branch looks exactly like a
-/// change going into something guarded until you open it. The mark exists so the ones with
-/// more behind them are visible while scanning, not after clicking.
+/// A long-lived branch several people have been building on is a different thing from one
+/// person's feature: it carries other people's work, it has usually been open for weeks,
+/// and merging it moves all of that at once. The list is flat, so it looks like every other
+/// row until you open it. The mark is there so it does not.
 ///
-/// It is the **base** that decides, which is worth stating because the first version of
-/// this had it backwards. Reading the real list settled it: nothing merges *out of* a
-/// protected branch in ordinary work — the rows are `feature/… → protected/…` and
-/// `release/… → main`. Where a change lands is what makes it consequential.
+/// It is the **head** that decides — what is being merged, not where it is going. That took
+/// two wrong turns to settle, so the reasoning is written down rather than left implied:
+///
+/// - The first version marked the head on no evidence.
+/// - The second marked the base, because the live list was full of `feature/… →
+///   protected/…` and that looked like the pattern. It is a pattern, but the ordinary one:
+///   those are people adding work *to* a shared branch, which is routine and would have
+///   marked half the list.
+/// - The rows that want a second look are the other direction —
+///   `protected/flyhigh/20104-brand-identity → develop` and `release/3.77.0 → main` —
+///   where the shared branch is the thing being moved.
 public enum Protection {
-    /// Bases that are guarded because the branch itself is, by this convention.
-    static let protectedBasePrefixes = ["protected/"]
-    /// Bases where a mistake reaches users rather than another review.
-    static let shippingBasePrefixes = ["release/", "hotfix/"]
-    static let shippingBases = ["master", "main"]
+    /// Branch prefixes for work several people share, by this repository's convention.
+    static let sharedPrefixes = ["protected/", "release/", "hotfix/"]
 
     /// Why this pull request is marked, or `nil` when it is ordinary.
     ///
-    /// One sentence, shown on hover, naming the branch. A mark whose meaning has to be
-    /// guessed is a mark people learn to ignore, and the two reasons ask different things
-    /// of whoever is reading the diff.
-    public static func reason(base: String?) -> String? {
-        let base = base?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if base.isEmpty { return nil }
+    /// Names both branches: which shared branch, and where it is going. A mark whose
+    /// meaning has to be guessed is a mark people learn to ignore.
+    public static func reason(head: String?, base: String? = nil) -> String? {
+        let head = head?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard sharedPrefixes.contains(where: head.hasPrefix) else { return nil }
 
-        if protectedBasePrefixes.contains(where: base.hasPrefix) {
-            return "Into \(base), a protected branch"
-        }
-        if shippingBasePrefixes.contains(where: base.hasPrefix) || shippingBases.contains(base) {
-            return "Into \(base), where a mistake ships"
-        }
-        return nil
+        let base = base?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return base.isEmpty ? "Merging \(head), a shared branch" : "Merging \(head) into \(base)"
     }
 }

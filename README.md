@@ -362,12 +362,26 @@ omission. What the application *can* know is whether an agent exists: `shipkit m
 a child of the agent for exactly as long as the agent does, so it holds one connection open,
 and that connection is the answer. No heartbeat, nothing to expire.
 
-So the button does one of two things, and says which:
+It reconnects, which matters more than it sounds: an agent outlives the application, so
+quitting or upgrading the app drops every connection it held. Attaching only at agent
+startup meant the first upgrade lost presence for the rest of that agent's life. Upgrade the
+app while agents are running and they come back on their own.
 
-- **An agent is running.** The request is saved, and you ask your agent to pick it up — it
-  will not hear about it on its own. It finds the request through `shipkit_pending_review`.
-- **No agent is running.** It says so and offers a terminal, opened empty. Which command
-  starts your agent is not something shipkit can know, and the request waits until you do.
+What it *can* do is start one. So the button does one of three things, and says which:
+
+- **Settings name an agent.** A terminal opens in the checkout you named, running your
+  agent with the request already waiting. This is the one-press case.
+- **An agent is running but Settings are empty.** The request is saved, and you ask your
+  agent to pick it up — it will not hear about it on its own. It finds the request through
+  `shipkit_pending_review`.
+- **Neither.** It says so and offers an empty terminal, and the request waits.
+
+Two settings, under Settings in the panel, because neither is guessable:
+
+| | |
+|---|---|
+| **Command** | what starts your agent — `claude`, `codex`, a script of your own. Picking one for you would make this a Claude Code accessory. |
+| **Directory** | a checkout of the repository. It decides which rules the review is judged against, and a pull request URL cannot say where the repository lives on your disk. |
 
 The request replaces any earlier one rather than queueing. A queue means a press answered
 minutes later on a pull request you have stopped thinking about — and what is being asked
@@ -375,6 +389,18 @@ for ends in comments published under your name.
 
 Without a menu-bar application at all, `shipkit pr-review brief --pr <n> --repo-slug <slug>`
 is the whole of it; nothing above is required.
+
+### The shield
+
+A row is marked when the pull request **merges a shared branch somewhere** — by this
+repository's convention, one whose name begins `protected/`, `release/` or `hotfix/`. Those
+carry weeks of several people's work, and merging one moves all of it at once; in a flat
+list they look like every other row until you open them.
+
+It is what is being merged that decides, not where it goes. A pull request *into*
+`protected/…` is somebody adding work to a shared branch, which is the most ordinary thing
+in the list — marking those marked a third of it, and a mark on a third of the list is a
+mark on nothing. Hovering names both branches.
 
 ## The way back
 
